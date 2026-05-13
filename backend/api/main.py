@@ -11,12 +11,16 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.routes import edge, live, odds, predictions
 from backend.db.client import get_client, upsert_live_state
+from backend.ingestion.game_context import upsert_game_context
 from backend.ingestion.mlb_api import get_live_games, get_play_by_play
+from backend.ingestion.pitcher_game_log import update_pitcher_game_log
+from backend.ingestion.player_info import ensure_players
 from backend.models.predictor import PitchPredictor
 from backend.models.stats_cache import get_cache
 
 POLL_INTERVAL_SECONDS = 15
 STATS_REFRESH_SECONDS = 3600
+ROLLING_REFRESH_SECONDS = 6 * 3600
 
 _LIVE_PITCH_COLS = [
     "game_pk", "at_bat_index", "pitch_number", "pitcher_id", "batter_id",
@@ -104,6 +108,26 @@ async def _poll_once() -> None:
             print(f"[POLLER] game={game_pk} pitches_total={n} pa={state['pitch_count_pa'] if state else '-'}")
         except Exception as exc:
             print(f"[POLLER] game={game_pk} failed: {exc}")
+            continue
+
+        # Phase 2 enrichments. Each is best-effort; a failure logs and
+        # never breaks the poll cycle.
+        all_pitchers = {p["pitcher_id"] for p in pitches if p.get("pitcher_id")}
+        all_batters = {p["batter_id"] for p in pitches if p.get("batter_id")}
+        try:
+            await ensure_players(list(all_pitchers), list(all_batters))
+        except Exception as exc:
+            print(f"[POLLER] ensure_players failed game={game_pk}: {exc}")
+        try:
+            await upsert_game_context(game_pk)
+        except Exception as exc:
+            print(f"[POLLER] game_context failed game={game_pk}: {exc}")
+        pitcher_id = (state or {}).get("pitcher_id")
+        if pitcher_id is not None:
+            try:
+                await update_pitcher_game_log(game_pk, pitcher_id, pitches)
+            except Exception as exc:
+                print(f"[POLLER] pitcher_game_log failed game={game_pk}: {exc}")
 
 
 async def _poll_loop() -> None:
@@ -121,6 +145,24 @@ async def _stats_refresh_loop() -> None:
             print(f"[stats_cache] periodic reload failed: {exc}")
 
 
+def _refresh_rolling_stats() -> tuple[int | None, int | None]:
+    client = get_client()
+    n1 = client.rpc("refresh_pitcher_rolling_stats", {}).execute().data
+    n2 = client.rpc("refresh_batter_rolling_stats", {}).execute().data
+    return n1, n2
+
+
+async def _rolling_stats_refresh_loop() -> None:
+    while True:
+        await asyncio.sleep(ROLLING_REFRESH_SECONDS)
+        try:
+            n1, n2 = await asyncio.to_thread(_refresh_rolling_stats)
+            print(f"[rolling] refreshed pitchers={n1} batters={n2}")
+            await asyncio.to_thread(get_cache().force_reload)
+        except Exception as exc:
+            print(f"[rolling] refresh failed: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     try:
@@ -129,12 +171,14 @@ async def lifespan(app: FastAPI):
         print(f"[stats_cache] initial load failed: {exc}")
     poll_task = asyncio.create_task(_poll_loop())
     stats_task = asyncio.create_task(_stats_refresh_loop())
+    rolling_task = asyncio.create_task(_rolling_stats_refresh_loop())
     try:
         yield
     finally:
-        for t in (poll_task, stats_task):
+        tasks = (poll_task, stats_task, rolling_task)
+        for t in tasks:
             t.cancel()
-        for t in (poll_task, stats_task):
+        for t in tasks:
             try:
                 await t
             except asyncio.CancelledError:
