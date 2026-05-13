@@ -2,124 +2,248 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>MLB Pitch Predictor — MVP</title>
+  <title>MLB Pitch Predictor — Live</title>
   <style>
-    body { font-family: ui-monospace, Menlo, Consolas, monospace;
-           max-width: 960px; margin: 1em auto; padding: 0 1em; }
-    h2 { margin: 1.3em 0 0.3em; font-size: 1em; letter-spacing: 0.04em; }
-    .bar { display: flex; gap: 0.6em; align-items: center; flex-wrap: wrap;
-           margin-bottom: 0.8em; }
-    select, button { font-family: inherit; padding: 4px 8px; }
-    .stamp { color: #666; font-size: 0.9em; margin-left: auto; }
-    pre { background: #f4f4f4; padding: 0.8em; overflow-x: auto;
-          white-space: pre-wrap; word-break: break-word; margin: 0; }
-    .err { color: #b00; }
+    :root {
+      --bg: #0d1117;
+      --panel: #161b22;
+      --panel-2: #1f262e;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --amber: #f0b429;
+      --green: #3fb950;
+      --green-bg: rgba(63, 185, 80, 0.12);
+      --amber-bg: rgba(240, 180, 41, 0.10);
+      --red: #f85149;
+      --accent: #58a6ff;
+    }
+    * { box-sizing: border-box; }
+    html, body { background: var(--bg); color: var(--text); margin: 0; }
+    body { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+           font-size: 13px; line-height: 1.45; padding: 16px 20px 80px; }
+    header {
+      display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 10px; margin-bottom: 16px;
+    }
+    h1 { font-size: 15px; margin: 0; letter-spacing: 0.05em; }
+    .badge {
+      background: var(--panel-2); border: 1px solid var(--border);
+      padding: 2px 8px; border-radius: 4px; font-size: 11px;
+      color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .badge.live::before {
+      content: "●"; color: var(--red); margin-right: 4px;
+      animation: pulse 1.6s infinite;
+    }
+    .badge.edge { background: var(--green-bg); color: var(--green); border-color: var(--green); }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+    .stamp { color: var(--muted); margin-left: auto; }
+    button {
+      font: inherit; background: var(--panel-2); color: var(--text);
+      border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); color: var(--accent); }
+    .err {
+      color: var(--red); background: var(--panel); border: 1px solid var(--red);
+      padding: 8px 12px; border-radius: 4px; margin-bottom: 14px;
+    }
+    .empty {
+      color: var(--muted); text-align: center; padding: 60px 20px;
+      border: 1px dashed var(--border); border-radius: 6px;
+    }
+    .grid {
+      display: grid; gap: 14px;
+      grid-template-columns: repeat(auto-fill, minmax(540px, 1fr));
+    }
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 6px; overflow: hidden;
+    }
+    .card.has-edge { border-color: var(--green); box-shadow: 0 0 0 1px var(--green) inset; }
+    .card-head {
+      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+      padding: 8px 12px; background: var(--panel-2);
+      border-bottom: 1px solid var(--border);
+    }
+    .matchup { font-weight: 600; color: var(--text); }
+    .sit { color: var(--muted); }
+    .sit .count { color: var(--amber); font-weight: 600; }
+    .sit .half { color: var(--accent); }
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td {
+      text-align: left; padding: 6px 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 500; background: var(--panel-2);
+         text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; }
+    tr:last-child td { border-bottom: none; }
+    tr.edge-strong td { background: var(--green-bg); font-weight: 700; color: var(--green); }
+    tr.edge-mild td { background: var(--amber-bg); color: var(--amber); }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+    td.neg { color: var(--muted); }
+    .probs-row td {
+      color: var(--muted); font-size: 11px; padding: 4px 10px 8px 28px;
+      background: rgba(0,0,0,0.18); border-bottom: 1px solid var(--border);
+    }
+    .probs-row .chip {
+      display: inline-block; margin-right: 10px;
+      padding: 1px 6px; background: var(--panel-2);
+      border: 1px solid var(--border); border-radius: 3px;
+    }
+    .probs-row .chip.argmax { color: var(--accent); border-color: var(--accent); }
   </style>
 </head>
 <body>
-  <h1>MLB Pitch Predictor — MVP</h1>
+  <header>
+    <h1>MLB PITCH PREDICTOR</h1>
+    <span class="badge" id="modelBadge">freq_v1</span>
+    <span class="badge live">LIVE</span>
+    <span class="badge" id="countBadge">0 games</span>
+    <button id="refreshBtn">Refresh</button>
+    <span class="stamp">Updated: <span id="stamp">—</span></span>
+  </header>
 
-  <div class="bar">
-    <label for="gameSelect">Game:</label>
-    <select id="gameSelect"></select>
-    <button id="refreshBtn">Refresh now</button>
-    <span class="stamp">Last updated: <span id="stamp">-</span></span>
-  </div>
-
-  <h2>[LIVE STATE]</h2>
-  <pre id="liveState">waiting…</pre>
-
-  <h2>[PREDICTIONS]</h2>
-  <pre id="predictions">waiting…</pre>
-
-  <h2>[ODDS]</h2>
-  <pre id="odds">waiting…</pre>
-
-  <h2>[EDGE ALERTS]</h2>
-  <pre id="edge">waiting…</pre>
+  <div id="err"></div>
+  <div id="content"></div>
 
 <script>
 const API = "http://localhost:8000";
 const REFRESH_MS = 15000;
-const EDGE_THRESHOLD = 0.05;
-const FALLBACK = [{ game_pk: 745431, label: "Fallback test game 745431" }];
+const EDGE_STRONG = 0.05;
+const EDGE_MILD = 0.02;
 
-async function jget(path) {
-  const r = await fetch(`${API}${path}`);
-  if (!r.ok) throw new Error(`${path} -> ${r.status}`);
-  return r.json();
+const MARKET_LABEL = {
+  pitch_speed_ou: "Pitch Speed O/U",
+  pitch_result:   "Pitch Result",
+  ab_result:      "At-Bat Result",
+  ab_pitches_ou:  "AB Pitches O/U",
+};
+
+const $ = (id) => document.getElementById(id);
+
+function setText(id, txt) { $(id).textContent = txt; }
+
+function fmtNum(v, digits = 2) {
+  if (v === null || v === undefined) return "—";
+  if (typeof v !== "number") return String(v);
+  return v.toFixed(digits);
 }
 
-async function loadGames() {
-  try {
-    const games = await jget("/games");
-    if (!games.length) return FALLBACK;
-    return games.map(g => ({
-      game_pk: g.game_pk,
-      label: `${g.away_team} @ ${g.home_team} (${g.status})`,
-    }));
-  } catch (e) {
-    console.warn("loadGames failed, using fallback", e);
-    return FALLBACK;
-  }
+function fmtPct(v, digits = 1) {
+  if (v === null || v === undefined) return "—";
+  return (v * 100).toFixed(digits) + "%";
 }
 
-function selected() {
-  return document.getElementById("gameSelect").value;
+function fmtPrice(p) {
+  if (p === null || p === undefined) return "—";
+  return p > 0 ? `+${p}` : String(p);
 }
 
-function setText(id, txt) { document.getElementById(id).textContent = txt; }
-function setHTML(id, html) { document.getElementById(id).innerHTML = html; }
+function fmtPrediction(m) {
+  if (m.market === "pitch_speed_ou") return fmtNum(m.predicted_value, 2) + " mph";
+  if (m.market === "ab_pitches_ou")  return fmtNum(m.predicted_value, 2);
+  return m.recommendation ? `${m.recommendation} ${fmtPct(m.predicted_value)}` : "—";
+}
 
-function renderEdge(rows) {
-  if (!Array.isArray(rows) || !rows.length) return "(empty)";
-  return rows.map(r => {
-    const line = JSON.stringify(r);
-    return (typeof r.edge === "number" && r.edge > EDGE_THRESHOLD)
-      ? `<strong>${line}</strong>` : line;
-  }).join("\n");
+function edgeClass(edge) {
+  if (typeof edge !== "number") return "";
+  if (edge > EDGE_STRONG) return "edge-strong";
+  if (edge > EDGE_MILD)   return "edge-mild";
+  return "";
+}
+
+function renderProbs(probs, argmax) {
+  if (!probs) return "";
+  const chips = Object.entries(probs)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => {
+      const cls = k === argmax ? "chip argmax" : "chip";
+      return `<span class="${cls}">${k}: ${fmtPct(v)}</span>`;
+    }).join("");
+  return chips;
+}
+
+function renderMarketRow(m) {
+  const cls = edgeClass(m.edge);
+  const edgeCell = (m.edge === null || m.edge === undefined)
+    ? `<td class="num neg">—</td>`
+    : `<td class="num">${fmtPct(m.edge, 2)}</td>`;
+  return `
+    <tr class="${cls}">
+      <td>${MARKET_LABEL[m.market] || m.market}</td>
+      <td>${fmtPrediction(m)}</td>
+      <td class="num">${m.line === null || m.line === undefined ? "—" : fmtNum(m.line, 2)}</td>
+      <td>${m.recommendation || "—"}</td>
+      <td class="num">${fmtPrice(m.price)}</td>
+      ${edgeCell}
+      <td class="num">${fmtNum(m.confidence, 3)}</td>
+      <td class="num">${m.sample_size ?? 0}</td>
+    </tr>
+    ${m.probs ? `<tr class="probs-row"><td colspan="8">${renderProbs(m.probs, m.recommendation)}</td></tr>` : ""}
+  `;
+}
+
+function renderCard(g) {
+  const edgeBadge = g.has_edge
+    ? `<span class="badge edge">EDGE ${fmtPct(g.top_edge, 2)}</span>`
+    : "";
+  const s = g.situation || {};
+  const rows = (g.markets || []).map(renderMarketRow).join("");
+  return `
+    <div class="card ${g.has_edge ? "has-edge" : ""}">
+      <div class="card-head">
+        <span class="matchup">${g.game_label}</span>
+        <span class="sit">
+          <span class="half">${s.half || ""}${s.inning ?? "?"}</span>
+          · <span class="count">${s.count ?? "?-?"}</span>
+          · ${s.outs ?? "?"} out
+          · pitch ${s.pitch_count_pa ?? 0}
+        </span>
+        ${edgeBadge}
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th>Market</th><th>Prediction</th><th>Line</th><th>Rec</th>
+            <th>Price</th><th>Edge</th><th>Conf</th><th>Samples</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  `;
+}
+
+function showError(msg) {
+  $("err").innerHTML = msg ? `<div class="err">${msg}</div>` : "";
 }
 
 async function refresh() {
-  const gamePk = selected();
-  if (!gamePk) return;
   try {
-    const [pred, odds, edge] = await Promise.all([
-      jget(`/predictions/${gamePk}`),
-      jget(`/odds/${gamePk}`),
-      jget(`/edge/${gamePk}`),
-    ]);
-    console.log("predictions", pred);
-    console.log("odds", odds);
-    console.log("edge", edge);
-    setText("liveState", JSON.stringify(pred.context || {}, null, 2));
-    setText("predictions", (pred.predictions || [])
-      .map(p => JSON.stringify(p)).join("\n"));
-    setText("odds", (odds || []).map(o => JSON.stringify(o)).join("\n"));
-    setHTML("edge", renderEdge(edge));
+    const r = await fetch(`${API}/live`);
+    if (!r.ok) throw new Error(`/live -> ${r.status}`);
+    const games = await r.json();
+    showError("");
+    setText("countBadge", `${games.length} game${games.length === 1 ? "" : "s"}`);
+    if (!games.length) {
+      $("content").innerHTML = `<div class="empty">No live games. Last checked ${new Date().toLocaleTimeString()}.</div>`;
+    } else {
+      $("content").innerHTML = `<div class="grid">${games.map(renderCard).join("")}</div>`;
+    }
     setText("stamp", new Date().toLocaleTimeString());
+    if (games.length && games[0].model_version) setText("modelBadge", games[0].model_version);
   } catch (e) {
     console.error("refresh failed", e);
-    setText("liveState", `error: ${e.message}`);
+    showError(`Fetch failed: ${e.message} (showing last successful data if any)`);
   }
 }
 
-async function init() {
-  const games = await loadGames();
-  const sel = document.getElementById("gameSelect");
-  for (const g of games) {
-    const opt = document.createElement("option");
-    opt.value = g.game_pk;
-    opt.textContent = `${g.game_pk} — ${g.label}`;
-    sel.appendChild(opt);
-  }
-  sel.addEventListener("change", refresh);
-  document.getElementById("refreshBtn").addEventListener("click", refresh);
-  await refresh();
-  setInterval(refresh, REFRESH_MS);
-}
-
-init();
+$("refreshBtn").addEventListener("click", refresh);
+refresh();
+setInterval(refresh, REFRESH_MS);
 </script>
 </body>
 </html>

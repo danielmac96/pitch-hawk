@@ -9,17 +9,33 @@ from datetime import datetime, timezone
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.routes import edge, odds, predictions
+from backend.api.routes import edge, live, odds, predictions
 from backend.db.client import get_client, upsert_live_state
 from backend.ingestion.mlb_api import get_live_games, get_play_by_play
+from backend.models.predictor import PitchPredictor
+from backend.models.stats_cache import get_cache
 
 POLL_INTERVAL_SECONDS = 15
+STATS_REFRESH_SECONDS = 3600
 
 _LIVE_PITCH_COLS = [
     "game_pk", "at_bat_index", "pitch_number", "pitcher_id", "batter_id",
     "pitch_type", "start_speed", "zone", "description", "result_category",
     "balls", "strikes", "outs", "inning", "top_inning", "pitch_ts",
 ]
+
+# Keyed on game_pk -> {"home_team": str, "away_team": str}. Refreshed each
+# poller tick from get_live_games(). Reads are O(1) and never block on I/O.
+_GAMES_CACHE: dict[int, dict] = {}
+
+
+def get_game_label(game_pk: int) -> str:
+    info = _GAMES_CACHE.get(game_pk)
+    if not info:
+        return f"Game {game_pk}"
+    away = info.get("away_team") or "Away"
+    home = info.get("home_team") or "Home"
+    return f"{away} @ {home}"
 
 
 def _build_live_state(pitches: list[dict]) -> dict | None:
@@ -71,6 +87,13 @@ async def _poll_once() -> None:
     if not games:
         return
     for g in games:
+        gp = g.get("game_pk")
+        if gp is not None:
+            _GAMES_CACHE[gp] = {
+                "home_team": g.get("home_team"),
+                "away_team": g.get("away_team"),
+            }
+    for g in games:
         game_pk = g["game_pk"]
         try:
             pitches = await get_play_by_play(game_pk)
@@ -89,17 +112,33 @@ async def _poll_loop() -> None:
         await asyncio.sleep(POLL_INTERVAL_SECONDS)
 
 
+async def _stats_refresh_loop() -> None:
+    while True:
+        await asyncio.sleep(STATS_REFRESH_SECONDS)
+        try:
+            await asyncio.to_thread(get_cache().force_reload)
+        except Exception as exc:
+            print(f"[stats_cache] periodic reload failed: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    task = asyncio.create_task(_poll_loop())
+    try:
+        await asyncio.to_thread(get_cache().ensure_loaded)
+    except Exception as exc:
+        print(f"[stats_cache] initial load failed: {exc}")
+    poll_task = asyncio.create_task(_poll_loop())
+    stats_task = asyncio.create_task(_stats_refresh_loop())
     try:
         yield
     finally:
-        task.cancel()
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+        for t in (poll_task, stats_task):
+            t.cancel()
+        for t in (poll_task, stats_task):
+            try:
+                await t
+            except asyncio.CancelledError:
+                pass
 
 
 app = FastAPI(title="MLB Pitch Predictor — MVP", lifespan=lifespan)
@@ -114,11 +153,20 @@ app.add_middleware(
 app.include_router(predictions.router)
 app.include_router(odds.router)
 app.include_router(edge.router)
+app.include_router(live.router)
 
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+    cache = get_cache()
+    return {
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "model_version": PitchPredictor.model_version,
+        "stats_pitchers": cache.pitcher_count,
+        "stats_ab_pitchers": cache.ab_pitcher_count,
+        "stats_loaded_at": cache.loaded_at.isoformat() if cache.loaded_at else None,
+    }
 
 
 @app.get("/games")
