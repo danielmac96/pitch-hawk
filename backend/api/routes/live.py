@@ -146,10 +146,17 @@ def _build_game_payload(ls: dict) -> dict:
     # Background audit write (best-effort, non-blocking).
     asyncio.create_task(_persist_async(game_pk, preds_all))
 
+    try:
+        current_pa_pitches = _load_current_pa_pitches(game_pk)
+    except Exception as exc:
+        print(f"[live] current_pa_pitches failed game={game_pk}: {exc}")
+        current_pa_pitches = []
+
     return {
         "game_pk": game_pk,
         "game_label": get_game_label(game_pk),
         "situation": _situation(ls),
+        "current_pa_pitches": current_pa_pitches,
         "markets": markets,
         "has_edge": has_edge,
         "top_edge": top_edge,
@@ -163,6 +170,31 @@ async def _persist_async(game_pk: int, preds: list[dict]) -> None:
         await asyncio.to_thread(insert_predictions, game_pk, at_bat_index, pitch_number, preds)
     except Exception as exc:
         print(f"[live] persist failed game_pk={game_pk}: {exc}")
+
+
+def _load_current_pa_pitches(game_pk: int) -> list[dict]:
+    """Pitches in the current (latest) at-bat for this game, oldest first."""
+    latest = (
+        get_client().table("pitches")
+        .select("at_bat_index")
+        .eq("game_pk", game_pk)
+        .order("at_bat_index", desc=True)
+        .limit(1).execute().data
+    )
+    if not latest:
+        return []
+    abi = latest[0].get("at_bat_index")
+    if abi is None:
+        return []
+    rows = (
+        get_client().table("pitches")
+        .select("pitch_number,pitch_type,start_speed,zone,description,result_category,balls,strikes")
+        .eq("game_pk", game_pk).eq("at_bat_index", abi)
+        .order("pitch_number")
+        .execute().data
+        or []
+    )
+    return rows
 
 
 def _load_all_live() -> list[dict]:

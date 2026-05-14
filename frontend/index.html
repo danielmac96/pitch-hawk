@@ -110,6 +110,31 @@
     .badge.dq-green { background: var(--green-bg); color: var(--green); border-color: var(--green); }
     .badge.dq-amber { background: var(--amber-bg); color: var(--amber); border-color: var(--amber); }
     .badge.dq-red   { background: rgba(248,81,73,0.12); color: var(--red); border-color: var(--red); }
+    .pa-log {
+      padding: 6px 12px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+      font-size: 11px;
+      color: var(--muted);
+      display: flex; flex-wrap: wrap; gap: 6px;
+    }
+    .pa-log .pa-empty { color: var(--muted); font-style: italic; }
+    .pitch {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 2px 6px;
+      background: var(--panel-2);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .pitch .num { color: var(--muted); }
+    .pitch .type { color: var(--accent); font-weight: 600; }
+    .pitch .spd { color: var(--amber); }
+    .pitch .res { color: var(--muted); }
+    .pitch.res-strike_foul { border-color: var(--green); }
+    .pitch.res-ball        { border-color: var(--accent); }
+    .pitch.res-in_play     { border-color: var(--amber); }
   </style>
 </head>
 <body>
@@ -182,6 +207,34 @@ function renderProbs(probs, argmax) {
   return chips;
 }
 
+function shortDescription(desc) {
+  if (!desc) return "";
+  // Compress wordy MLB descriptions: "swinging_strike_blocked" -> "swinging_strike"
+  return desc.replace(/_blocked$/, "");
+}
+
+function renderPaLog(pitches) {
+  if (!pitches || !pitches.length) {
+    return `<div class="pa-log"><span class="pa-empty">no pitches yet in this PA</span></div>`;
+  }
+  const chips = pitches.map(p => {
+    const cls = p.result_category ? `pitch res-${p.result_category}` : "pitch";
+    const num = p.pitch_number !== null && p.pitch_number !== undefined ? `#${p.pitch_number}` : "";
+    const type = p.pitch_type || "??";
+    const spd = p.start_speed !== null && p.start_speed !== undefined ? `${fmtNum(p.start_speed, 1)}` : "—";
+    const desc = shortDescription(p.description) || p.result_category || "—";
+    const zone = p.zone !== null && p.zone !== undefined ? `z${p.zone}` : "";
+    return `<span class="${cls}">
+      <span class="num">${num}</span>
+      <span class="type">${type}</span>
+      <span class="spd">${spd}</span>
+      <span class="num">${zone}</span>
+      <span class="res">${desc}</span>
+    </span>`;
+  }).join("");
+  return `<div class="pa-log">${chips}</div>`;
+}
+
 function renderFeatures(feats) {
   if (!feats || !feats.length) return "";
   const chips = feats.map(f => `<span class="feat">${f}</span>`).join("");
@@ -238,6 +291,7 @@ function renderCard(g) {
         ${dqBadge}
         ${edgeBadge}
       </div>
+      ${renderPaLog(g.current_pa_pitches)}
       <table>
         <thead>
           <tr>

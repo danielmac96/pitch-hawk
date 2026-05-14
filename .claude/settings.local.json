@@ -9,7 +9,8 @@
       "Bash(Sort-Object FullName)",
       "Bash(Get-ChildItem -Path \"C:\\\\Users\\\\danie\\\\Documents\\\\PythonProject\\\\mlb-next-pitch\" -Recurse -Filter \"*.sql\")",
       "Bash(python -m py_compile backend/models/stats_cache.py backend/models/predictor.py backend/models/_persist.py backend/api/routes/live.py backend/api/routes/predictions.py backend/api/main.py)",
-      "Bash(python -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['backend/models/predictor.py','backend/models/stats_cache.py','backend/api/main.py','backend/api/routes/live.py','backend/ingestion/player_info.py','backend/ingestion/game_context.py','backend/ingestion/pitcher_game_log.py','scripts/backfill_phase2.py']]; print\\('all files parse OK'\\)\")"
+      "Bash(python -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['backend/models/predictor.py','backend/models/stats_cache.py','backend/api/main.py','backend/api/routes/live.py','backend/ingestion/player_info.py','backend/ingestion/game_context.py','backend/ingestion/pitcher_game_log.py','scripts/backfill_phase2.py']]; print\\('all files parse OK'\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('backend/api/routes/live.py'\\).read\\(\\)\\); print\\('OK'\\)\")"
     ]
   }
 }
