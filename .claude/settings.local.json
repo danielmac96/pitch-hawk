@@ -15,7 +15,15 @@
       "Bash(Select-Object Name, PSIsContainer)",
       "Bash(python *)",
       "Bash(curl -sf http://127.0.0.1:8000/health -o /dev/null)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:opticodds.com)",
+      "WebFetch(domain:oddsjam.com)",
+      "WebFetch(domain:the-odds-api.com)",
+      "WebFetch(domain:www.bettingusa.com)",
+      "WebFetch(domain:simplebet.io)",
+      "WebFetch(domain:www.blog.bowtiedbettor.com)"
     ]
   }
 }
