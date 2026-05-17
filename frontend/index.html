@@ -2,263 +2,1089 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>MLB Pitch Predictor — Live</title>
-  <style>
-    :root {
-      --bg: #0d1117;
-      --panel: #161b22;
-      --panel-2: #1f262e;
-      --border: #30363d;
-      --text: #e6edf3;
-      --muted: #8b949e;
-      --amber: #f0b429;
-      --green: #3fb950;
-      --red: #f85149;
-      --accent: #58a6ff;
-    }
-    * { box-sizing: border-box; }
-    html, body { background: var(--bg); color: var(--text); margin: 0; }
-    body { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
-           font-size: 13px; line-height: 1.45; padding: 16px 20px 80px; }
-    header {
-      display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 10px; margin-bottom: 16px;
-    }
-    h1 { font-size: 15px; margin: 0; letter-spacing: 0.05em; }
-    .badge {
-      background: var(--panel-2); border: 1px solid var(--border);
-      padding: 2px 8px; border-radius: 4px; font-size: 11px;
-      color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em;
-    }
-    .badge.live { color: var(--red); border-color: var(--red); }
-    .stamp { color: var(--muted); margin-left: auto; }
-    button {
-      font: inherit; background: var(--panel-2); color: var(--text);
-      border: 1px solid var(--border); padding: 4px 10px; border-radius: 4px;
-      cursor: pointer;
-    }
-    button:hover { border-color: var(--accent); color: var(--accent); }
-    .err {
-      color: var(--red); background: var(--panel); border: 1px solid var(--red);
-      padding: 8px 12px; border-radius: 4px; margin-bottom: 14px;
-    }
-    .empty {
-      color: var(--muted); text-align: center; padding: 60px 20px;
-      border: 1px dashed var(--border); border-radius: 6px;
-    }
-    .grid {
-      display: grid; gap: 14px;
-      grid-template-columns: repeat(auto-fill, minmax(520px, 1fr));
-    }
-    .card {
-      background: var(--panel); border: 1px solid var(--border);
-      border-radius: 6px; overflow: hidden;
-    }
-    .card-head {
-      display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
-      padding: 8px 12px; background: var(--panel-2);
-      border-bottom: 1px solid var(--border);
-    }
-    .matchup { font-weight: 600; color: var(--text); }
-    .sit { color: var(--muted); }
-    .sit .count { color: var(--amber); font-weight: 600; }
-    .sit .half { color: var(--accent); }
-    .players {
-      padding: 6px 12px;
-      border-bottom: 1px solid var(--border);
-      color: var(--text);
-    }
-    .players .label { color: var(--muted); }
-    .players .name { color: var(--accent); font-weight: 600; }
-    .players .vs { color: var(--muted); margin: 0 8px; }
-    table { width: 100%; border-collapse: collapse; font-size: 12px; }
-    th, td {
-      text-align: left; padding: 6px 10px;
-      border-bottom: 1px solid var(--border);
-    }
-    th { color: var(--muted); font-weight: 500; background: var(--panel-2);
-         text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; }
-    tr:last-child td { border-bottom: none; }
-    td.num { text-align: right; font-variant-numeric: tabular-nums; }
-    td.neg { color: var(--muted); }
-    .pa-log {
-      padding: 6px 12px;
-      background: var(--panel);
-      border-bottom: 1px solid var(--border);
-      font-size: 11px;
-      color: var(--muted);
-      display: flex; flex-wrap: wrap; gap: 6px;
-    }
-    .pa-log .pa-empty { color: var(--muted); font-style: italic; }
-    .pitch {
-      display: inline-flex; align-items: center; gap: 4px;
-      padding: 2px 6px;
-      background: var(--panel-2);
-      border: 1px solid var(--border);
-      border-radius: 3px;
-      color: var(--text);
-      font-variant-numeric: tabular-nums;
-    }
-    .pitch .num { color: var(--muted); }
-    .pitch .type { color: var(--accent); font-weight: 600; }
-    .pitch .spd { color: var(--amber); }
-    .pitch .res { color: var(--muted); }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PITCH·EDGE — Live</title>
+  <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <header>
-    <h1>MLB PITCH PREDICTOR</h1>
-    <span class="badge live">LIVE</span>
-    <span class="badge" id="countBadge">0 games</span>
-    <button id="refreshBtn">Refresh</button>
-    <span class="stamp">Updated: <span id="stamp">—</span></span>
-  </header>
+  <div id="root"></div>
 
-  <div id="err"></div>
-  <div id="content"></div>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="mock.js"></script>
 
-<script>
-const API = "http://localhost:8001";
-const REFRESH_MS = 8000;
+  <script type="text/babel">
+// ══════════════════════════════════════════════════════════════════════════
+// ui.jsx — Small reusable atoms
+// ══════════════════════════════════════════════════════════════════════════
+const { useState, useEffect, useRef, useMemo } = React;
 
-const MARKET_LABEL = {
-  pitch_speed_ou: "Pitch Speed O/U",
-  pitch_result:   "Pitch Result",
-  ab_result:      "At-Bat Result",
-  ab_pitches_ou:  "AB Pitches O/U",
+// ── formatters ─────────────────────────────────────────────────────────
+const fmtEdge = (e) => {
+  if (e == null) return "—";
+  const v = e * 100;
+  const sign = v >= 0 ? "+" : "−";
+  return `${sign}${Math.abs(v).toFixed(1)}%`;
+};
+const fmtAmer = (p) => {
+  if (p == null) return "—";
+  return p > 0 ? `+${p}` : `${p}`;
+};
+const fmtMph = (v) => (v == null ? "—" : `${v.toFixed(1)}`);
+const fmtPct = (v, d = 1) => (v == null ? "—" : `${(v * 100).toFixed(d)}%`);
+const fmtLine = (v) => {
+  if (v == null) return "—";
+  return Number.isInteger(v) ? String(v) : v.toFixed(1);
 };
 
-const $ = (id) => document.getElementById(id);
-
-function setText(id, txt) { $(id).textContent = txt; }
-
-function fmtNum(v, digits = 2) {
-  if (v === null || v === undefined) return "—";
-  if (typeof v !== "number") return String(v);
-  return v.toFixed(digits);
+// implied probability from American odds
+function impliedFromAmerican(am) {
+  if (am == null) return null;
+  return am > 0 ? 100 / (am + 100) : -am / (-am + 100);
 }
 
-function fmtPct(v, digits = 1) {
-  if (v === null || v === undefined) return "—";
-  return (v * 100).toFixed(digits) + "%";
+// edge tier for color
+//   ≥ +5%   → hot   (green)
+//   +3..+5  → warm  (lime)
+//   +0..+3  → soft  (dim green)
+//   < 0     → neg   (red)
+//   null    → none  (muted)
+function edgeTier(e) {
+  if (e == null) return "none";
+  if (e >= 0.05) return "hot";
+  if (e >= 0.03) return "warm";
+  if (e >= 0)    return "soft";
+  return "neg";
 }
 
-function fmtPrediction(m) {
-  if (m.market === "pitch_speed_ou") return fmtNum(m.predicted_value, 2) + " mph";
-  if (m.market === "ab_pitches_ou")  return fmtNum(m.predicted_value, 2);
-  return m.recommendation ? `${m.recommendation} ${fmtPct(m.predicted_value)}` : "—";
+// ── runners-on-base diamond ────────────────────────────────────────────
+function Runners({ runners }) {
+  const r = runners || {};
+  const on = (b) => (r[b] ? "on" : "off");
+  return (
+    <svg className="runners" viewBox="0 0 32 32" width="32" height="32" aria-label="runners on base">
+      {/* 2nd base (top) */}
+      <rect className={`base ${on("second")}`} x="13" y="2"  width="6" height="6" transform="rotate(45 16 5)" />
+      {/* 3rd base (left) */}
+      <rect className={`base ${on("third")}`}  x="2"  y="13" width="6" height="6" transform="rotate(45 5 16)"  />
+      {/* 1st base (right) */}
+      <rect className={`base ${on("first")}`}  x="24" y="13" width="6" height="6" transform="rotate(45 27 16)" />
+      {/* home (bottom) — always drawn neutral */}
+      <rect className="base home" x="13" y="24" width="6" height="6" transform="rotate(45 16 27)" />
+    </svg>
+  );
 }
 
-function shortDescription(desc) {
-  if (!desc) return "";
-  return desc.replace(/_blocked$/, "");
+// ── count pips (balls/strikes) ─────────────────────────────────────────
+function CountPips({ count, outs }) {
+  const [b, s] = (count || "0-0").split("-").map((x) => parseInt(x, 10));
+  return (
+    <span className="count-pips">
+      <span className="pip-row">
+        <span className="pip-label">B</span>
+        {[0, 1, 2, 3].map((i) => (
+          <span key={i} className={`pip ball ${i < b ? "on" : ""}`} />
+        ))}
+      </span>
+      <span className="pip-row">
+        <span className="pip-label">S</span>
+        {[0, 1, 2].map((i) => (
+          <span key={i} className={`pip strike ${i < s ? "on" : ""}`} />
+        ))}
+      </span>
+      <span className="pip-row">
+        <span className="pip-label">O</span>
+        {[0, 1, 2].map((i) => (
+          <span key={i} className={`pip out ${i < outs ? "on" : ""}`} />
+        ))}
+      </span>
+    </span>
+  );
 }
 
-function renderPaLog(pitches) {
-  if (!pitches || !pitches.length) {
-    return `<div class="pa-log"><span class="pa-empty">no pitches yet in this PA</span></div>`;
-  }
-  const chips = pitches.map(p => {
-    const num = p.pitch_number !== null && p.pitch_number !== undefined ? `#${p.pitch_number}` : "";
-    const type = p.pitch_type || "??";
-    const spd = p.start_speed !== null && p.start_speed !== undefined ? `${fmtNum(p.start_speed, 1)}` : "—";
-    const desc = shortDescription(p.description) || p.result_category || "—";
-    const zone = p.zone !== null && p.zone !== undefined ? `z${p.zone}` : "";
-    return `<span class="pitch">
-      <span class="num">${num}</span>
-      <span class="type">${type}</span>
-      <span class="spd">${spd}</span>
-      <span class="num">${zone}</span>
-      <span class="res">${desc}</span>
-    </span>`;
-  }).join("");
-  return `<div class="pa-log">${chips}</div>`;
+// ── flash wrapper: blink a soft accent when `value` changes ────────────
+function Flash({ value, children, flash }) {
+  const [on, setOn] = useState(false);
+  const prev = useRef(value);
+  useEffect(() => {
+    if (prev.current !== value) {
+      setOn(true);
+      const t = setTimeout(() => setOn(false), 700);
+      prev.current = value;
+      return () => clearTimeout(t);
+    }
+  }, [value]);
+  useEffect(() => {
+    if (flash) {
+      setOn(true);
+      const t = setTimeout(() => setOn(false), 700);
+      return () => clearTimeout(t);
+    }
+  }, [flash]);
+  return <span className={`flash ${on ? "on" : ""}`}>{children}</span>;
 }
 
-function renderMarketRow(m) {
-  const edgeCell = (m.edge === null || m.edge === undefined)
-    ? `<td class="num neg">—</td>`
-    : `<td class="num">${fmtPct(m.edge, 2)}</td>`;
-  return `
-    <tr>
-      <td>${MARKET_LABEL[m.market] || m.market}</td>
-      <td>${fmtPrediction(m)}</td>
-      <td class="num">${m.line === null || m.line === undefined ? "—" : fmtNum(m.line, 2)}</td>
-      ${edgeCell}
-      <td class="num">${fmtNum(m.confidence, 3)}</td>
-      <td class="num">${m.sample_size ?? 0}</td>
-    </tr>
-  `;
+// ── pitch row (vertical PA log) ────────────────────────────────────────
+function pitchDescClass(desc) {
+  if (!desc) return "pd-unk";
+  if (desc.includes("swinging_strike")) return "pd-sws";
+  if (desc.includes("called_strike"))   return "pd-cs";
+  if (desc.includes("foul"))            return "pd-foul";
+  if (desc.includes("ball"))            return "pd-ball";
+  if (desc.includes("in_play"))         return "pd-ip";
+  if (desc.includes("hit_by_pitch"))    return "pd-hbp";
+  return "pd-unk";
+}
+function pitchDescLabel(desc) {
+  if (!desc) return "—";
+  return desc
+    .replace("_blocked", "")
+    .replace("called_strike", "called")
+    .replace("swinging_strike", "swinging K")
+    .replace("hit_by_pitch", "HBP")
+    .replace("in_play", "in play")
+    .replace(/_/g, " ");
 }
 
-function renderPlayers(g) {
-  const pitcher = g.pitcher_name || (g.situation && g.situation.pitcher_id ? `#${g.situation.pitcher_id}` : "—");
-  const batter  = g.batter_name  || (g.situation && g.situation.batter_id  ? `#${g.situation.batter_id}`  : "—");
-  return `
-    <div class="players">
-      <span class="label">Pitcher:</span> <span class="name">${pitcher}</span>
-      <span class="vs">vs</span>
-      <span class="label">Batter:</span> <span class="name">${batter}</span>
+function PitchRow({ p, isLatest }) {
+  const cls = pitchDescClass(p.description);
+  return (
+    <div className={`pitch-row ${cls} ${isLatest ? "latest" : ""}`}>
+      <span className="pr-num">#{p.pitch_number}</span>
+      <span className="pr-type" style={{ color: pitchTypeColor(p.pitch_type) }}>
+        {p.pitch_type || "??"}
+      </span>
+      <span className="pr-spd">{fmtMph(p.start_speed)}</span>
+      <span className={`pr-desc ${cls}`}>{pitchDescLabel(p.description)}</span>
+      <span className="pr-count">
+        <b>{p.balls}</b>-<b>{p.strikes}</b>
+      </span>
     </div>
-  `;
+  );
 }
 
-function renderCard(g) {
-  const s = g.situation || {};
-  const rows = (g.markets || []).map(renderMarketRow).join("");
-  return `
-    <div class="card">
-      <div class="card-head">
-        <span class="matchup">${g.game_label}</span>
-        <span class="sit">
-          <span class="half">${s.half || ""}${s.inning ?? "?"}</span>
-          · <span class="count">${s.count ?? "?-?"}</span>
-          · ${s.outs ?? "?"} out
-          · pitch ${s.pitch_count_pa ?? 0}
+// ── pitch type → color ────────────────────────────────
+const PITCH_TYPE_COLOR = {
+  FF: "#f85149",
+  SI: "#ff9b3d",
+  FC: "#e3b341",
+  SL: "#58a6ff",
+  ST: "#79c0ff",
+  CB: "#b58bff",
+  KC: "#9787ff",
+  CH: "#3fb950",
+  SP: "#ff7eb6",
+  FS: "#ff7eb6",
+};
+function pitchTypeColor(t) { return PITCH_TYPE_COLOR[t] || "#7e8893"; }
+
+// ── Statcast zone → (x,y) in the chart's 100×130 viewBox ───────────
+const ZONE_XY = {
+  1: [33.33, 41.67], 2: [50, 41.67], 3: [66.67, 41.67],
+  4: [33.33, 65],    5: [50, 65],    6: [66.67, 65],
+  7: [33.33, 88.33], 8: [50, 88.33], 9: [66.67, 88.33],
+  11: [18, 24], 12: [82, 24], 13: [18, 106], 14: [82, 106],
+};
+function zoneXY(zone) { return ZONE_XY[zone] || [50, 65]; }
+
+function pitchDotColor(p) {
+  const d = p.description || "";
+  if (d.includes("swinging_strike")) return "#f85149";
+  if (d.includes("called_strike"))   return "#e3b341";
+  if (d.includes("foul"))            return "#7e8893";
+  if (d.includes("ball"))            return "#58a6ff";
+  if (d.includes("in_play"))         return "#3fb950";
+  if (d.includes("hit_by_pitch"))    return "#ff7eb6";
+  return "#7e8893";
+}
+
+// ── VelocityChart: vertical bars, one per pitch, colored by pitch type ──
+function VelocityChart({ pitches }) {
+  if (!pitches.length) return <div className="chart-empty">awaiting pitch</div>;
+  const speeds = pitches.map((p) => p.start_speed || 60);
+  const minS = Math.min(60, Math.floor(Math.min(...speeds)) - 4);
+  const maxS = Math.max(100, Math.ceil(Math.max(...speeds)) + 2);
+  const w = 100, h = 100;
+  const padTop = 14, padBot = 14, padX = 3;
+  const innerH = h - padTop - padBot;
+  const innerW = w - padX * 2;
+  const slot = innerW / Math.max(pitches.length, 1);
+  const barW = Math.min(13, Math.max(5, slot - 2));
+  return (
+    <svg className="chart velocity" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
+      <line x1={padX} x2={w - padX} y1={h - padBot + 0.5} y2={h - padBot + 0.5}
+            stroke="#2d3540" strokeWidth="0.5" />
+      {pitches.map((p, i) => {
+        const speed = p.start_speed || minS;
+        const ratio = (speed - minS) / (maxS - minS);
+        const barH = Math.max(2, ratio * innerH);
+        const x = padX + slot * i + slot / 2 - barW / 2;
+        const y = h - padBot - barH;
+        const color = pitchTypeColor(p.pitch_type);
+        const isLatest = i === pitches.length - 1;
+        return (
+          <g key={p.pitch_number}>
+            <rect x={x} y={y} width={barW} height={barH}
+                  fill={color} opacity={isLatest ? 0.95 : 0.75} rx="0.8" />
+            {isLatest && (
+              <rect x={x - 0.5} y={y - 0.5} width={barW + 1} height={barH + 1}
+                    fill="none" stroke={color} strokeWidth="0.6" rx="1" />
+            )}
+            <text x={x + barW / 2} y={y - 2.5}
+                  fontSize="5.5" textAnchor="middle" fill="#c2cad4" fontWeight="600">
+              {speed.toFixed(1)}
+            </text>
+            <text x={x + barW / 2} y={h - padBot + 6}
+                  fontSize="5" textAnchor="middle" fill={color} fontWeight="700">
+              {p.pitch_type}
+            </text>
+            <text x={x + barW / 2} y={h - padBot + 11.5}
+                  fontSize="4.5" textAnchor="middle" fill="#5a626c">
+              #{p.pitch_number}
+            </text>
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+// ── ZoneChart: strike-zone rectangle with all AB pitches numbered ────
+function ZoneChart({ pitches }) {
+  return (
+    <svg className="chart zone" viewBox="0 0 100 130" preserveAspectRatio="xMidYMid meet">
+      <rect x="6" y="12" width="88" height="106" fill="none"
+            stroke="#2d3540" strokeWidth="0.5" strokeDasharray="1.4,1.4" rx="1" />
+      <rect x="25" y="30" width="50" height="70"
+            fill="rgba(227,179,65,0.03)" stroke="#e3b341" strokeWidth="0.7" />
+      <line x1="41.67" y1="30" x2="41.67" y2="100" stroke="#2d3540" strokeWidth="0.35" />
+      <line x1="58.33" y1="30" x2="58.33" y2="100" stroke="#2d3540" strokeWidth="0.35" />
+      <line x1="25"    y1="53.33" x2="75" y2="53.33" stroke="#2d3540" strokeWidth="0.35" />
+      <line x1="25"    y1="76.66" x2="75" y2="76.66" stroke="#2d3540" strokeWidth="0.35" />
+      <polygon points="42,118 58,118 58,121 50,126 42,121"
+               fill="#11161e" stroke="#3a4351" strokeWidth="0.4" />
+      {pitches.map((p, i) => {
+        const [cx, cy] = zoneXY(p.zone);
+        const jx = (((p.pitch_number * 37) % 7) - 3) * 0.7;
+        const jy = (((p.pitch_number * 53) % 7) - 3) * 0.7;
+        const isLatest = i === pitches.length - 1;
+        const color = pitchTypeColor(p.pitch_type);
+        return (
+          <g key={p.pitch_number}>
+            <circle cx={cx + jx} cy={cy + jy}
+                    r={isLatest ? 5.4 : 4.6}
+                    fill={color}
+                    stroke={isLatest ? "#d6dde6" : "#11161e"}
+                    strokeWidth={isLatest ? 1.2 : 0.8} />
+            <text x={cx + jx} y={cy + jy + 0.4}
+                  fontSize={isLatest ? 5.2 : 4.6}
+                  textAnchor="middle" dominantBaseline="middle"
+                  fill="#fff"
+                  fontWeight="700">
+              {p.pitch_number}
+            </text>
+          </g>
+        );
+      })}
+      {pitches.length === 0 && (
+        <text x="50" y="68" fontSize="6" textAnchor="middle"
+              fill="#5a626c" fontStyle="italic">no pitches yet</text>
+      )}
+    </svg>
+  );
+}
+
+// ── confidence micro-bar ───────────────────────────────────────────────
+function ConfBar({ value }) {
+  const v = Math.max(0, Math.min(1, value || 0));
+  const tier = v >= 0.7 ? "high" : v >= 0.55 ? "mid" : "low";
+  return (
+    <span className={`conf ${tier}`}>
+      <span className="conf-bar">
+        <i style={{ width: `${v * 100}%` }} />
+      </span>
+      <span className="conf-val">{v.toFixed(2)}</span>
+    </span>
+  );
+}
+
+// ── market category meta ─────────────────────────────────────────────
+const MARKET_META = {
+  pitch_speed_ou:      { cat: "live",        label: "Pitch speed",    short: "Pitch speed",    subj: "next pitch" },
+  pitch_result:        { cat: "live",        label: "Pitch result",   short: "Pitch result",   subj: "next pitch" },
+  ab_result:           { cat: "in_progress", label: "AB result",      short: "AB result",      subj: "this AB" },
+  ab_pitches_ou:       { cat: "in_progress", label: "AB pitches",     short: "AB pitches",     subj: "this AB" },
+  next_ab_result:      { cat: "upcoming",    label: "Next AB result", short: "Next AB result", subj: "next AB" },
+  next_ab_pitches_ou:  { cat: "upcoming",    label: "Next AB pitches",short: "Next AB pitches",subj: "next AB" },
+};
+const CAT_LABEL = { live: "Live", in_progress: "In progress", upcoming: "Upcoming" };
+
+// ── prediction renderer per market ─────────────────────────────────────
+function predictionFor(m) {
+  if (m.market === "pitch_speed_ou") return m.predicted_value.toFixed(1);
+  if (m.market === "ab_pitches_ou" || m.market === "next_ab_pitches_ou")
+    return m.predicted_value.toFixed(1);
+  if (m.market === "pitch_result" && m.probs) {
+    const top = Object.entries(m.probs).sort((a, b) => b[1] - a[1])[0];
+    return `${top[0].replace("_", "/")} ${fmtPct(top[1])}`;
+  }
+  if ((m.market === "ab_result" || m.market === "next_ab_result") && m.probs) {
+    const sorted = Object.entries(m.probs).sort((a, b) => b[1] - a[1]);
+    return `${sorted[0][0]} ${fmtPct(sorted[0][1])}`;
+  }
+  return "—";
+}
+
+// stale: last pitch >25s ago
+function stalenessMs(game) {
+  if (!game.situation?.last_pitch_ts) return null;
+  return Date.now() - new Date(game.situation.last_pitch_ts).getTime();
+}
+function isStale(game) {
+  const m = stalenessMs(game);
+  return m != null && m > 25000;
+}
+
+// ── pick helpers ───────────────────────────────────────────────────────
+function pickLabel(market, sideOrOutcome) {
+  const s = (sideOrOutcome || "").toLowerCase();
+  if (market === "pitch_speed_ou")     return s === "over" ? "SPD O" : "SPD U";
+  if (market === "ab_pitches_ou")      return s === "over" ? "ABP O" : "ABP U";
+  if (market === "next_ab_pitches_ou") return s === "over" ? "N·ABP O" : "N·ABP U";
+  if (market === "pitch_result") {
+    if (s === "strike_foul") return "STK/F";
+    if (s === "ball")        return "BALL";
+    if (s === "in_play")     return "IN-PLAY";
+  }
+  if (market === "ab_result" || market === "next_ab_result") {
+    if (s === "strikeout") return "K";
+    if (s === "walk")      return "BB";
+    if (s === "hit")       return "HIT";
+    if (s === "out")       return "OUT";
+  }
+  return market.toUpperCase();
+}
+
+function computePicks(g, threshold) {
+  const picks = [];
+  const eat = (m, cat) => {
+    if (m.line != null && m.edge != null && m.edge >= threshold) {
+      picks.push({
+        market: m.market, outcome: null, cat,
+        edge: m.edge, label: pickLabel(m.market, m.recommendation),
+      });
+    }
+    if (m.outcomes) {
+      for (const o of m.outcomes) {
+        if (o.edge >= threshold) {
+          picks.push({
+            market: m.market, outcome: o.name, cat,
+            edge: o.edge, label: pickLabel(m.market, o.name),
+          });
+        }
+      }
+    }
+  };
+  for (const m of (g.markets || [])) eat(m, MARKET_META[m.market]?.cat);
+  for (const m of (g.next_ab_markets || [])) eat(m, MARKET_META[m.market]?.cat);
+  picks.sort((a, b) => b.edge - a.edge);
+  return picks;
+}
+
+// ── GamePicker: topbar multi-select dropdown ───────────────────────────
+function GamePicker({ allGames, selected, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, [open]);
+  const toggle = (pk) => {
+    const next = new Set(selected);
+    if (next.has(pk)) next.delete(pk); else next.add(pk);
+    onChange(next);
+  };
+  return (
+    <div className="game-picker" ref={ref}>
+      <button className={`gp-trigger ${open ? "open" : ""}`} onClick={() => setOpen(o => !o)}>
+        <span className="lbl">GAMES</span>
+        <b>{selected.size}<span className="slash">/</span>{allGames.length}</b>
+        <span className="car">{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div className="gp-pop">
+          <div className="gp-actions">
+            <button onClick={() => onChange(new Set(allGames.map(g => g.game_pk)))}>All</button>
+            <button onClick={() => onChange(new Set())}>None</button>
+            <span className="gp-act-spacer" />
+            <span className="gp-count">{selected.size} selected</span>
+          </div>
+          <div className="gp-list">
+            {allGames.map(g => {
+              const checked = selected.has(g.game_pk);
+              const stale = isStale(g);
+              return (
+                <label key={g.game_pk} className={`gp-row ${checked ? "checked" : ""} ${stale ? "stale" : ""}`}>
+                  <input type="checkbox" checked={checked} onChange={() => toggle(g.game_pk)} />
+                  <span className="gp-match">{g.game_label}</span>
+                  <span className="gp-sit">
+                    <span className="half">{g.situation.half}{g.situation.inning}</span>
+                    <span className="count">{g.situation.count}</span>
+                  </span>
+                  <span className="gp-edge">{g.top_edge > 0 ? fmtEdge(g.top_edge) : <span className="dim">—</span>}</span>
+                  {stale && <span className="gp-stale">STALE</span>}
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// panels.jsx — EdgesFeed (left rail) and GamePane (right card)
+// ══════════════════════════════════════════════════════════════════════════
+const { useState: useStateP, useMemo: useMemoP, useEffect: useEffectP, useRef: useRefP } = React;
+
+// ── Market row (one bet within a game pane) ────────────────────────────
+function MarketRow({ g, m, flash, threshold }) {
+  const meta = MARKET_META[m.market];
+  if (!meta) return null;
+  const tier = edgeTier(m.edge);
+  const flashEdge = flash.has(`${g.game_pk}:${m.market}:edge`);
+  const flashPred = flash.has(`${g.game_pk}:${m.market}:predicted_value`);
+  const isOU = m.market.endsWith("_ou");
+  const isPick = m.edge != null && m.line != null && m.edge >= threshold;
+  return (
+    <div className={`mk-row edge-${tier} ${isPick ? "is-pick" : ""}`}>
+      <span className="mk-label">{meta.short}</span>
+      <span className="mk-bet">
+        {isOU ? (
+          <>
+            <b className="side">{m.recommendation?.toUpperCase()}</b>{" "}
+            <span className="line">{fmtLine(m.line)}</span>
+            <span className="unit">{m.market.includes("speed") ? " mph" : ""}</span>
+          </>
+        ) : (
+          <span className="bet-text">no line yet</span>
+        )}
+      </span>
+      <span className="mk-price">{m.price != null ? fmtAmer(m.price) : <span className="dim">—</span>}</span>
+      <span className="mk-implied">{m.price != null ? fmtPct(impliedFromAmerican(m.price)) : <span className="dim">—</span>}</span>
+      <span className="mk-pred"><Flash flash={flashPred}>{predictionFor(m)}</Flash></span>
+      <span className="mk-edge"><Flash flash={flashEdge}>{fmtEdge(m.edge)}</Flash></span>
+      <span className="mk-conf"><ConfBar value={m.confidence} /></span>
+    </div>
+  );
+}
+
+// ── OutcomeRows: one mk-row per outcome, sorted by predicted prob desc ──
+function OutcomeRows({ g, m, flash, threshold }) {
+  const meta = MARKET_META[m.market];
+  if (!meta || !m.outcomes) return null;
+  const sorted = [...m.outcomes].sort((a, b) => b.prob - a.prob);
+  return sorted.map((o, i) => {
+    const tier = edgeTier(o.edge);
+    const isFirst = i === 0;
+    const isLast = i === sorted.length - 1;
+    const isPick = o.edge >= threshold;
+    return (
+      <div
+        key={o.name}
+        className={`mk-row outcome edge-${tier} ${isFirst ? "first-outcome" : ""} ${isLast ? "last-outcome" : ""} ${isPick ? "is-pick" : ""} o-${o.name}`}
+      >
+        <span className="mk-label">{isFirst ? meta.short : <span className="mk-rule" />}</span>
+        <span className="mk-bet">
+          <b className={`outcome-name o-${o.name}`}>{o.name.replace("_", "/")}</b>
+        </span>
+        <span className="mk-price">{fmtAmer(o.price)}</span>
+        <span className="mk-implied">{fmtPct(impliedFromAmerican(o.price))}</span>
+        <span className="mk-pred">{fmtPct(o.prob)}</span>
+        <span className="mk-edge">
+          <Flash flash={flash.has(`${g.game_pk}:${m.market}:${o.name}:edge`)}>
+            {fmtEdge(o.edge)}
+          </Flash>
+        </span>
+        <span className="mk-conf"><ConfBar value={o.confidence} /></span>
+      </div>
+    );
+  });
+}
+
+// fallback for prob markets that lack an outcomes array
+function ProbRow({ g, m, flash }) {
+  const meta = MARKET_META[m.market];
+  if (!meta || !m.probs) return null;
+  const sorted = Object.entries(m.probs).sort((a, b) => b[1] - a[1]);
+  return (
+    <div className="mk-prob">
+      <span className="mk-label">{meta.short}</span>
+      <span className="mk-prob-bars">
+        {sorted.map(([k, v]) => (
+          <span key={k} className={`pb pb-${k}`} title={`${k} ${fmtPct(v)}`}>
+            <span className="pb-label">{k.replace("_", "/")}</span>
+            <span className="pb-bar"><i style={{ width: `${v * 100}%` }} /></span>
+            <span className="pb-val">{fmtPct(v)}</span>
+          </span>
+        ))}
+      </span>
+      <span className="mk-edge dim">no line</span>
+    </div>
+  );
+}
+
+// ── helper: which categories are visible in the given tab
+function activeCats(tab) {
+  return tab === "live"
+    ? new Set(["live", "in_progress"])
+    : new Set(["upcoming"]);
+}
+
+// ── Game pane (one card in the right grid) ─────────────────────────────
+function GamePane({ g, filters, flash }) {
+  const stale = isStale(g);
+  const isUpcomingTab = filters.tab === "upcoming";
+
+  const live = (g.markets || []).filter((m) => MARKET_META[m.market]?.cat === "live");
+  const IN_PROG_ORDER = ["ab_pitches_ou", "ab_result"];
+  const inProg = (g.markets || [])
+    .filter((m) => MARKET_META[m.market]?.cat === "in_progress")
+    .sort((a, b) => IN_PROG_ORDER.indexOf(a.market) - IN_PROG_ORDER.indexOf(b.market));
+  const upcoming = (g.next_ab_markets || []).filter((m) => MARKET_META[m.market]?.cat === "upcoming");
+
+  const allPitches = g.current_pa_pitches || [];
+  const VISIBLE = 8;
+  const overflow = allPitches.length > VISIBLE;
+  const pitchListRef = useRefP(null);
+  useEffectP(() => {
+    if (pitchListRef.current) {
+      pitchListRef.current.scrollTop = pitchListRef.current.scrollHeight;
+    }
+  }, [allPitches.length]);
+
+  const tabMkts = isUpcomingTab ? upcoming : [...live, ...inProg];
+  const tabTopEdge = tabMkts.reduce((mx, m) => (m.edge != null && m.edge > mx ? m.edge : mx), 0);
+  const tier = edgeTier(tabTopEdge);
+
+  const allPicks = computePicks(g, filters.minEdge);
+  const tabPicks = allPicks.filter((p) => activeCats(filters.tab).has(p.cat));
+
+  return (
+    <article
+      className={`pane edge-${tier} ${isUpcomingTab ? "mode-upcoming" : "mode-live"} ${stale ? "is-stale" : ""}`}
+      id={`game-${g.game_pk}`}
+    >
+      {/* HEAD: matchup + score + situation + runners */}
+      <header className="pane-head">
+        <div className="ph-row1">
+          <span className="ph-match">
+            <span className="team away">{g.away}</span>
+            <span className="ph-score-away">{g.score.away}</span>
+            <span className="ph-at">@</span>
+            <span className="team home">{g.home}</span>
+            <span className="ph-score-home">{g.score.home}</span>
+          </span>
+          <span className={`ph-inning half-${g.situation.half === "▲" ? "top" : "bot"}`}>
+            {g.situation.half}{g.situation.inning}
+          </span>
+          <span className="ph-picks">
+            {tabPicks.length === 0 && (
+              <span className="ph-no-pick">no picks ≥ {fmtEdge(filters.minEdge)}</span>
+            )}
+            {tabPicks.map((p) => (
+              <span key={`${p.market}:${p.outcome || "side"}`} className="ph-pick">
+                <span className="pe">{fmtEdge(p.edge)}</span>
+                <span className="pl">{p.label}</span>
+              </span>
+            ))}
+          </span>
+          <span className="ph-spacer" />
+          {stale && (
+            <span className="ph-stale" title="last pitch >25s ago — between-AB or feed lag">
+              STALE {Math.round(stalenessMs(g) / 1000)}s
+            </span>
+          )}
+        </div>
+        <div className="ph-row2">
+          <Runners runners={g.situation.runners} />
+          <CountPips count={g.situation.count} outs={g.situation.outs} />
+          <span className="ph-meta">
+            <span className="ph-meta-line">
+              <span className="lbl">P</span>
+              <span className={`pname hand-${g.pitcher_hand}`}>{g.pitcher_name}</span>
+              <span className="hand">{g.pitcher_hand}HP</span>
+              <span className="ph-meta-stats inline">{g.pitcher_meta}</span>
+            </span>
+            <span className={`ph-meta-line ${isUpcomingTab ? "muted" : ""}`}>
+              <span className="lbl">B</span>
+              <span className={`bname hand-${g.batter_hand}`}>{g.batter_name}</span>
+              <span className="hand">{g.batter_hand}HB</span>
+              <span className="ph-meta-stats inline">{g.batter_meta}</span>
+            </span>
+            {isUpcomingTab && (
+              <span className="ph-meta-line on-deck-line">
+                <span className="lbl">▶</span>
+                <span className="bname on-deck-name">{g.on_deck}</span>
+                <span className="hand on-deck-tag">ON DECK</span>
+              </span>
+            )}
+          </span>
+          <span className="ph-onbox">
+            {!isUpcomingTab && (
+              <>
+                <span className="lbl">on deck</span>
+                <span className="val">{g.on_deck}</span>
+              </>
+            )}
+            <span className="lbl game-pc">pitch ct</span>
+            <span className="val">{g.situation.pitch_count_game}</span>
+          </span>
+        </div>
+      </header>
+
+      {/* PA LOG: vertical pitch feed (Live tab only) */}
+      {!isUpcomingTab && (
+        <section className="pane-pa">
+          <div className="pa-head">
+            <span className="pa-title">THIS AT BAT</span>
+            <span className="pa-sub">
+              {allPitches.length === 0
+                ? "0 pitches"
+                : `${allPitches.length} pitch${allPitches.length === 1 ? "" : "es"}`}
+              {overflow && <span className="pa-overflow"> · scroll for #1</span>}
+            </span>
+          </div>
+          <div className="pa-body">
+            <div className={`pa-list ${overflow ? "overflow" : ""}`} ref={pitchListRef}>
+              {allPitches.length === 0 && (
+                <div className="pa-empty">No pitches yet in this PA · awaiting first delivery</div>
+              )}
+              {allPitches.map((p, i) => (
+                <PitchRow key={p.pitch_number} p={p} isLatest={i === allPitches.length - 1} />
+              ))}
+              {!stale && allPitches.length > 0 && (
+                <div className="pitch-row next-slot">
+                  <span className="pr-num">#{allPitches.length + 1}</span>
+                  <span className="pr-type">?</span>
+                  <span className="pr-spd">—</span>
+                  <span className="pr-desc">awaiting next pitch</span>
+                  <span className="pr-count">—</span>
+                </div>
+              )}
+            </div>
+            <div className="pa-chart pa-zone">
+              <div className="chart-title">LOCATION</div>
+              <div className="chart-frame">
+                <ZoneChart pitches={allPitches} />
+              </div>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {/* MARKETS */}
+      <section className="pane-markets">
+        {!isUpcomingTab && live.length > 0 && (
+          <div className="mk-group cat-live">
+            <div className="mk-group-head">
+              <span className="dot" /> LIVE · NEXT PITCH
+              {!stale && <span className="mk-bullseye" title="closes when next pitch is thrown">·  closes in ≤ {Math.max(0, 20 - Math.round(stalenessMs(g) / 1000))}s</span>}
+            </div>
+            <div className="mk-table">
+              <div className="mk-th">
+                <span>Market</span><span>Bet</span><span>Price</span><span>Implied</span><span>Predicted</span><span>Edge</span><span>Confidence</span>
+              </div>
+              {live.map((m) =>
+                m.line != null
+                  ? <MarketRow key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
+                  : m.outcomes
+                    ? <OutcomeRows key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
+                    : <ProbRow key={m.market} g={g} m={m} flash={flash} />
+              )}
+            </div>
+          </div>
+        )}
+
+        {!isUpcomingTab && inProg.length > 0 && (
+          <div className="mk-group cat-in-progress">
+            <div className="mk-group-head">
+              <span className="dot" /> IN PROGRESS · THIS AT BAT
+              <span className="mk-bullseye">·  {g.situation.pitch_count_pa} pitches in</span>
+            </div>
+            <div className="mk-table">
+              <div className="mk-th">
+                <span>Market</span><span>Bet</span><span>Price</span><span>Implied</span><span>Predicted</span><span>Edge</span><span>Confidence</span>
+              </div>
+              {inProg.map((m) =>
+                m.line != null
+                  ? <MarketRow key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
+                  : m.outcomes
+                    ? <OutcomeRows key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
+                    : <ProbRow key={m.market} g={g} m={m} flash={flash} />
+              )}
+            </div>
+          </div>
+        )}
+
+        {isUpcomingTab && upcoming.length > 0 && (
+          <div className="mk-group cat-upcoming">
+            <div className="mk-group-head">
+              <span className="dot" /> UPCOMING · NEXT AT BAT
+              <span className="mk-bullseye">·  vs {g.on_deck}</span>
+            </div>
+            <div className="mk-table">
+              <div className="mk-th">
+                <span>Market</span><span>Bet</span><span>Price</span><span>Implied</span><span>Predicted</span><span>Edge</span><span>Confidence</span>
+              </div>
+              {upcoming.map((m) =>
+                m.line != null
+                  ? <MarketRow key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
+                  : m.outcomes
+                    ? <OutcomeRows key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
+                    : <ProbRow key={m.market} g={g} m={m} flash={flash} />
+              )}
+            </div>
+          </div>
+        )}
+
+        {!isUpcomingTab && live.length === 0 && inProg.length === 0 && (
+          <div className="mk-empty">No live or in-progress markets for this AB.</div>
+        )}
+        {isUpcomingTab && upcoming.length === 0 && (
+          <div className="mk-empty">No upcoming markets posted for the next AB.</div>
+        )}
+      </section>
+
+      {/* FOOTER: audit trail / features */}
+      <footer className="pane-foot">
+        <span className="audit-lbl">FEATURES</span>
+        <span className="audit-chips">
+          {Array.from(new Set((g.markets || []).flatMap((m) => m.features_used || []))).map((f) => (
+            <span key={f} className="chip-feat">{f}</span>
+          ))}
+        </span>
+        <span className="audit-meta">
+          freq_v2 · n={(g.markets || []).reduce((s, m) => Math.max(s, m.sample_size || 0), 0)}
+        </span>
+      </footer>
+    </article>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// app.jsx — Top bar, App root, live-feed poller
+//
+// Live game state (situation + pitches + names) comes from the backend
+// `/live` endpoint. Odds/markets/edges/outcomes/next-AB markets are still
+// sampled — the odds feed isn't wired up yet. Games that aren't in the
+// live feed are not shown, even if the bundled mock has them.
+// ══════════════════════════════════════════════════════════════════════════
+const { useState: useS, useEffect: useE, useMemo: useM, useRef: useR } = React;
+
+const API_BASE = window.PITCH_EDGE_API || "http://localhost:8001";
+const POLL_MS = 8000;
+
+function parseTeams(label) {
+  const m = /^(\S+)\s*@\s*(\S+)/.exec(label || "");
+  return m ? { away: m[1], home: m[2] } : { away: "AWY", home: "HOM" };
+}
+
+// Pull a sample odds template for a given game_pk so each live game gets a
+// distinct, plausible set of markets/outcomes/next-AB lines.
+function sampleOddsFor(gamePk) {
+  const pool = window.MOCK.GAMES;
+  const tpl = pool[gamePk % pool.length];
+  return JSON.parse(JSON.stringify({
+    markets: tpl.markets,
+    next_ab_markets: tpl.next_ab_markets || [],
+  }));
+}
+
+// Merge a /live game with a sample odds template, preserving prior odds
+// state across polls so jitter accumulates naturally.
+function augmentLiveGame(apiGame, prevByPk) {
+  const teams = parseTeams(apiGame.game_label);
+  const prev = prevByPk.get(apiGame.game_pk);
+  const odds = prev
+    ? { markets: prev.markets, next_ab_markets: prev.next_ab_markets }
+    : sampleOddsFor(apiGame.game_pk);
+  const sit = apiGame.situation || {};
+  const situation = {
+    inning: sit.inning ?? null,
+    half: sit.half ?? "▲",
+    count: sit.count ?? "0-0",
+    outs: sit.outs ?? 0,
+    pitcher_id: sit.pitcher_id,
+    batter_id: sit.batter_id,
+    pitch_count_pa: sit.pitch_count_pa ?? 0,
+    pitch_count_game: sit.pitch_count_game ?? prev?.situation?.pitch_count_game ?? 0,
+    last_pitch_ts: sit.last_pitch_ts ?? null,
+    runners: sit.runners || prev?.situation?.runners || { first: false, second: false, third: false },
+  };
+  return {
+    game_pk: apiGame.game_pk,
+    game_label: apiGame.game_label || `${teams.away} @ ${teams.home}`,
+    away: teams.away,
+    home: teams.home,
+    score: apiGame.score || prev?.score || { away: 0, home: 0 },
+    pitcher_name: apiGame.pitcher_name || prev?.pitcher_name || "—",
+    pitcher_hand: apiGame.pitcher_hand || prev?.pitcher_hand || "R",
+    pitcher_meta: apiGame.pitcher_meta || prev?.pitcher_meta || "—",
+    batter_name: apiGame.batter_name || prev?.batter_name || "—",
+    batter_hand: apiGame.batter_hand || prev?.batter_hand || "R",
+    batter_meta: apiGame.batter_meta || prev?.batter_meta || "—",
+    on_deck: apiGame.on_deck || prev?.on_deck || "—",
+    situation,
+    current_pa_pitches: apiGame.current_pa_pitches || [],
+    markets: odds.markets,
+    next_ab_markets: odds.next_ab_markets,
+    top_edge: 0,
+    has_edge: false,
+    model_version: apiGame.model_version || "freq_v2",
+  };
+}
+
+function recomputeTopEdge(g) {
+  let top = 0;
+  for (const m of g.markets) if (m.edge != null && m.edge > top) top = m.edge;
+  g.top_edge = top;
+  g.has_edge = top > 0.05;
+  return g;
+}
+
+async function fetchLive() {
+  const r = await fetch(API_BASE + "/live");
+  if (!r.ok) throw new Error(`/live → ${r.status}`);
+  return await r.json();
+}
+
+function TopBar({ filters, setFilters, allGames, gameCount, edgeCount, tickAgo, modelVersion, fetchErr }) {
+  return (
+    <header className="topbar">
+      <div className="tb-brand">
+        <span className="brand">PITCH·EDGE</span>
+        <span className="live-pill">
+          <span className="dot" /> LIVE
         </span>
       </div>
-      ${renderPlayers(g)}
-      ${renderPaLog(g.current_pa_pitches)}
-      <table>
-        <thead>
-          <tr>
-            <th>Market</th><th>Prediction</th><th>Line</th>
-            <th>Edge</th><th>Conf</th><th>Samples</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  `;
+
+      <div className="tb-tabs" role="tablist">
+        <button
+          role="tab"
+          className={`tb-tab tab-live ${filters.tab === "live" ? "on" : ""}`}
+          onClick={() => setFilters({ ...filters, tab: "live" })}
+        >
+          <span className="d" /> Live
+          <span className="ct">next pitch · current AB</span>
+        </button>
+        <button
+          role="tab"
+          className={`tb-tab tab-up ${filters.tab === "upcoming" ? "on" : ""}`}
+          onClick={() => setFilters({ ...filters, tab: "upcoming" })}
+        >
+          <span className="d" /> Upcoming
+          <span className="ct">next AB markets</span>
+        </button>
+      </div>
+
+      <GamePicker
+        allGames={allGames}
+        selected={filters.selectedGamePks}
+        onChange={(next) => setFilters({ ...filters, selectedGamePks: next })}
+      />
+
+      <label className="tb-thresh">
+        <span className="lbl">edge ≥</span>
+        <input
+          type="range" min="0" max="10" step="0.5"
+          value={filters.minEdge * 100}
+          onChange={(e) => setFilters({ ...filters, minEdge: parseFloat(e.target.value) / 100 })}
+        />
+        <span className="val">{(filters.minEdge * 100).toFixed(1)}%</span>
+      </label>
+
+      <div className="tb-right">
+        <span className="tb-stat"><b>{edgeCount}</b> edges · <b>{gameCount}</b> live</span>
+        <span className="tb-model">{modelVersion}</span>
+        {fetchErr && (
+          <span className="tb-feed-err" title={fetchErr}>feed offline</span>
+        )}
+        <span className="tb-tick">
+          <span className={`tick-dot ${fetchErr ? "err" : ""}`} />
+          tick · <b>{tickAgo}s</b> ago
+        </span>
+      </div>
+    </header>
+  );
 }
 
-function showError(msg) {
-  $("err").innerHTML = msg ? `<div class="err">${msg}</div>` : "";
-}
+function App() {
+  const [games, setGames] = useS([]);
+  const [flash, setFlash] = useS(new Set());
+  const [tickedAt, setTickedAt] = useS(Date.now());
+  const [loaded, setLoaded] = useS(false);
+  const [fetchErr, setFetchErr] = useS(null);
+  const [, force] = useS(0);
 
-async function refresh() {
-  try {
-    const r = await fetch(`${API}/live`);
-    if (!r.ok) throw new Error(`/live -> ${r.status}`);
-    const games = await r.json();
-    showError("");
-    setText("countBadge", `${games.length} game${games.length === 1 ? "" : "s"}`);
-    if (!games.length) {
-      $("content").innerHTML = `<div class="empty">No live games. Last checked ${new Date().toLocaleTimeString()}.</div>`;
-    } else {
-      $("content").innerHTML = `<div class="grid">${games.map(renderCard).join("")}</div>`;
+  const [filters, setFilters] = useS({
+    minEdge: 0.05,
+    tab: "live",
+    selectedGamePks: new Set(),
+  });
+
+  // Keep latest games available inside the poll closure without retriggering
+  // the effect on every state update.
+  const gamesRef = useR(games);
+  gamesRef.current = games;
+
+  // Combined poller: pull live feed, augment with sample odds (preserved
+  // across polls), then jitter so the UI feels alive between snapshots.
+  useE(() => {
+    let cancelled = false;
+    async function pollOnce() {
+      try {
+        const apiGames = await fetchLive();
+        if (cancelled) return;
+        const prevByPk = new Map(gamesRef.current.map(g => [g.game_pk, g]));
+        let next = apiGames.map(g => augmentLiveGame(g, prevByPk));
+        const { games: jittered, flash: nf } = window.MOCK.tick(next);
+        next = jittered.map(recomputeTopEdge);
+        setGames(next);
+        setFlash(nf);
+        setTickedAt(Date.now());
+        setFetchErr(null);
+        setLoaded(true);
+        setTimeout(() => setFlash(new Set()), 750);
+        // Auto-select any newly-appeared live game so the user sees it.
+        setFilters((f) => {
+          const merged = new Set(f.selectedGamePks);
+          let changed = false;
+          for (const g of next) {
+            if (!merged.has(g.game_pk)) { merged.add(g.game_pk); changed = true; }
+          }
+          return changed ? { ...f, selectedGamePks: merged } : f;
+        });
+      } catch (e) {
+        if (cancelled) return;
+        setFetchErr(e.message || String(e));
+        setLoaded(true);
+      }
     }
-    setText("stamp", new Date().toLocaleTimeString());
-  } catch (e) {
-    console.error("refresh failed", e);
-    showError(`Fetch failed: ${e.message} (showing last successful data if any)`);
-  }
+    pollOnce();
+    const id = setInterval(pollOnce, POLL_MS);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  // re-render every 1s to keep "Xs ago" live
+  useE(() => {
+    const id = setInterval(() => force((x) => x + 1), 1000);
+    return () => clearInterval(id);
+  }, []);
+
+  const tickAgo = Math.max(0, Math.round((Date.now() - tickedAt) / 1000));
+
+  const sortedGames = useM(() => {
+    return [...games].sort((a, b) => {
+      const aStale = isStale(a), bStale = isStale(b);
+      if (aStale !== bStale) return aStale ? 1 : -1;
+      return (b.top_edge || 0) - (a.top_edge || 0);
+    });
+  }, [games, tickedAt]);
+
+  const gameSelectedSorted = useM(() => {
+    return sortedGames.filter(g => filters.selectedGamePks.has(g.game_pk));
+  }, [sortedGames, filters.selectedGamePks]);
+
+  const activeCatsSet = filters.tab === "live"
+    ? new Set(["live", "in_progress"])
+    : new Set(["upcoming"]);
+
+  const edgeCount = useM(() => {
+    let c = 0;
+    for (const g of games) {
+      if (!filters.selectedGamePks.has(g.game_pk)) continue;
+      const all = [...(g.markets || []), ...(g.next_ab_markets || [])];
+      for (const m of all) {
+        if (m.line != null && m.edge != null && m.edge >= filters.minEdge
+            && activeCatsSet.has(MARKET_META[m.market]?.cat)) c++;
+        if (m.outcomes && activeCatsSet.has(MARKET_META[m.market]?.cat)) {
+          for (const o of m.outcomes) if (o.edge >= filters.minEdge) c++;
+        }
+      }
+    }
+    return c;
+  }, [games, filters]);
+
+  const visibleGames = useM(() => {
+    if (filters.tab !== "upcoming") return gameSelectedSorted;
+    return gameSelectedSorted.filter((g) => (g.next_ab_markets || []).length > 0);
+  }, [gameSelectedSorted, filters.tab]);
+
+  return (
+    <div className="app">
+      <TopBar
+        filters={filters}
+        setFilters={setFilters}
+        allGames={sortedGames}
+        gameCount={visibleGames.length}
+        edgeCount={edgeCount}
+        tickAgo={tickAgo}
+        modelVersion="freq_v2"
+        fetchErr={fetchErr}
+      />
+      <main className="main-grid">
+        {visibleGames.length === 0 ? (
+          <div className="empty-tab">
+            <div className="empty-title">
+              {!loaded
+                ? "Connecting to live feed…"
+                : fetchErr && games.length === 0
+                  ? "Live feed offline"
+                  : games.length === 0
+                    ? "No live games right now"
+                    : filters.selectedGamePks.size === 0
+                      ? "No games selected"
+                      : filters.tab === "upcoming"
+                        ? "No upcoming markets posted"
+                        : "No live at-bats"}
+            </div>
+            <div className="empty-sub">
+              {!loaded
+                ? `Polling ${API_BASE}/live`
+                : fetchErr && games.length === 0
+                  ? `Couldn't reach ${API_BASE}/live — ${fetchErr}. Retrying every ${POLL_MS / 1000}s.`
+                  : games.length === 0
+                    ? "Waiting for the live feed to post games. The grid will populate as games go live."
+                    : filters.selectedGamePks.size === 0
+                      ? "Open the Games picker in the top bar to choose games to show."
+                      : filters.tab === "upcoming"
+                        ? "Next-at-bat markets will appear here as the book posts them."
+                        : "All live games are between at-bats or off-air."}
+            </div>
+          </div>
+        ) : (
+          visibleGames.map((g) => (
+            <GamePane
+              key={g.game_pk}
+              g={g}
+              filters={filters}
+              flash={flash}
+            />
+          ))
+        )}
+      </main>
+    </div>
+  );
 }
 
-$("refreshBtn").addEventListener("click", refresh);
-refresh();
-setInterval(refresh, REFRESH_MS);
-</script>
+ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
 </body>
 </html>
