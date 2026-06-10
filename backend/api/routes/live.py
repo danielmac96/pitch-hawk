@@ -11,6 +11,7 @@ import asyncio
 
 from fastapi import APIRouter, HTTPException
 
+from backend.api.live_store import get_store
 from backend.db.client import get_client
 from backend.ingestion.odds_stub import calculate_edge, get_odds
 from backend.models._persist import current_pa_position, insert_predictions
@@ -168,11 +169,15 @@ def _build_game_payload(ls: dict) -> dict:
     # Background audit write (best-effort, non-blocking). Only on state change.
     asyncio.create_task(_persist_async(game_pk, preds_all))
 
-    try:
-        current_pa_pitches = _load_current_pa_pitches(game_pk)
-    except Exception as exc:
-        print(f"[live] current_pa_pitches failed game={game_pk}: {exc}")
-        current_pa_pitches = []
+    # Prefer the in-memory current-PA pitches the poller already derived; only
+    # hit Supabase when the store has nothing for this game (graceful fallback).
+    current_pa_pitches = get_store().get_pa_pitches(game_pk)
+    if current_pa_pitches is None:
+        try:
+            current_pa_pitches = _load_current_pa_pitches(game_pk)
+        except Exception as exc:
+            print(f"[live] current_pa_pitches failed game={game_pk}: {exc}")
+            current_pa_pitches = []
 
     payload = {
         "game_pk": game_pk,
@@ -242,9 +247,18 @@ def _load_one_live(game_pk: int) -> dict | None:
     return rows[0] if rows else None
 
 
+async def _states_for_live() -> list[dict]:
+    """In-memory states if the poller has populated the store; otherwise fall
+    back to reading live_state from Supabase (e.g. right after a restart)."""
+    states = get_store().all_states()
+    if states:
+        return states
+    return await asyncio.to_thread(_load_all_live)
+
+
 @router.get("/live")
 async def get_live() -> list[dict]:
-    states = await asyncio.to_thread(_load_all_live)
+    states = await _states_for_live()
     payloads = [_build_game_payload(ls) for ls in states if ls.get("game_pk") is not None]
     payloads.sort(key=lambda p: -p["top_edge"])
     return payloads
@@ -252,7 +266,9 @@ async def get_live() -> list[dict]:
 
 @router.get("/live/{game_pk}")
 async def get_live_game(game_pk: int) -> dict:
-    ls = await asyncio.to_thread(_load_one_live, game_pk)
+    ls = get_store().get_state(game_pk)
+    if ls is None:
+        ls = await asyncio.to_thread(_load_one_live, game_pk)
     if not ls:
         raise HTTPException(404, detail=f"no live_state row for game_pk={game_pk}")
     return _build_game_payload(ls)
