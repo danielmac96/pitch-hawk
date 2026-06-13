@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.live_store import get_store
-from backend.api.routes import edge, live, odds, predictions
+from backend.api.routes import bets, edge, live, odds, predictions
 from backend.db.client import get_client, upsert_live_state
 from backend.ingestion.game_context import upsert_game_context
 from backend.ingestion.mlb_api import get_live_games, get_play_by_play
@@ -304,6 +304,7 @@ app.include_router(predictions.router)
 app.include_router(odds.router)
 app.include_router(edge.router)
 app.include_router(live.router)
+app.include_router(bets.router)
 
 
 @app.get("/health")

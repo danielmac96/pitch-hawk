@@ -1208,3 +1208,49 @@ input[type="range"] { accent-color: var(--blue); }
   .tb-brand { gap: 6px; }
   .live-pill { padding: 1px 5px; font-size: 8.5px; letter-spacing: 0.14em; }
 }
+
+/* ── Affiliate "Bet this" CTA + compliance ─────────────────────────────── */
+.mk-cta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px 7px 10px;
+  margin: -2px 0 4px 0;
+  flex-wrap: wrap;
+  border-left: 2px solid var(--green-d);
+  background: var(--green-bg);
+}
+.mk-cta-lead {
+  font: 600 10px/1 var(--mono);
+  letter-spacing: 0.04em;
+  color: var(--green-2);
+  text-transform: uppercase;
+  margin-right: 2px;
+}
+.mk-cta-book {
+  font: 600 11px/1 var(--mono);
+  letter-spacing: 0.02em;
+  color: var(--text);
+  background: var(--panel-3);
+  border: 1px solid var(--border-3);
+  border-radius: 4px;
+  padding: 4px 8px;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.06s ease;
+}
+.mk-cta-book:hover {
+  background: var(--green-bg-2);
+  border-color: var(--green-d);
+  color: var(--green-2);
+}
+.mk-cta-book:active { transform: translateY(1px); }
+.mk-cta-book.no-aff { opacity: 0.6; }
+
+.compliance-bar {
+  font: 400 10.5px/1.5 var(--sans);
+  color: var(--muted);
+  text-align: center;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-2);
+}
