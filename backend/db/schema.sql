@@ -87,3 +87,19 @@ create table if not exists predictions (
 
 create index if not exists predictions_game_pa_market_idx
     on predictions (game_pk, at_bat_index, market);
+
+-- Bet-CTA click funnel. Powers affiliate-deal negotiation and conversion
+-- optimization. Written fire-and-forget from POST /track/click; safe to drop.
+create table if not exists bet_clicks (
+    id                   bigserial primary key,
+    game_pk              bigint,
+    market               text,
+    side                 text,
+    book                 text,
+    edge                 numeric(6,4),
+    affiliate_configured boolean,
+    clicked_at           timestamptz default now()
+);
+
+create index if not exists bet_clicks_book_clicked_idx
+    on bet_clicks (book, clicked_at);

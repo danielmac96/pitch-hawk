@@ -452,6 +452,53 @@ function GamePicker({ allGames, selected, onChange }) {
 // ══════════════════════════════════════════════════════════════════════════
 const { useState: useStateP, useMemo: useMemoP, useEffect: useEffectP, useRef: useRefP } = React;
 
+// ── Affiliate "Bet this" layer ─────────────────────────────────────────
+// Books + disclaimer come from GET /sportsbooks (affiliate-resolved server-side).
+const BooksCtx = React.createContext({ books: [], disclaimer: "" });
+
+// Fire-and-forget click log — the conversion funnel affiliate deals run on.
+// Never blocks the navigation to the book; failures are swallowed.
+function trackBetClick(payload) {
+  try {
+    const body = JSON.stringify(payload);
+    if (navigator.sendBeacon) {
+      navigator.sendBeacon(API_BASE + "/track/click", new Blob([body], { type: "application/json" }));
+    } else {
+      fetch(API_BASE + "/track/click", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
+    }
+  } catch (_) {}
+}
+
+// One-tap routing to the books for an actionable pick. Renders only when an
+// edge is real; routes to each book's affiliate-tagged MLB live page (stable
+// per-pitch deep links don't exist yet) and logs the click for attribution.
+function BetCTA({ g, market, side, edge }) {
+  const { books } = React.useContext(BooksCtx);
+  if (!books || !books.length) return null;
+  const onBet = (book) => {
+    trackBetClick({
+      game_pk: g.game_pk, market, side, book: book.key,
+      edge: edge ?? null, affiliate_configured: book.affiliate_configured,
+    });
+    window.open(book.url, "_blank", "noopener,noreferrer");
+  };
+  return (
+    <div className="mk-cta" role="group" aria-label="Place this bet">
+      <span className="mk-cta-lead">BET {side ? side.toUpperCase() : ""} ▸</span>
+      {books.map((b) => (
+        <button
+          key={b.key}
+          className={`mk-cta-book ${b.affiliate_configured ? "" : "no-aff"}`}
+          title={`Open ${b.name} MLB live betting${b.affiliate_configured ? "" : " (affiliate id not set)"}`}
+          onClick={() => onBet(b)}
+        >
+          {b.short}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // ── Market row (one bet within a game pane) ────────────────────────────
 function MarketRow({ g, m, flash, threshold }) {
   const meta = MARKET_META[m.market];
@@ -462,25 +509,28 @@ function MarketRow({ g, m, flash, threshold }) {
   const isOU = m.market.endsWith("_ou");
   const isPick = m.edge != null && m.line != null && m.edge >= threshold;
   return (
-    <div className={`mk-row edge-${tier} ${isPick ? "is-pick" : ""}`}>
-      <span className="mk-label">{meta.short}</span>
-      <span className="mk-bet">
-        {isOU ? (
-          <>
-            <b className="side">{m.recommendation?.toUpperCase()}</b>{" "}
-            <span className="line">{fmtLine(m.line)}</span>
-            <span className="unit">{m.market.includes("speed") ? " mph" : ""}</span>
-          </>
-        ) : (
-          <span className="bet-text">no line yet</span>
-        )}
-      </span>
-      <span className="mk-price">{m.price != null ? fmtAmer(m.price) : <span className="dim">—</span>}</span>
-      <span className="mk-implied">{m.price != null ? fmtPct(impliedFromAmerican(m.price)) : <span className="dim">—</span>}</span>
-      <span className="mk-pred"><Flash flash={flashPred}>{predictionFor(m)}</Flash></span>
-      <span className="mk-edge"><Flash flash={flashEdge}>{fmtEdge(m.edge)}</Flash></span>
-      <span className="mk-conf"><ConfBar value={m.confidence} /></span>
-    </div>
+    <>
+      <div className={`mk-row edge-${tier} ${isPick ? "is-pick" : ""}`}>
+        <span className="mk-label">{meta.short}</span>
+        <span className="mk-bet">
+          {isOU ? (
+            <>
+              <b className="side">{m.recommendation?.toUpperCase()}</b>{" "}
+              <span className="line">{fmtLine(m.line)}</span>
+              <span className="unit">{m.market.includes("speed") ? " mph" : ""}</span>
+            </>
+          ) : (
+            <span className="bet-text">no line yet</span>
+          )}
+        </span>
+        <span className="mk-price">{m.price != null ? fmtAmer(m.price) : <span className="dim">—</span>}</span>
+        <span className="mk-implied">{m.price != null ? fmtPct(impliedFromAmerican(m.price)) : <span className="dim">—</span>}</span>
+        <span className="mk-pred"><Flash flash={flashPred}>{predictionFor(m)}</Flash></span>
+        <span className="mk-edge"><Flash flash={flashEdge}>{fmtEdge(m.edge)}</Flash></span>
+        <span className="mk-conf"><ConfBar value={m.confidence} /></span>
+      </div>
+      {isPick && <BetCTA g={g} market={m.market} side={m.recommendation} edge={m.edge} />}
+    </>
   );
 }
 
@@ -495,24 +545,26 @@ function OutcomeRows({ g, m, flash, threshold }) {
     const isLast = i === sorted.length - 1;
     const isPick = o.edge >= threshold;
     return (
-      <div
-        key={o.name}
-        className={`mk-row outcome edge-${tier} ${isFirst ? "first-outcome" : ""} ${isLast ? "last-outcome" : ""} ${isPick ? "is-pick" : ""} o-${o.name}`}
-      >
-        <span className="mk-label">{isFirst ? meta.short : <span className="mk-rule" />}</span>
-        <span className="mk-bet">
-          <b className={`outcome-name o-${o.name}`}>{o.name.replace("_", "/")}</b>
-        </span>
-        <span className="mk-price">{fmtAmer(o.price)}</span>
-        <span className="mk-implied">{fmtPct(impliedFromAmerican(o.price))}</span>
-        <span className="mk-pred">{fmtPct(o.prob)}</span>
-        <span className="mk-edge">
-          <Flash flash={flash.has(`${g.game_pk}:${m.market}:${o.name}:edge`)}>
-            {fmtEdge(o.edge)}
-          </Flash>
-        </span>
-        <span className="mk-conf"><ConfBar value={o.confidence} /></span>
-      </div>
+      <React.Fragment key={o.name}>
+        <div
+          className={`mk-row outcome edge-${tier} ${isFirst ? "first-outcome" : ""} ${isLast ? "last-outcome" : ""} ${isPick ? "is-pick" : ""} o-${o.name}`}
+        >
+          <span className="mk-label">{isFirst ? meta.short : <span className="mk-rule" />}</span>
+          <span className="mk-bet">
+            <b className={`outcome-name o-${o.name}`}>{o.name.replace("_", "/")}</b>
+          </span>
+          <span className="mk-price">{fmtAmer(o.price)}</span>
+          <span className="mk-implied">{fmtPct(impliedFromAmerican(o.price))}</span>
+          <span className="mk-pred">{fmtPct(o.prob)}</span>
+          <span className="mk-edge">
+            <Flash flash={flash.has(`${g.game_pk}:${m.market}:${o.name}:edge`)}>
+              {fmtEdge(o.edge)}
+            </Flash>
+          </span>
+          <span className="mk-conf"><ConfBar value={o.confidence} /></span>
+        </div>
+        {isPick && <BetCTA g={g} market={m.market} side={o.name} edge={o.edge} />}
+      </React.Fragment>
     );
   });
 }
@@ -931,7 +983,19 @@ function App() {
   const [tickedAt, setTickedAt] = useS(Date.now());
   const [loaded, setLoaded] = useS(false);
   const [fetchErr, setFetchErr] = useS(null);
+  const [books, setBooks] = useS({ books: [], disclaimer: "" });
   const [, force] = useS(0);
+
+  // Load the affiliate book registry once. Best-effort: the app works without
+  // it, the "Bet" CTAs just don't render.
+  useE(() => {
+    let cancelled = false;
+    fetch(API_BASE + "/sportsbooks")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d) setBooks(d); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, []);
 
   const [filters, setFilters] = useS({
     minEdge: 0.05,
@@ -1080,6 +1144,7 @@ function App() {
   }, [gameSelectedSorted, filters.tab]);
 
   return (
+    <BooksCtx.Provider value={books}>
     <div className="app">
       <TopBar
         filters={filters}
@@ -1132,7 +1197,11 @@ function App() {
           ))
         )}
       </main>
+      {books.disclaimer && (
+        <footer className="compliance-bar">{books.disclaimer}</footer>
+      )}
     </div>
+    </BooksCtx.Provider>
   );
 }
 
