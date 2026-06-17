@@ -55,11 +55,21 @@ python scripts/verify_feeds.py
 # 3. start the API + live poller
 .venv\Scripts\python.exe -m uvicorn backend.api.main:app --host 127.0.0.1 --port 8000 --reload
 
-# 4. open the dashboard
-start frontend\index.html
+# 4. open the picks site (front door) or the live terminal
+start frontend\index.html      # consumer picks site
+start frontend\terminal.html   # dense live-edge dashboard
 ```
 
-The frontend is a single self-contained HTML file using plain `fetch()` against `http://localhost:8000`. The game dropdown pulls from `/games`. Edge rows with `edge > 0.05` render in bold.
+### Frontend
+
+Two static front-ends, no build step — open the HTML files directly or serve the `frontend/` folder.
+
+| file | audience | purpose |
+|---|---|---|
+| `index.html` | public / casual bettors | **Consumer picks site (the foundation).** Today's quick at-bat picks as cards, each with an affiliate "Bet at <book>" CTA and an expandable **"Why this pick"** dropdown of supporting bullet points. Includes a public **track record** (record, win%, units, ROI, by-market + recently-settled tables) so visitors can verify before they trust. Styled by `site.css`, rendered by `site.js`, sample data in `picks-data.js`. |
+| `terminal.html` | power users | Dense Bloomberg-style live-edge dashboard. Plain `fetch()` against `http://localhost:8000`; game dropdown pulls from `/games`; edge rows with `edge > 0.05` render in bold. Styled by `styles.css`, mock feed in `mock.js`. |
+
+The picks site runs standalone on bundled sample data (`picks-data.js`) and is API-ready: set `API_BASE` in `site.js` to the deployed backend and the loaders pull live `/sportsbooks` (affiliate-resolved book URLs) and log affiliate clicks to `/track/click`. The pick/record shapes mirror `GET /edge/{game_pk}` and the sportsbook registry; a curated `GET /picks/today` and `GET /record` are the remaining endpoints to wire in (marked with `TODO` in `site.js`).
 
 ### Tables
 
