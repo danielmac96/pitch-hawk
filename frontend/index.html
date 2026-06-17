@@ -3,1209 +3,140 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>PITCH·EDGE — Live</title>
-  <link rel="stylesheet" href="styles.css">
+  <title>Next Pitch — MLB At-Bat Picks</title>
+  <meta name="description" content="Data-driven MLB at-bat picks — strikeouts, pitch speed, and more — with a transparent, verifiable track record.">
+  <link rel="stylesheet" href="site.css">
 </head>
 <body>
-  <div id="root"></div>
-
-  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
-  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <script src="mock.js"></script>
-
-  <script type="text/babel">
-// ══════════════════════════════════════════════════════════════════════════
-// ui.jsx — Small reusable atoms
-// ══════════════════════════════════════════════════════════════════════════
-const { useState, useEffect, useRef, useMemo } = React;
-
-// ── formatters ─────────────────────────────────────────────────────────
-const fmtEdge = (e) => {
-  if (e == null) return "—";
-  const v = e * 100;
-  const sign = v >= 0 ? "+" : "−";
-  return `${sign}${Math.abs(v).toFixed(1)}%`;
-};
-const fmtAmer = (p) => {
-  if (p == null) return "—";
-  return p > 0 ? `+${p}` : `${p}`;
-};
-const fmtMph = (v) => (v == null ? "—" : `${v.toFixed(1)}`);
-const fmtPct = (v, d = 1) => (v == null ? "—" : `${(v * 100).toFixed(d)}%`);
-const fmtLine = (v) => {
-  if (v == null) return "—";
-  return Number.isInteger(v) ? String(v) : v.toFixed(1);
-};
-
-// implied probability from American odds
-function impliedFromAmerican(am) {
-  if (am == null) return null;
-  return am > 0 ? 100 / (am + 100) : -am / (-am + 100);
-}
-
-// edge tier for color
-//   ≥ +5%   → hot   (green)
-//   +3..+5  → warm  (lime)
-//   +0..+3  → soft  (dim green)
-//   < 0     → neg   (red)
-//   null    → none  (muted)
-function edgeTier(e) {
-  if (e == null) return "none";
-  if (e >= 0.05) return "hot";
-  if (e >= 0.03) return "warm";
-  if (e >= 0)    return "soft";
-  return "neg";
-}
-
-// ── runners-on-base diamond ────────────────────────────────────────────
-function Runners({ runners }) {
-  const r = runners || {};
-  const on = (b) => (r[b] ? "on" : "off");
-  return (
-    <svg className="runners" viewBox="0 0 32 32" width="32" height="32" aria-label="runners on base">
-      {/* 2nd base (top) */}
-      <rect className={`base ${on("second")}`} x="13" y="2"  width="6" height="6" transform="rotate(45 16 5)" />
-      {/* 3rd base (left) */}
-      <rect className={`base ${on("third")}`}  x="2"  y="13" width="6" height="6" transform="rotate(45 5 16)"  />
-      {/* 1st base (right) */}
-      <rect className={`base ${on("first")}`}  x="24" y="13" width="6" height="6" transform="rotate(45 27 16)" />
-      {/* home (bottom) — always drawn neutral */}
-      <rect className="base home" x="13" y="24" width="6" height="6" transform="rotate(45 16 27)" />
-    </svg>
-  );
-}
-
-// ── count pips (balls/strikes) ─────────────────────────────────────────
-function CountPips({ count, outs }) {
-  const [b, s] = (count || "0-0").split("-").map((x) => parseInt(x, 10));
-  return (
-    <span className="count-pips">
-      <span className="pip-row">
-        <span className="pip-label">B</span>
-        {[0, 1, 2, 3].map((i) => (
-          <span key={i} className={`pip ball ${i < b ? "on" : ""}`} />
-        ))}
-      </span>
-      <span className="pip-row">
-        <span className="pip-label">S</span>
-        {[0, 1, 2].map((i) => (
-          <span key={i} className={`pip strike ${i < s ? "on" : ""}`} />
-        ))}
-      </span>
-      <span className="pip-row">
-        <span className="pip-label">O</span>
-        {[0, 1, 2].map((i) => (
-          <span key={i} className={`pip out ${i < outs ? "on" : ""}`} />
-        ))}
-      </span>
-    </span>
-  );
-}
-
-// ── flash wrapper: blink a soft accent when `value` changes ────────────
-function Flash({ value, children, flash }) {
-  const [on, setOn] = useState(false);
-  const prev = useRef(value);
-  useEffect(() => {
-    if (prev.current !== value) {
-      setOn(true);
-      const t = setTimeout(() => setOn(false), 700);
-      prev.current = value;
-      return () => clearTimeout(t);
-    }
-  }, [value]);
-  useEffect(() => {
-    if (flash) {
-      setOn(true);
-      const t = setTimeout(() => setOn(false), 700);
-      return () => clearTimeout(t);
-    }
-  }, [flash]);
-  return <span className={`flash ${on ? "on" : ""}`}>{children}</span>;
-}
-
-// ── pitch row (vertical PA log) ────────────────────────────────────────
-function pitchDescClass(desc) {
-  if (!desc) return "pd-unk";
-  if (desc.includes("swinging_strike")) return "pd-sws";
-  if (desc.includes("called_strike"))   return "pd-cs";
-  if (desc.includes("foul"))            return "pd-foul";
-  if (desc.includes("ball"))            return "pd-ball";
-  if (desc.includes("in_play"))         return "pd-ip";
-  if (desc.includes("hit_by_pitch"))    return "pd-hbp";
-  return "pd-unk";
-}
-function pitchDescLabel(desc) {
-  if (!desc) return "—";
-  return desc
-    .replace("_blocked", "")
-    .replace("called_strike", "called")
-    .replace("swinging_strike", "swinging K")
-    .replace("hit_by_pitch", "HBP")
-    .replace("in_play", "in play")
-    .replace(/_/g, " ");
-}
-
-function PitchRow({ p, isLatest }) {
-  const cls = pitchDescClass(p.description);
-  return (
-    <div className={`pitch-row ${cls} ${isLatest ? "latest" : ""}`}>
-      <span className="pr-num">#{p.pitch_number}</span>
-      <span className="pr-type" style={{ color: pitchTypeColor(p.pitch_type) }}>
-        {p.pitch_type || "??"}
-      </span>
-      <span className="pr-spd">{fmtMph(p.start_speed)}</span>
-      <span className={`pr-desc ${cls}`}>{pitchDescLabel(p.description)}</span>
-      <span className="pr-count">
-        <b>{p.balls}</b>-<b>{p.strikes}</b>
-      </span>
+  <!-- ── Header / nav ─────────────────────────────────────────────── -->
+  <header class="site-header">
+    <div class="wrap header-inner">
+      <a class="brand" href="#top">
+        <span class="brand-mark">◆</span>
+        <span class="brand-name">Next<span>Pitch</span></span>
+      </a>
+      <nav class="nav">
+        <a href="#picks">Today's Picks</a>
+        <a href="#record">Track Record</a>
+        <a href="#how">How It Works</a>
+      </nav>
+      <a class="btn btn-ghost nav-cta" href="#picks">View picks</a>
     </div>
-  );
-}
+  </header>
 
-// ── pitch type → color ────────────────────────────────
-const PITCH_TYPE_COLOR = {
-  FF: "#f85149",
-  SI: "#ff9b3d",
-  FC: "#e3b341",
-  SL: "#58a6ff",
-  ST: "#79c0ff",
-  CB: "#b58bff",
-  KC: "#9787ff",
-  CH: "#3fb950",
-  SP: "#ff7eb6",
-  FS: "#ff7eb6",
-};
-function pitchTypeColor(t) { return PITCH_TYPE_COLOR[t] || "#7e8893"; }
-
-// ── Statcast zone → (x,y) in the chart's 100×130 viewBox ───────────
-const ZONE_XY = {
-  1: [33.33, 41.67], 2: [50, 41.67], 3: [66.67, 41.67],
-  4: [33.33, 65],    5: [50, 65],    6: [66.67, 65],
-  7: [33.33, 88.33], 8: [50, 88.33], 9: [66.67, 88.33],
-  11: [18, 24], 12: [82, 24], 13: [18, 106], 14: [82, 106],
-};
-function zoneXY(zone) { return ZONE_XY[zone] || [50, 65]; }
-
-function pitchDotColor(p) {
-  const d = p.description || "";
-  if (d.includes("swinging_strike")) return "#f85149";
-  if (d.includes("called_strike"))   return "#e3b341";
-  if (d.includes("foul"))            return "#7e8893";
-  if (d.includes("ball"))            return "#58a6ff";
-  if (d.includes("in_play"))         return "#3fb950";
-  if (d.includes("hit_by_pitch"))    return "#ff7eb6";
-  return "#7e8893";
-}
-
-// ── VelocityChart: vertical bars, one per pitch, colored by pitch type ──
-function VelocityChart({ pitches }) {
-  if (!pitches.length) return <div className="chart-empty">awaiting pitch</div>;
-  const speeds = pitches.map((p) => p.start_speed || 60);
-  const minS = Math.min(60, Math.floor(Math.min(...speeds)) - 4);
-  const maxS = Math.max(100, Math.ceil(Math.max(...speeds)) + 2);
-  const w = 100, h = 100;
-  const padTop = 14, padBot = 14, padX = 3;
-  const innerH = h - padTop - padBot;
-  const innerW = w - padX * 2;
-  const slot = innerW / Math.max(pitches.length, 1);
-  const barW = Math.min(13, Math.max(5, slot - 2));
-  return (
-    <svg className="chart velocity" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-      <line x1={padX} x2={w - padX} y1={h - padBot + 0.5} y2={h - padBot + 0.5}
-            stroke="#2d3540" strokeWidth="0.5" />
-      {pitches.map((p, i) => {
-        const speed = p.start_speed || minS;
-        const ratio = (speed - minS) / (maxS - minS);
-        const barH = Math.max(2, ratio * innerH);
-        const x = padX + slot * i + slot / 2 - barW / 2;
-        const y = h - padBot - barH;
-        const color = pitchTypeColor(p.pitch_type);
-        const isLatest = i === pitches.length - 1;
-        return (
-          <g key={p.pitch_number}>
-            <rect x={x} y={y} width={barW} height={barH}
-                  fill={color} opacity={isLatest ? 0.95 : 0.75} rx="0.8" />
-            {isLatest && (
-              <rect x={x - 0.5} y={y - 0.5} width={barW + 1} height={barH + 1}
-                    fill="none" stroke={color} strokeWidth="0.6" rx="1" />
-            )}
-            <text x={x + barW / 2} y={y - 2.5}
-                  fontSize="5.5" textAnchor="middle" fill="#c2cad4" fontWeight="600">
-              {speed.toFixed(1)}
-            </text>
-            <text x={x + barW / 2} y={h - padBot + 6}
-                  fontSize="5" textAnchor="middle" fill={color} fontWeight="700">
-              {p.pitch_type}
-            </text>
-            <text x={x + barW / 2} y={h - padBot + 11.5}
-                  fontSize="4.5" textAnchor="middle" fill="#5a626c">
-              #{p.pitch_number}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
-  );
-}
-
-// ── ZoneChart: strike-zone rectangle with all AB pitches numbered ────
-function ZoneChart({ pitches }) {
-  return (
-    <svg className="chart zone" viewBox="0 0 100 130" preserveAspectRatio="xMidYMid meet">
-      <rect x="6" y="12" width="88" height="106" fill="none"
-            stroke="#2d3540" strokeWidth="0.5" strokeDasharray="1.4,1.4" rx="1" />
-      <rect x="25" y="30" width="50" height="70"
-            fill="rgba(227,179,65,0.03)" stroke="#e3b341" strokeWidth="0.7" />
-      <line x1="41.67" y1="30" x2="41.67" y2="100" stroke="#2d3540" strokeWidth="0.35" />
-      <line x1="58.33" y1="30" x2="58.33" y2="100" stroke="#2d3540" strokeWidth="0.35" />
-      <line x1="25"    y1="53.33" x2="75" y2="53.33" stroke="#2d3540" strokeWidth="0.35" />
-      <line x1="25"    y1="76.66" x2="75" y2="76.66" stroke="#2d3540" strokeWidth="0.35" />
-      <polygon points="42,118 58,118 58,121 50,126 42,121"
-               fill="#11161e" stroke="#3a4351" strokeWidth="0.4" />
-      {pitches.map((p, i) => {
-        const [cx, cy] = zoneXY(p.zone);
-        const jx = (((p.pitch_number * 37) % 7) - 3) * 0.7;
-        const jy = (((p.pitch_number * 53) % 7) - 3) * 0.7;
-        const isLatest = i === pitches.length - 1;
-        const color = pitchTypeColor(p.pitch_type);
-        return (
-          <g key={p.pitch_number}>
-            <circle cx={cx + jx} cy={cy + jy}
-                    r={isLatest ? 5.4 : 4.6}
-                    fill={color}
-                    stroke={isLatest ? "#d6dde6" : "#11161e"}
-                    strokeWidth={isLatest ? 1.2 : 0.8} />
-            <text x={cx + jx} y={cy + jy + 0.4}
-                  fontSize={isLatest ? 5.2 : 4.6}
-                  textAnchor="middle" dominantBaseline="middle"
-                  fill="#fff"
-                  fontWeight="700">
-              {p.pitch_number}
-            </text>
-          </g>
-        );
-      })}
-      {pitches.length === 0 && (
-        <text x="50" y="68" fontSize="6" textAnchor="middle"
-              fill="#5a626c" fontStyle="italic">no pitches yet</text>
-      )}
-    </svg>
-  );
-}
-
-// ── confidence micro-bar ───────────────────────────────────────────────
-function ConfBar({ value }) {
-  const v = Math.max(0, Math.min(1, value || 0));
-  const tier = v >= 0.7 ? "high" : v >= 0.55 ? "mid" : "low";
-  return (
-    <span className={`conf ${tier}`}>
-      <span className="conf-bar">
-        <i style={{ width: `${v * 100}%` }} />
-      </span>
-      <span className="conf-val">{v.toFixed(2)}</span>
-    </span>
-  );
-}
-
-// ── market category meta ─────────────────────────────────────────────
-const MARKET_META = {
-  pitch_speed_ou:      { cat: "live",        label: "Pitch speed",    short: "Pitch speed",    subj: "next pitch" },
-  pitch_result:        { cat: "live",        label: "Pitch result",   short: "Pitch result",   subj: "next pitch" },
-  ab_result:           { cat: "in_progress", label: "AB result",      short: "AB result",      subj: "this AB" },
-  ab_pitches_ou:       { cat: "in_progress", label: "AB pitches",     short: "AB pitches",     subj: "this AB" },
-  next_ab_result:      { cat: "upcoming",    label: "Next AB result", short: "Next AB result", subj: "next AB" },
-  next_ab_pitches_ou:  { cat: "upcoming",    label: "Next AB pitches",short: "Next AB pitches",subj: "next AB" },
-};
-const CAT_LABEL = { live: "Live", in_progress: "In progress", upcoming: "Upcoming" };
-
-// ── prediction renderer per market ─────────────────────────────────────
-function predictionFor(m) {
-  if (m.market === "pitch_speed_ou") return m.predicted_value.toFixed(1);
-  if (m.market === "ab_pitches_ou" || m.market === "next_ab_pitches_ou")
-    return m.predicted_value.toFixed(1);
-  if (m.market === "pitch_result" && m.probs) {
-    const top = Object.entries(m.probs).sort((a, b) => b[1] - a[1])[0];
-    return `${top[0].replace("_", "/")} ${fmtPct(top[1])}`;
-  }
-  if ((m.market === "ab_result" || m.market === "next_ab_result") && m.probs) {
-    const sorted = Object.entries(m.probs).sort((a, b) => b[1] - a[1]);
-    return `${sorted[0][0]} ${fmtPct(sorted[0][1])}`;
-  }
-  return "—";
-}
-
-// stale: last pitch >25s ago
-function stalenessMs(game) {
-  if (!game.situation?.last_pitch_ts) return null;
-  return Date.now() - new Date(game.situation.last_pitch_ts).getTime();
-}
-function isStale(game) {
-  const m = stalenessMs(game);
-  return m != null && m > 25000;
-}
-
-// ── pick helpers ───────────────────────────────────────────────────────
-function pickLabel(market, sideOrOutcome) {
-  const s = (sideOrOutcome || "").toLowerCase();
-  if (market === "pitch_speed_ou")     return s === "over" ? "SPD O" : "SPD U";
-  if (market === "ab_pitches_ou")      return s === "over" ? "ABP O" : "ABP U";
-  if (market === "next_ab_pitches_ou") return s === "over" ? "N·ABP O" : "N·ABP U";
-  if (market === "pitch_result") {
-    if (s === "strike_foul") return "STK/F";
-    if (s === "ball")        return "BALL";
-    if (s === "in_play")     return "IN-PLAY";
-  }
-  if (market === "ab_result" || market === "next_ab_result") {
-    if (s === "strikeout") return "K";
-    if (s === "walk")      return "BB";
-    if (s === "hit")       return "HIT";
-    if (s === "out")       return "OUT";
-  }
-  return market.toUpperCase();
-}
-
-function computePicks(g, threshold) {
-  const picks = [];
-  const eat = (m, cat) => {
-    if (m.line != null && m.edge != null && m.edge >= threshold) {
-      picks.push({
-        market: m.market, outcome: null, cat,
-        edge: m.edge, label: pickLabel(m.market, m.recommendation),
-      });
-    }
-    if (m.outcomes) {
-      for (const o of m.outcomes) {
-        if (o.edge >= threshold) {
-          picks.push({
-            market: m.market, outcome: o.name, cat,
-            edge: o.edge, label: pickLabel(m.market, o.name),
-          });
-        }
-      }
-    }
-  };
-  for (const m of (g.markets || [])) eat(m, MARKET_META[m.market]?.cat);
-  for (const m of (g.next_ab_markets || [])) eat(m, MARKET_META[m.market]?.cat);
-  picks.sort((a, b) => b.edge - a.edge);
-  return picks;
-}
-
-// ── GamePicker: topbar multi-select dropdown ───────────────────────────
-function GamePicker({ allGames, selected, onChange }) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef(null);
-  useEffect(() => {
-    if (!open) return;
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, [open]);
-  const toggle = (pk) => {
-    const next = new Set(selected);
-    if (next.has(pk)) next.delete(pk); else next.add(pk);
-    onChange(next);
-  };
-  return (
-    <div className="game-picker" ref={ref}>
-      <button className={`gp-trigger ${open ? "open" : ""}`} onClick={() => setOpen(o => !o)}>
-        <span className="lbl">GAMES</span>
-        <b>{selected.size}<span className="slash">/</span>{allGames.length}</b>
-        <span className="car">{open ? "▴" : "▾"}</span>
-      </button>
-      {open && (
-        <div className="gp-pop">
-          <div className="gp-actions">
-            <button onClick={() => onChange(new Set(allGames.map(g => g.game_pk)))}>All</button>
-            <button onClick={() => onChange(new Set())}>None</button>
-            <span className="gp-act-spacer" />
-            <span className="gp-count">{selected.size} selected</span>
+  <main id="top">
+    <!-- ── Hero ───────────────────────────────────────────────────── -->
+    <section class="hero">
+      <div class="wrap hero-inner">
+        <div class="hero-copy">
+          <span class="eyebrow">MLB · At-Bat Markets</span>
+          <h1>The next pitch, called before it's thrown.</h1>
+          <p class="lede">
+            Model-driven picks on strikeouts, pitch speed, and at-bat outcomes —
+            each with the reasoning laid out and a track record you can check
+            before you trust it.
+          </p>
+          <div class="hero-actions">
+            <a class="btn btn-primary" href="#picks">See today's picks</a>
+            <a class="btn btn-ghost" href="#record">View the track record</a>
           </div>
-          <div className="gp-list">
-            {allGames.map(g => {
-              const checked = selected.has(g.game_pk);
-              const stale = isStale(g);
-              return (
-                <label key={g.game_pk} className={`gp-row ${checked ? "checked" : ""} ${stale ? "stale" : ""}`}>
-                  <input type="checkbox" checked={checked} onChange={() => toggle(g.game_pk)} />
-                  <span className="gp-match">{g.game_label}</span>
-                  <span className="gp-sit">
-                    <span className="half">{g.situation.half}{g.situation.inning}</span>
-                    <span className="count">{g.situation.count}</span>
-                  </span>
-                  <span className="gp-edge">{g.top_edge > 0 ? fmtEdge(g.top_edge) : <span className="dim">—</span>}</span>
-                  {stale && <span className="gp-stale">STALE</span>}
-                </label>
-              );
-            })}
+          <p class="hero-fineprint">21+ · For entertainment · 1-800-GAMBLER</p>
+        </div>
+        <!-- Confidence stats pulled from the track record -->
+        <aside class="hero-stats" id="hero-stats" aria-label="Track record summary">
+          <div class="stat-card skeleton-card"></div>
+        </aside>
+      </div>
+    </section>
+
+    <!-- ── Today's picks ──────────────────────────────────────────── -->
+    <section id="picks" class="section">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2>Today's quick picks</h2>
+            <p class="section-sub" id="picks-sub">Loading today's board…</p>
+          </div>
+          <div class="filters" id="filters" role="tablist" aria-label="Filter picks by market"></div>
+        </div>
+        <div class="picks-grid" id="picks-grid"></div>
+      </div>
+    </section>
+
+    <!-- ── Track record ───────────────────────────────────────────── -->
+    <section id="record" class="section section-alt">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2>Track record</h2>
+            <p class="section-sub" id="record-sub">Every graded pick, kept in the open.</p>
           </div>
         </div>
-      )}
-    </div>
-  );
-}
-
-
-// ══════════════════════════════════════════════════════════════════════════
-// panels.jsx — EdgesFeed (left rail) and GamePane (right card)
-// ══════════════════════════════════════════════════════════════════════════
-const { useState: useStateP, useMemo: useMemoP, useEffect: useEffectP, useRef: useRefP } = React;
-
-// ── Affiliate "Bet this" layer ─────────────────────────────────────────
-// Books + disclaimer come from GET /sportsbooks (affiliate-resolved server-side).
-const BooksCtx = React.createContext({ books: [], disclaimer: "" });
-
-// Fire-and-forget click log — the conversion funnel affiliate deals run on.
-// Never blocks the navigation to the book; failures are swallowed.
-function trackBetClick(payload) {
-  try {
-    const body = JSON.stringify(payload);
-    if (navigator.sendBeacon) {
-      navigator.sendBeacon(API_BASE + "/track/click", new Blob([body], { type: "application/json" }));
-    } else {
-      fetch(API_BASE + "/track/click", { method: "POST", headers: { "Content-Type": "application/json" }, body, keepalive: true }).catch(() => {});
-    }
-  } catch (_) {}
-}
-
-// One-tap routing to the books for an actionable pick. Renders only when an
-// edge is real; routes to each book's affiliate-tagged MLB live page (stable
-// per-pitch deep links don't exist yet) and logs the click for attribution.
-function BetCTA({ g, market, side, edge }) {
-  const { books } = React.useContext(BooksCtx);
-  if (!books || !books.length) return null;
-  const onBet = (book) => {
-    trackBetClick({
-      game_pk: g.game_pk, market, side, book: book.key,
-      edge: edge ?? null, affiliate_configured: book.affiliate_configured,
-    });
-    window.open(book.url, "_blank", "noopener,noreferrer");
-  };
-  return (
-    <div className="mk-cta" role="group" aria-label="Place this bet">
-      <span className="mk-cta-lead">BET {side ? side.toUpperCase() : ""} ▸</span>
-      {books.map((b) => (
-        <button
-          key={b.key}
-          className={`mk-cta-book ${b.affiliate_configured ? "" : "no-aff"}`}
-          title={`Open ${b.name} MLB live betting${b.affiliate_configured ? "" : " (affiliate id not set)"}`}
-          onClick={() => onBet(b)}
-        >
-          {b.short}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-// ── Market row (one bet within a game pane) ────────────────────────────
-function MarketRow({ g, m, flash, threshold }) {
-  const meta = MARKET_META[m.market];
-  if (!meta) return null;
-  const tier = edgeTier(m.edge);
-  const flashEdge = flash.has(`${g.game_pk}:${m.market}:edge`);
-  const flashPred = flash.has(`${g.game_pk}:${m.market}:predicted_value`);
-  const isOU = m.market.endsWith("_ou");
-  const isPick = m.edge != null && m.line != null && m.edge >= threshold;
-  return (
-    <>
-      <div className={`mk-row edge-${tier} ${isPick ? "is-pick" : ""}`}>
-        <span className="mk-label">{meta.short}</span>
-        <span className="mk-bet">
-          {isOU ? (
-            <>
-              <b className="side">{m.recommendation?.toUpperCase()}</b>{" "}
-              <span className="line">{fmtLine(m.line)}</span>
-              <span className="unit">{m.market.includes("speed") ? " mph" : ""}</span>
-            </>
-          ) : (
-            <span className="bet-text">no line yet</span>
-          )}
-        </span>
-        <span className="mk-price">{m.price != null ? fmtAmer(m.price) : <span className="dim">—</span>}</span>
-        <span className="mk-implied">{m.price != null ? fmtPct(impliedFromAmerican(m.price)) : <span className="dim">—</span>}</span>
-        <span className="mk-pred"><Flash flash={flashPred}>{predictionFor(m)}</Flash></span>
-        <span className="mk-edge"><Flash flash={flashEdge}>{fmtEdge(m.edge)}</Flash></span>
-        <span className="mk-conf"><ConfBar value={m.confidence} /></span>
-      </div>
-      {isPick && <BetCTA g={g} market={m.market} side={m.recommendation} edge={m.edge} />}
-    </>
-  );
-}
-
-// ── OutcomeRows: one mk-row per outcome, sorted by predicted prob desc ──
-function OutcomeRows({ g, m, flash, threshold }) {
-  const meta = MARKET_META[m.market];
-  if (!meta || !m.outcomes) return null;
-  const sorted = [...m.outcomes].sort((a, b) => b.prob - a.prob);
-  return sorted.map((o, i) => {
-    const tier = edgeTier(o.edge);
-    const isFirst = i === 0;
-    const isLast = i === sorted.length - 1;
-    const isPick = o.edge >= threshold;
-    return (
-      <React.Fragment key={o.name}>
-        <div
-          className={`mk-row outcome edge-${tier} ${isFirst ? "first-outcome" : ""} ${isLast ? "last-outcome" : ""} ${isPick ? "is-pick" : ""} o-${o.name}`}
-        >
-          <span className="mk-label">{isFirst ? meta.short : <span className="mk-rule" />}</span>
-          <span className="mk-bet">
-            <b className={`outcome-name o-${o.name}`}>{o.name.replace("_", "/")}</b>
-          </span>
-          <span className="mk-price">{fmtAmer(o.price)}</span>
-          <span className="mk-implied">{fmtPct(impliedFromAmerican(o.price))}</span>
-          <span className="mk-pred">{fmtPct(o.prob)}</span>
-          <span className="mk-edge">
-            <Flash flash={flash.has(`${g.game_pk}:${m.market}:${o.name}:edge`)}>
-              {fmtEdge(o.edge)}
-            </Flash>
-          </span>
-          <span className="mk-conf"><ConfBar value={o.confidence} /></span>
+        <div class="record-tiles" id="record-tiles"></div>
+        <div class="record-cols">
+          <div class="record-block">
+            <h3>By market</h3>
+            <div class="table-scroll">
+              <table class="rec-table" id="bymarket-table"></table>
+            </div>
+          </div>
+          <div class="record-block">
+            <h3>Recently settled</h3>
+            <div class="table-scroll">
+              <table class="rec-table" id="recent-table"></table>
+            </div>
+          </div>
         </div>
-        {isPick && <BetCTA g={g} market={m.market} side={o.name} edge={o.edge} />}
-      </React.Fragment>
-    );
-  });
-}
+      </div>
+    </section>
 
-// fallback for prob markets that lack an outcomes array
-function ProbRow({ g, m, flash }) {
-  const meta = MARKET_META[m.market];
-  if (!meta || !m.probs) return null;
-  const sorted = Object.entries(m.probs).sort((a, b) => b[1] - a[1]);
-  return (
-    <div className="mk-prob">
-      <span className="mk-label">{meta.short}</span>
-      <span className="mk-prob-bars">
-        {sorted.map(([k, v]) => (
-          <span key={k} className={`pb pb-${k}`} title={`${k} ${fmtPct(v)}`}>
-            <span className="pb-label">{k.replace("_", "/")}</span>
-            <span className="pb-bar"><i style={{ width: `${v * 100}%` }} /></span>
-            <span className="pb-val">{fmtPct(v)}</span>
-          </span>
-        ))}
-      </span>
-      <span className="mk-edge dim">no line</span>
+    <!-- ── How it works ───────────────────────────────────────────── -->
+    <section id="how" class="section">
+      <div class="wrap">
+        <div class="section-head"><h2>How it works</h2></div>
+        <ol class="steps">
+          <li>
+            <span class="step-num">1</span>
+            <h3>Ingest</h3>
+            <p>Historical Statcast plus a live MLB feed give us pitch-by-pitch context for every matchup.</p>
+          </li>
+          <li>
+            <span class="step-num">2</span>
+            <h3>Model</h3>
+            <p>Per-market models project the next pitch and at-bat, then compare to the live line to find an edge.</p>
+          </li>
+          <li>
+            <span class="step-num">3</span>
+            <h3>Publish</h3>
+            <p>Only +EV picks make the board — each with the supporting reasons and a one-tap link to the book.</p>
+          </li>
+          <li>
+            <span class="step-num">4</span>
+            <h3>Grade</h3>
+            <p>Every pick is settled win/loss/push and added to the public record. No deleting cold streaks.</p>
+          </li>
+        </ol>
+      </div>
+    </section>
+  </main>
+
+  <!-- ── Footer ───────────────────────────────────────────────────── -->
+  <footer class="site-footer">
+    <div class="wrap footer-inner">
+      <div class="footer-brand">
+        <span class="brand-mark">◆</span>
+        <span class="brand-name">Next<span>Pitch</span></span>
+        <p class="footer-tag">MLB at-bat picks, with the receipts.</p>
+      </div>
+      <p class="disclaimer" id="disclaimer"></p>
     </div>
-  );
-}
-
-// ── helper: which categories are visible in the given tab
-function activeCats(tab) {
-  return tab === "live"
-    ? new Set(["live", "in_progress"])
-    : new Set(["upcoming"]);
-}
-
-// ── Game pane (one card in the right grid) ─────────────────────────────
-function GamePane({ g, filters, flash }) {
-  const stale = isStale(g);
-  const isUpcomingTab = filters.tab === "upcoming";
-
-  const live = (g.markets || []).filter((m) => MARKET_META[m.market]?.cat === "live");
-  const IN_PROG_ORDER = ["ab_pitches_ou", "ab_result"];
-  const inProg = (g.markets || [])
-    .filter((m) => MARKET_META[m.market]?.cat === "in_progress")
-    .sort((a, b) => IN_PROG_ORDER.indexOf(a.market) - IN_PROG_ORDER.indexOf(b.market));
-  const upcoming = (g.next_ab_markets || []).filter((m) => MARKET_META[m.market]?.cat === "upcoming");
-
-  const allPitches = g.current_pa_pitches || [];
-  const VISIBLE = 8;
-  const overflow = allPitches.length > VISIBLE;
-  const pitchListRef = useRefP(null);
-  useEffectP(() => {
-    if (pitchListRef.current) {
-      pitchListRef.current.scrollTop = pitchListRef.current.scrollHeight;
-    }
-  }, [allPitches.length]);
-
-  const tabMkts = isUpcomingTab ? upcoming : [...live, ...inProg];
-  const tabTopEdge = tabMkts.reduce((mx, m) => (m.edge != null && m.edge > mx ? m.edge : mx), 0);
-  const tier = edgeTier(tabTopEdge);
-
-  const allPicks = computePicks(g, filters.minEdge);
-  const tabPicks = allPicks.filter((p) => activeCats(filters.tab).has(p.cat));
-
-  return (
-    <article
-      className={`pane edge-${tier} ${isUpcomingTab ? "mode-upcoming" : "mode-live"} ${stale ? "is-stale" : ""}`}
-      id={`game-${g.game_pk}`}
-    >
-      {/* HEAD: matchup + score + situation + runners */}
-      <header className="pane-head">
-        <div className="ph-row1">
-          <span className="ph-match">
-            <span className="team away">{g.away}</span>
-            <span className="ph-score-away">{g.score.away}</span>
-            <span className="ph-at">@</span>
-            <span className="team home">{g.home}</span>
-            <span className="ph-score-home">{g.score.home}</span>
-          </span>
-          <span className={`ph-inning half-${g.situation.half === "▲" ? "top" : "bot"}`}>
-            {g.situation.half}{g.situation.inning}
-          </span>
-          <span className="ph-picks">
-            {tabPicks.length === 0 && (
-              <span className="ph-no-pick">no picks ≥ {fmtEdge(filters.minEdge)}</span>
-            )}
-            {tabPicks.map((p) => (
-              <span key={`${p.market}:${p.outcome || "side"}`} className="ph-pick">
-                <span className="pe">{fmtEdge(p.edge)}</span>
-                <span className="pl">{p.label}</span>
-              </span>
-            ))}
-          </span>
-          <span className="ph-spacer" />
-          {stale && (
-            <span className="ph-stale" title="last pitch >25s ago — between-AB or feed lag">
-              STALE {Math.round(stalenessMs(g) / 1000)}s
-            </span>
-          )}
-        </div>
-        <div className="ph-row2">
-          <Runners runners={g.situation.runners} />
-          <CountPips count={g.situation.count} outs={g.situation.outs} />
-          <span className="ph-meta">
-            <span className="ph-meta-line">
-              <span className="lbl">P</span>
-              <span className={`pname hand-${g.pitcher_hand}`}>{g.pitcher_name}</span>
-              <span className="hand">{g.pitcher_hand}HP</span>
-              <span className="ph-meta-stats inline">{g.pitcher_meta}</span>
-            </span>
-            <span className={`ph-meta-line ${isUpcomingTab ? "muted" : ""}`}>
-              <span className="lbl">B</span>
-              <span className={`bname hand-${g.batter_hand}`}>{g.batter_name}</span>
-              <span className="hand">{g.batter_hand}HB</span>
-              <span className="ph-meta-stats inline">{g.batter_meta}</span>
-            </span>
-            {isUpcomingTab && (
-              <span className="ph-meta-line on-deck-line">
-                <span className="lbl">▶</span>
-                <span className="bname on-deck-name">{g.on_deck}</span>
-                <span className="hand on-deck-tag">ON DECK</span>
-              </span>
-            )}
-          </span>
-          <span className="ph-onbox">
-            {!isUpcomingTab && (
-              <>
-                <span className="lbl">on deck</span>
-                <span className="val">{g.on_deck}</span>
-              </>
-            )}
-            <span className="lbl game-pc">pitch ct</span>
-            <span className="val">{g.situation.pitch_count_game}</span>
-          </span>
-        </div>
-      </header>
-
-      {/* PA LOG: vertical pitch feed (Live tab only) */}
-      {!isUpcomingTab && (
-        <section className="pane-pa">
-          <div className="pa-head">
-            <span className="pa-title">THIS AT BAT</span>
-            <span className="pa-sub">
-              {allPitches.length === 0
-                ? "0 pitches"
-                : `${allPitches.length} pitch${allPitches.length === 1 ? "" : "es"}`}
-              {overflow && <span className="pa-overflow"> · scroll for #1</span>}
-            </span>
-          </div>
-          <div className="pa-body">
-            <div className={`pa-list ${overflow ? "overflow" : ""}`} ref={pitchListRef}>
-              {allPitches.length === 0 && (
-                <div className="pa-empty">No pitches yet in this PA · awaiting first delivery</div>
-              )}
-              {allPitches.map((p, i) => (
-                <PitchRow key={p.pitch_number} p={p} isLatest={i === allPitches.length - 1} />
-              ))}
-              {!stale && allPitches.length > 0 && (
-                <div className="pitch-row next-slot">
-                  <span className="pr-num">#{allPitches.length + 1}</span>
-                  <span className="pr-type">?</span>
-                  <span className="pr-spd">—</span>
-                  <span className="pr-desc">awaiting next pitch</span>
-                  <span className="pr-count">—</span>
-                </div>
-              )}
-            </div>
-            <div className="pa-chart pa-zone">
-              <div className="chart-title">LOCATION</div>
-              <div className="chart-frame">
-                <ZoneChart pitches={allPitches} />
-              </div>
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* MARKETS */}
-      <section className="pane-markets">
-        {!isUpcomingTab && live.length > 0 && (
-          <div className="mk-group cat-live">
-            <div className="mk-group-head">
-              <span className="dot" /> LIVE · NEXT PITCH
-              {!stale && <span className="mk-bullseye" title="closes when next pitch is thrown">·  closes in ≤ {Math.max(0, 20 - Math.round(stalenessMs(g) / 1000))}s</span>}
-            </div>
-            <div className="mk-table">
-              <div className="mk-th">
-                <span>Market</span><span>Bet</span><span>Price</span><span>Implied</span><span>Predicted</span><span>Edge</span><span>Confidence</span>
-              </div>
-              {live.map((m) =>
-                m.line != null
-                  ? <MarketRow key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
-                  : m.outcomes
-                    ? <OutcomeRows key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
-                    : <ProbRow key={m.market} g={g} m={m} flash={flash} />
-              )}
-            </div>
-          </div>
-        )}
-
-        {!isUpcomingTab && inProg.length > 0 && (
-          <div className="mk-group cat-in-progress">
-            <div className="mk-group-head">
-              <span className="dot" /> IN PROGRESS · THIS AT BAT
-              <span className="mk-bullseye">·  {g.situation.pitch_count_pa} pitches in</span>
-            </div>
-            <div className="mk-table">
-              <div className="mk-th">
-                <span>Market</span><span>Bet</span><span>Price</span><span>Implied</span><span>Predicted</span><span>Edge</span><span>Confidence</span>
-              </div>
-              {inProg.map((m) =>
-                m.line != null
-                  ? <MarketRow key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
-                  : m.outcomes
-                    ? <OutcomeRows key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
-                    : <ProbRow key={m.market} g={g} m={m} flash={flash} />
-              )}
-            </div>
-          </div>
-        )}
-
-        {isUpcomingTab && upcoming.length > 0 && (
-          <div className="mk-group cat-upcoming">
-            <div className="mk-group-head">
-              <span className="dot" /> UPCOMING · NEXT AT BAT
-              <span className="mk-bullseye">·  vs {g.on_deck}</span>
-            </div>
-            <div className="mk-table">
-              <div className="mk-th">
-                <span>Market</span><span>Bet</span><span>Price</span><span>Implied</span><span>Predicted</span><span>Edge</span><span>Confidence</span>
-              </div>
-              {upcoming.map((m) =>
-                m.line != null
-                  ? <MarketRow key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
-                  : m.outcomes
-                    ? <OutcomeRows key={m.market} g={g} m={m} flash={flash} threshold={filters.minEdge} />
-                    : <ProbRow key={m.market} g={g} m={m} flash={flash} />
-              )}
-            </div>
-          </div>
-        )}
-
-        {!isUpcomingTab && live.length === 0 && inProg.length === 0 && (
-          <div className="mk-empty">No live or in-progress markets for this AB.</div>
-        )}
-        {isUpcomingTab && upcoming.length === 0 && (
-          <div className="mk-empty">No upcoming markets posted for the next AB.</div>
-        )}
-      </section>
-
-      {/* FOOTER: audit trail / features */}
-      <footer className="pane-foot">
-        <span className="audit-lbl">FEATURES</span>
-        <span className="audit-chips">
-          {Array.from(new Set((g.markets || []).flatMap((m) => m.features_used || []))).map((f) => (
-            <span key={f} className="chip-feat">{f}</span>
-          ))}
-        </span>
-        <span className="audit-meta">
-          freq_v2 · n={(g.markets || []).reduce((s, m) => Math.max(s, m.sample_size || 0), 0)}
-        </span>
-      </footer>
-    </article>
-  );
-}
-
-
-// ══════════════════════════════════════════════════════════════════════════
-// app.jsx — Top bar, App root, live-feed poller
-//
-// Live game state (situation + pitches + names) comes from the backend
-// `/live` endpoint. Odds/markets/edges/outcomes/next-AB markets are still
-// sampled — the odds feed isn't wired up yet. Games that aren't in the
-// live feed are not shown, even if the bundled mock has them.
-// ══════════════════════════════════════════════════════════════════════════
-const { useState: useS, useEffect: useE, useMemo: useM, useRef: useR } = React;
-
-const API_BASE = window.PITCH_EDGE_API || "http://localhost:8001";
-const POLL_MS = 8000;
-
-function parseTeams(label) {
-  const m = /^(\S+)\s*@\s*(\S+)/.exec(label || "");
-  return m ? { away: m[1], home: m[2] } : { away: "AWY", home: "HOM" };
-}
-
-// Pull a sample odds template for a given game_pk so each live game gets a
-// distinct, plausible set of markets/outcomes/next-AB lines.
-function sampleOddsFor(gamePk) {
-  const pool = window.MOCK.GAMES;
-  const tpl = pool[gamePk % pool.length];
-  return JSON.parse(JSON.stringify({
-    markets: tpl.markets,
-    next_ab_markets: tpl.next_ab_markets || [],
-  }));
-}
-
-// Merge a /live game with a sample odds template, preserving prior odds
-// state across polls so jitter accumulates naturally.
-function augmentLiveGame(apiGame, prevByPk) {
-  const teams = parseTeams(apiGame.game_label);
-  const prev = prevByPk.get(apiGame.game_pk);
-  const odds = prev
-    ? { markets: prev.markets, next_ab_markets: prev.next_ab_markets }
-    : sampleOddsFor(apiGame.game_pk);
-  const sit = apiGame.situation || {};
-  const situation = {
-    inning: sit.inning ?? null,
-    half: sit.half ?? "▲",
-    count: sit.count ?? "0-0",
-    outs: sit.outs ?? 0,
-    pitcher_id: sit.pitcher_id,
-    batter_id: sit.batter_id,
-    pitch_count_pa: sit.pitch_count_pa ?? 0,
-    pitch_count_game: sit.pitch_count_game ?? prev?.situation?.pitch_count_game ?? 0,
-    last_pitch_ts: sit.last_pitch_ts ?? null,
-    runners: sit.runners || prev?.situation?.runners || { first: false, second: false, third: false },
-  };
-  return {
-    game_pk: apiGame.game_pk,
-    game_label: apiGame.game_label || `${teams.away} @ ${teams.home}`,
-    away: teams.away,
-    home: teams.home,
-    score: apiGame.score || prev?.score || { away: 0, home: 0 },
-    pitcher_name: apiGame.pitcher_name || prev?.pitcher_name || "—",
-    pitcher_hand: apiGame.pitcher_hand || prev?.pitcher_hand || "R",
-    pitcher_meta: apiGame.pitcher_meta || prev?.pitcher_meta || "—",
-    batter_name: apiGame.batter_name || prev?.batter_name || "—",
-    batter_hand: apiGame.batter_hand || prev?.batter_hand || "R",
-    batter_meta: apiGame.batter_meta || prev?.batter_meta || "—",
-    on_deck: apiGame.on_deck || prev?.on_deck || "—",
-    situation,
-    current_pa_pitches: apiGame.current_pa_pitches || [],
-    markets: odds.markets,
-    next_ab_markets: odds.next_ab_markets,
-    top_edge: 0,
-    has_edge: false,
-    model_version: apiGame.model_version || "freq_v2",
-  };
-}
-
-function recomputeTopEdge(g) {
-  let top = 0;
-  for (const m of g.markets) if (m.edge != null && m.edge > top) top = m.edge;
-  g.top_edge = top;
-  g.has_edge = top > 0.05;
-  return g;
-}
-
-async function fetchLive() {
-  const r = await fetch(API_BASE + "/live");
-  if (!r.ok) throw new Error(`/live → ${r.status}`);
-  return await r.json();
-}
-
-function TopBar({ filters, setFilters, allGames, gameCount, edgeCount, tickAgo, modelVersion, fetchErr }) {
-  return (
-    <header className="topbar">
-      <div className="tb-brand">
-        <span className="brand">PITCH·EDGE</span>
-        <span className="live-pill">
-          <span className="dot" /> LIVE
-        </span>
-      </div>
-
-      <div className="tb-tabs" role="tablist">
-        <button
-          role="tab"
-          className={`tb-tab tab-live ${filters.tab === "live" ? "on" : ""}`}
-          onClick={() => setFilters({ ...filters, tab: "live" })}
-        >
-          <span className="d" /> Live
-          <span className="ct">next pitch · current AB</span>
-        </button>
-        <button
-          role="tab"
-          className={`tb-tab tab-up ${filters.tab === "upcoming" ? "on" : ""}`}
-          onClick={() => setFilters({ ...filters, tab: "upcoming" })}
-        >
-          <span className="d" /> Upcoming
-          <span className="ct">next AB markets</span>
-        </button>
-      </div>
-
-      <GamePicker
-        allGames={allGames}
-        selected={filters.selectedGamePks}
-        onChange={(next) => setFilters({ ...filters, selectedGamePks: next })}
-      />
-
-      <label className="tb-thresh">
-        <span className="lbl">edge ≥</span>
-        <input
-          type="range" min="0" max="10" step="0.5"
-          value={filters.minEdge * 100}
-          onChange={(e) => setFilters({ ...filters, minEdge: parseFloat(e.target.value) / 100 })}
-        />
-        <span className="val">{(filters.minEdge * 100).toFixed(1)}%</span>
-      </label>
-
-      <div className="tb-right">
-        <span className="tb-stat"><b>{edgeCount}</b> edges · <b>{gameCount}</b> live</span>
-        <span className="tb-model">{modelVersion}</span>
-        {fetchErr && (
-          <span className="tb-feed-err" title={fetchErr}>feed offline</span>
-        )}
-        <span className="tb-tick">
-          <span className={`tick-dot ${fetchErr ? "err" : ""}`} />
-          tick · <b>{tickAgo}s</b> ago
-        </span>
-      </div>
-    </header>
-  );
-}
-
-function App() {
-  const [games, setGames] = useS([]);
-  const [flash, setFlash] = useS(new Set());
-  const [tickedAt, setTickedAt] = useS(Date.now());
-  const [loaded, setLoaded] = useS(false);
-  const [fetchErr, setFetchErr] = useS(null);
-  const [books, setBooks] = useS({ books: [], disclaimer: "" });
-  const [, force] = useS(0);
-
-  // Load the affiliate book registry once. Best-effort: the app works without
-  // it, the "Bet" CTAs just don't render.
-  useE(() => {
-    let cancelled = false;
-    fetch(API_BASE + "/sportsbooks")
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => { if (!cancelled && d) setBooks(d); })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, []);
-
-  const [filters, setFilters] = useS({
-    minEdge: 0.05,
-    tab: "live",
-    selectedGamePks: new Set(),
-  });
-
-  // Keep latest games available inside the poll closure without retriggering
-  // the effect on every state update.
-  const gamesRef = useR(games);
-  gamesRef.current = games;
-
-  // Live feed: prefer the SSE push stream (updates the instant a pitch lands),
-  // and fall back to interval polling of /live if the stream errors. Both paths
-  // funnel through the same augment → jitter → recompute pipeline, so the UI is
-  // identical regardless of transport. Raw /live payloads are kept keyed by
-  // game_pk so a single-game SSE push can be merged without dropping the rest.
-  useE(() => {
-    let cancelled = false;
-    let es = null;
-    let pollId = null;
-    const rawByPk = new Map();
-
-    // Re-augment + jitter the current raw set and push it into React state.
-    function ingestRaw() {
-      const apiGames = [...rawByPk.values()];
-      const prevByPk = new Map(gamesRef.current.map(g => [g.game_pk, g]));
-      let next = apiGames.map(g => augmentLiveGame(g, prevByPk));
-      const { games: jittered, flash: nf } = window.MOCK.tick(next);
-      next = jittered.map(recomputeTopEdge);
-      setGames(next);
-      setFlash(nf);
-      setTickedAt(Date.now());
-      setFetchErr(null);
-      setLoaded(true);
-      setTimeout(() => setFlash(new Set()), 750);
-      // Auto-select any newly-appeared live game so the user sees it.
-      setFilters((f) => {
-        const merged = new Set(f.selectedGamePks);
-        let changed = false;
-        for (const g of next) {
-          if (!merged.has(g.game_pk)) { merged.add(g.game_pk); changed = true; }
-        }
-        return changed ? { ...f, selectedGamePks: merged } : f;
-      });
-    }
-
-    function setSnapshot(apiGames) {
-      rawByPk.clear();
-      for (const g of apiGames) rawByPk.set(g.game_pk, g);
-      ingestRaw();
-    }
-    function setOneGame(apiGame) {
-      rawByPk.set(apiGame.game_pk, apiGame);
-      ingestRaw();
-    }
-
-    async function pollOnce() {
-      try {
-        const apiGames = await fetchLive();
-        if (!cancelled) setSnapshot(apiGames);
-      } catch (e) {
-        if (!cancelled) { setFetchErr(e.message || String(e)); setLoaded(true); }
-      }
-    }
-    function startPolling() {
-      if (pollId) return;
-      pollOnce();
-      pollId = setInterval(pollOnce, POLL_MS);
-    }
-    function stopPolling() {
-      if (pollId) { clearInterval(pollId); pollId = null; }
-    }
-
-    // Immediate first paint.
-    pollOnce();
-
-    // Live updates via SSE; fall back to polling on error.
-    try {
-      es = new EventSource(API_BASE + "/live/stream");
-      es.addEventListener("snapshot", (e) => {
-        if (cancelled) return;
-        stopPolling();
-        try { setSnapshot(JSON.parse(e.data)); } catch (_) {}
-      });
-      es.addEventListener("game", (e) => {
-        if (cancelled) return;
-        try { setOneGame(JSON.parse(e.data)); } catch (_) {}
-      });
-      es.onopen = () => { if (!cancelled) stopPolling(); };
-      es.onerror = () => { if (!cancelled) startPolling(); };
-    } catch (_) {
-      startPolling();
-    }
-
-    return () => {
-      cancelled = true;
-      stopPolling();
-      if (es) es.close();
-    };
-  }, []);
-
-  // re-render every 1s to keep "Xs ago" live
-  useE(() => {
-    const id = setInterval(() => force((x) => x + 1), 1000);
-    return () => clearInterval(id);
-  }, []);
-
-  const tickAgo = Math.max(0, Math.round((Date.now() - tickedAt) / 1000));
-
-  const sortedGames = useM(() => {
-    return [...games].sort((a, b) => {
-      const aStale = isStale(a), bStale = isStale(b);
-      if (aStale !== bStale) return aStale ? 1 : -1;
-      return (b.top_edge || 0) - (a.top_edge || 0);
-    });
-  }, [games, tickedAt]);
-
-  const gameSelectedSorted = useM(() => {
-    return sortedGames.filter(g => filters.selectedGamePks.has(g.game_pk));
-  }, [sortedGames, filters.selectedGamePks]);
-
-  const activeCatsSet = filters.tab === "live"
-    ? new Set(["live", "in_progress"])
-    : new Set(["upcoming"]);
-
-  const edgeCount = useM(() => {
-    let c = 0;
-    for (const g of games) {
-      if (!filters.selectedGamePks.has(g.game_pk)) continue;
-      const all = [...(g.markets || []), ...(g.next_ab_markets || [])];
-      for (const m of all) {
-        if (m.line != null && m.edge != null && m.edge >= filters.minEdge
-            && activeCatsSet.has(MARKET_META[m.market]?.cat)) c++;
-        if (m.outcomes && activeCatsSet.has(MARKET_META[m.market]?.cat)) {
-          for (const o of m.outcomes) if (o.edge >= filters.minEdge) c++;
-        }
-      }
-    }
-    return c;
-  }, [games, filters]);
-
-  const visibleGames = useM(() => {
-    if (filters.tab !== "upcoming") return gameSelectedSorted;
-    return gameSelectedSorted.filter((g) => (g.next_ab_markets || []).length > 0);
-  }, [gameSelectedSorted, filters.tab]);
-
-  return (
-    <BooksCtx.Provider value={books}>
-    <div className="app">
-      <TopBar
-        filters={filters}
-        setFilters={setFilters}
-        allGames={sortedGames}
-        gameCount={visibleGames.length}
-        edgeCount={edgeCount}
-        tickAgo={tickAgo}
-        modelVersion="freq_v2"
-        fetchErr={fetchErr}
-      />
-      <main className="main-grid">
-        {visibleGames.length === 0 ? (
-          <div className="empty-tab">
-            <div className="empty-title">
-              {!loaded
-                ? "Connecting to live feed…"
-                : fetchErr && games.length === 0
-                  ? "Live feed offline"
-                  : games.length === 0
-                    ? "No live games right now"
-                    : filters.selectedGamePks.size === 0
-                      ? "No games selected"
-                      : filters.tab === "upcoming"
-                        ? "No upcoming markets posted"
-                        : "No live at-bats"}
-            </div>
-            <div className="empty-sub">
-              {!loaded
-                ? `Polling ${API_BASE}/live`
-                : fetchErr && games.length === 0
-                  ? `Couldn't reach ${API_BASE}/live — ${fetchErr}. Retrying every ${POLL_MS / 1000}s.`
-                  : games.length === 0
-                    ? "Waiting for the live feed to post games. The grid will populate as games go live."
-                    : filters.selectedGamePks.size === 0
-                      ? "Open the Games picker in the top bar to choose games to show."
-                      : filters.tab === "upcoming"
-                        ? "Next-at-bat markets will appear here as the book posts them."
-                        : "All live games are between at-bats or off-air."}
-            </div>
-          </div>
-        ) : (
-          visibleGames.map((g) => (
-            <GamePane
-              key={g.game_pk}
-              g={g}
-              filters={filters}
-              flash={flash}
-            />
-          ))
-        )}
-      </main>
-      {books.disclaimer && (
-        <footer className="compliance-bar">{books.disclaimer}</footer>
-      )}
+    <div class="wrap footer-legal">
+      <span>© <span id="year"></span> NextPitch. Illustrative data — not affiliated with MLB.</span>
+      <span class="gamble-badge">Gambling problem? Call 1-800-GAMBLER</span>
     </div>
-    </BooksCtx.Provider>
-  );
-}
+  </footer>
 
-ReactDOM.createRoot(document.getElementById("root")).render(<App />);
-  </script>
+  <script src="picks-data.js"></script>
+  <script src="site.js"></script>
 </body>
 </html>
