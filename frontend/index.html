@@ -18,6 +18,7 @@
       <nav class="nav">
         <a href="#picks">Today's Picks</a>
         <a href="#record">Track Record</a>
+        <a href="#feed">Feed</a>
         <a href="#how">How It Works</a>
       </nav>
       <a class="btn btn-ghost nav-cta" href="#picks">View picks</a>
@@ -87,6 +88,29 @@
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <!-- ── Live data feed ────────────────────────────────────────────── -->
+    <section id="feed" class="section">
+      <div class="wrap">
+        <div class="section-head">
+          <div>
+            <h2>Live data feed</h2>
+            <p class="section-sub" id="feed-sub">The raw signals behind the picks, unfiltered — pick a live game below.</p>
+          </div>
+        </div>
+        <div class="feed-status" id="feed-status"></div>
+        <div class="feed-subtabs" id="feed-subtabs" role="tablist" aria-label="Select a live game feed"></div>
+        <div id="feed-panes"></div>
+
+        <div class="section-head" style="margin-top: 2.2rem;">
+          <div>
+            <h3>Database tables</h3>
+            <p class="section-sub">Latest 10 rows, every column, straight from Supabase.</p>
+          </div>
+        </div>
+        <div id="db-tables"></div>
       </div>
     </section>
 

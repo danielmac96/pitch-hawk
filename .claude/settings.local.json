@@ -23,7 +23,14 @@
       "WebFetch(domain:the-odds-api.com)",
       "WebFetch(domain:www.bettingusa.com)",
       "WebFetch(domain:simplebet.io)",
-      "WebFetch(domain:www.blog.bowtiedbettor.com)"
+      "WebFetch(domain:www.blog.bowtiedbettor.com)",
+      "Skill(run)",
+      "PowerShell(Start-Process -FilePath \".venv\\\\Scripts\\\\uvicorn.exe\" -ArgumentList \"backend.api.main:app\", \"--host\", \"127.0.0.1\", \"--port\", \"8000\" -WorkingDirectory \"C:\\\\Users\\\\danie\\\\Documents\\\\PythonProject\\\\mlb-next-pitch\" -WindowStyle Hidden -PassThru | Select-Object Id)",
+      "PowerShell(Start-Sleep -Seconds 4; try { $r = Invoke-WebRequest -Uri \"http://127.0.0.1:8000/health\" -UseBasicParsing -TimeoutSec 5; $r.StatusCode; $r.Content } catch { $_.Exception.Message })",
+      "PowerShell(Start-Sleep -Seconds 4; try { $r = Invoke-RestMethod -Uri \"http://127.0.0.1:8000/health\" -TimeoutSec 10; $r | ConvertTo-Json } catch { $_.Exception.Message; $_.Exception.Response.StatusCode })",
+      "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://127.0.0.1:8000/docs\" -UseBasicParsing -TimeoutSec 5; $r.StatusCode } catch { $_.Exception.Message }; try { $r2 = Invoke-WebRequest -Uri \"http://127.0.0.1:8000/\" -UseBasicParsing -TimeoutSec 5; $r2.StatusCode; $r2.Content } catch { $_.Exception.Message })",
+      "PowerShell($r = Invoke-RestMethod -Uri \"http://127.0.0.1:8000/openapi.json\" -TimeoutSec 5; $r.paths.PSObject.Properties.Name)",
+      "PowerShell(Stop-Process *)"
     ]
   }
 }

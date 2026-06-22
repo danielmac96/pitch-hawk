@@ -12,6 +12,11 @@
   // Point this at the deployed API to go live. Empty string => mock only.
   const API_BASE = "";
 
+  // The Feed section talks to the live backend directly (raw /health, /games,
+  // /live), independent of the mock picks/record data above.
+  const FEED_API_BASE = window.PITCH_EDGE_API || "http://localhost:8001";
+  const FEED_POLL_MS = 8000;
+
   const D = window.PICKS_DATA;
   const $ = (sel, root) => (root || document).querySelector(sel);
 
@@ -270,6 +275,216 @@
       </div>`;
   }
 
+  // ── live data feed (raw /health, /games, /live — unaugmented) ─────────
+  let feedGames = [];
+  let feedSelectedPk = null;
+
+  async function fetchJson(path) {
+    try {
+      const r = await fetch(`${FEED_API_BASE}${path}`);
+      return r.ok ? await r.json() : null;
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  function renderFeedStatus(health, gamesList) {
+    const healthKv = health
+      ? `<div class="feed-kv">
+          <span><b>status</b> ${esc(health.status)}</span>
+          <span><b>model_version</b> ${esc(health.model_version)}</span>
+          <span><b>stats_pitchers</b> ${esc(health.stats_pitchers)}</span>
+          <span><b>stats_ab_pitchers</b> ${esc(health.stats_ab_pitchers)}</span>
+          <span><b>stats_loaded_at</b> ${esc(health.stats_loaded_at)}</span>
+          <span><b>timestamp</b> ${esc(health.timestamp)}</span>
+        </div>`
+      : `<div class="feed-empty">no response yet from ${esc(FEED_API_BASE)}/health</div>`;
+
+    const rosterRows = (gamesList || []).map((g) => `
+      <div class="feed-tr">
+        <span>${esc(g.game_pk)}</span><span>${esc(g.status)}</span><span>${esc(g.away_team)}</span><span>${esc(g.home_team)}</span>
+      </div>`).join("");
+    const roster = (gamesList || []).length
+      ? `<div class="feed-table">
+          <div class="feed-th"><span>game_pk</span><span>status</span><span>away_team</span><span>home_team</span></div>
+          ${rosterRows}
+        </div>`
+      : `<div class="feed-empty">no live games reported</div>`;
+
+    $("#feed-status").innerHTML = `
+      <div class="feed-section">
+        <div class="feed-section-title">BACKEND STATUS · GET /health</div>
+        ${healthKv}
+        <div class="feed-section-title">LIVE GAMES ROSTER · GET /games</div>
+        ${roster}
+      </div>`;
+  }
+
+  function feedPaneHtml(g) {
+    const sit = g.situation || {};
+    const pitches = g.current_pa_pitches || [];
+    const markets = g.markets || [];
+
+    const pitchRows = pitches.map((p) => `
+      <div class="feed-tr">
+        <span>${esc(p.pitch_number)}</span><span>${esc(p.pitch_type ?? "—")}</span>
+        <span>${esc(p.start_speed ?? "—")}</span><span>${esc(p.zone ?? "—")}</span>
+        <span>${esc(p.description ?? "—")}</span><span>${esc(p.result_category ?? "—")}</span>
+        <span>${esc(p.balls)}-${esc(p.strikes)}</span>
+      </div>`).join("");
+
+    const marketRows = markets.map((m) => `
+      <div class="feed-tr">
+        <span>${esc(m.market)}</span><span>${esc(m.predicted_value ?? "—")}</span>
+        <span>${m.probs ? esc(JSON.stringify(m.probs)) : "—"}</span><span>${esc(m.confidence ?? "—")}</span>
+        <span>${esc(m.sample_size ?? "—")}</span><span>${esc(m.edge ?? "—")}</span>
+        <span>${esc(m.line ?? "—")}</span><span>${esc(m.price ?? "—")}</span>
+      </div>`).join("");
+
+    return `
+      <article class="feed-pane">
+        <header class="feed-pane-head">
+          <span class="feed-id">#${esc(g.game_pk)}</span>
+          <span class="feed-label">${esc(g.game_label)}</span>
+          <span class="feed-names">P: ${esc(g.pitcher_name ?? "—")} · B: ${esc(g.batter_name ?? "—")}</span>
+          <span class="feed-model">${esc(g.model_version ?? "—")}</span>
+        </header>
+
+        <div class="feed-section-title">SITUATION · raw</div>
+        <div class="feed-kv">
+          <span><b>inning</b> ${esc(sit.inning ?? "—")}</span>
+          <span><b>half</b> ${esc(sit.half ?? "—")}</span>
+          <span><b>count</b> ${esc(sit.count ?? "—")}</span>
+          <span><b>outs</b> ${esc(sit.outs ?? "—")}</span>
+          <span><b>pitcher_id</b> ${esc(sit.pitcher_id ?? "—")}</span>
+          <span><b>batter_id</b> ${esc(sit.batter_id ?? "—")}</span>
+          <span><b>pitch_count_pa</b> ${esc(sit.pitch_count_pa ?? "—")}</span>
+          <span><b>last_pitch_ts</b> ${esc(sit.last_pitch_ts ?? "—")}</span>
+        </div>
+
+        <div class="feed-section-title">CURRENT_PA_PITCHES · raw (${pitches.length})</div>
+        ${pitches.length
+          ? `<div class="feed-table">
+              <div class="feed-th"><span>#</span><span>type</span><span>speed</span><span>zone</span><span>description</span><span>result_category</span><span>B-S</span></div>
+              ${pitchRows}
+            </div>`
+          : `<div class="feed-empty">no pitches in current at-bat</div>`}
+
+        <div class="feed-section-title">MARKETS · raw (${markets.length})</div>
+        ${markets.length
+          ? `<div class="feed-table">
+              <div class="feed-th"><span>market</span><span>predicted_value</span><span>probs</span><span>confidence</span><span>sample_size</span><span>edge</span><span>line</span><span>price</span></div>
+              ${marketRows}
+            </div>`
+          : `<div class="feed-empty">no markets sent by backend yet</div>`}
+
+        <footer class="feed-pane-foot">
+          <span><b>has_edge</b> ${esc(g.has_edge ?? "—")}</span>
+          <span><b>top_edge</b> ${esc(g.top_edge ?? "—")}</span>
+        </footer>
+      </article>`;
+  }
+
+  function renderFeedSubtabs(games) {
+    const subtabs = $("#feed-subtabs");
+    if (!games.length) {
+      subtabs.innerHTML = "";
+      return;
+    }
+    if (feedSelectedPk == null || !games.some((g) => g.game_pk === feedSelectedPk)) {
+      feedSelectedPk = games[0].game_pk;
+    }
+    subtabs.innerHTML = games.map((g) => `
+      <button class="filter feed-subtab${g.game_pk === feedSelectedPk ? " active" : ""}" type="button"
+        role="tab" aria-selected="${g.game_pk === feedSelectedPk}" data-pk="${esc(g.game_pk)}">
+        ${esc(g.game_label || g.game_pk)}
+      </button>`).join("");
+    subtabs.querySelectorAll(".feed-subtab").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        feedSelectedPk = Number(btn.dataset.pk) || btn.dataset.pk;
+        renderFeedSubtabs(games);
+        renderFeedPanes(games);
+      });
+    });
+  }
+
+  function renderFeedPanes(games) {
+    const panes = $("#feed-panes");
+    if (!games.length) {
+      panes.innerHTML = `<div class="feed-empty">no live games right now — raw payloads will appear here as games go live</div>`;
+      return;
+    }
+    const selected = games.find((g) => g.game_pk === feedSelectedPk) || games[0];
+    panes.innerHTML = feedPaneHtml(selected);
+  }
+
+  async function pollFeed() {
+    const [health, gamesList, live] = await Promise.all([
+      fetchJson("/health"), fetchJson("/games"), fetchJson("/live"),
+    ]);
+    renderFeedStatus(health, gamesList);
+    // /live can hold stale rows for games that have since ended; only offer
+    // pills for games /games still reports as currently in progress.
+    const liveOnPks = new Set((gamesList || []).map((g) => g.game_pk));
+    feedGames = (live || []).filter((g) => liveOnPks.has(g.game_pk));
+    renderFeedSubtabs(feedGames);
+    renderFeedPanes(feedGames);
+  }
+
+  function initFeed() {
+    pollFeed();
+    setInterval(pollFeed, FEED_POLL_MS);
+  }
+
+  // ── database tables (raw GET /admin/tables/preview) ───────────────────
+  function dbTableHtml(name, t) {
+    if (t.error) {
+      return `
+        <div class="feed-section">
+          <div class="feed-section-title">${esc(name)}</div>
+          <div class="feed-empty">${esc(t.error)}</div>
+        </div>`;
+    }
+    if (!t.rows.length) {
+      return `
+        <div class="feed-section">
+          <div class="feed-section-title">${esc(name)} (0)</div>
+          <div class="feed-empty">no rows</div>
+        </div>`;
+    }
+    const rows = t.rows.map((r) => `
+      <div class="feed-tr">
+        ${t.columns.map((c) => `<span>${esc(r[c] === null || r[c] === undefined
+          ? "—"
+          : typeof r[c] === "object" ? JSON.stringify(r[c]) : r[c])}</span>`).join("")}
+      </div>`).join("");
+    return `
+      <div class="feed-section">
+        <div class="feed-section-title">${esc(name)} (${t.rows.length})</div>
+        <div class="table-scroll">
+          <div class="feed-table">
+            <div class="feed-th">${t.columns.map((c) => `<span>${esc(c)}</span>`).join("")}</div>
+            ${rows}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  async function pollDbTables() {
+    const data = await fetchJson("/admin/tables/preview");
+    const el = $("#db-tables");
+    if (!data) {
+      el.innerHTML = `<div class="feed-empty">no response yet from ${esc(FEED_API_BASE)}/admin/tables/preview</div>`;
+      return;
+    }
+    el.innerHTML = Object.keys(data).map((name) => dbTableHtml(name, data[name])).join("");
+  }
+
+  function initDbTables() {
+    pollDbTables();
+    setInterval(pollDbTables, FEED_POLL_MS * 4);
+  }
+
   // ── boot ─────────────────────────────────────────────────────────────
   async function init() {
     $("#year").textContent = new Date().getFullYear();
@@ -288,6 +503,10 @@
     $("#picks-sub").textContent =
       `${picks.length} model-backed picks for ${new Date().toLocaleDateString(undefined, { month: "long", day: "numeric" })} — tap “Why this pick” for the reasoning.`;
     buildFilters(picks, applyFilter);
+
+    // live feed: independent best-effort poll, doesn't block the rest of the page
+    initFeed();
+    initDbTables();
   }
 
   document.addEventListener("DOMContentLoaded", init);
