@@ -181,13 +181,54 @@
     return card;
   }
 
-  // ── filters ──────────────────────────────────────────────────────────
-  function buildFilters(picks, onPick) {
+  // ── market tabs ──────────────────────────────────────────────────────
+  // One tab per market plus a cross-market "Best live opportunities" tab
+  // (the default) that ranks every market's picks together, best edge first.
+  // Picks and their rendered cards are held at module scope so a tab switch
+  // can re-order the grid instead of just toggling visibility.
+  const BEST_KEY = "best";
+  let allPicks = [];
+  let pickCards = {}; // pick id -> rendered <article> (reused across tabs)
+
+  // best edge first; ties fall back to model confidence
+  const byEdgeDesc = (a, b) =>
+    (b.edge || 0) - (a.edge || 0) || (b.confidence || 0) - (a.confidence || 0);
+
+  function picksForTab(key) {
+    const list = key === BEST_KEY ? allPicks.slice() : allPicks.filter((p) => p.market === key);
+    return list.sort(byEdgeDesc);
+  }
+
+  function tabSubText(key, list) {
+    const today = new Date().toLocaleDateString(undefined, { month: "long", day: "numeric" });
+    if (!list.length) return "No picks on the board for this market right now.";
+    if (key === BEST_KEY) {
+      return `Top ${list.length} live opportunities across all markets for ${today}, ranked by model edge — tap “Why this pick” for the reasoning.`;
+    }
+    const label = (D.MARKETS[key] || {}).label || key;
+    return `${list.length} ${label} pick${list.length === 1 ? "" : "s"} for ${today}, best edge first — tap “Why this pick” for the reasoning.`;
+  }
+
+  // (re)render the grid for the active tab, ordering cards best edge first
+  function renderPicks(key) {
+    const grid = $("#picks-grid");
+    const list = picksForTab(key);
+    grid.innerHTML = "";
+    list.forEach((p) => grid.appendChild(pickCards[p.id]));
+    const sub = $("#picks-sub");
+    if (sub) sub.textContent = tabSubText(key, list);
+  }
+
+  function buildFilters() {
     const filters = $("#filters");
     const counts = {};
-    picks.forEach((p) => (counts[p.market] = (counts[p.market] || 0) + 1));
-    const tabs = [{ key: "all", label: "All", n: picks.length }].concat(
-      Object.keys(counts).map((k) => ({ key: k, label: (D.MARKETS[k] || {}).label || k, n: counts[k] }))
+    allPicks.forEach((p) => (counts[p.market] = (counts[p.market] || 0) + 1));
+    // Lead with the cross-market "best" tab, then one tab per known market
+    // (in MARKETS order) that currently has at least one pick on the board.
+    const tabs = [{ key: BEST_KEY, label: "Best live opportunities", n: allPicks.length }].concat(
+      Object.keys(D.MARKETS)
+        .filter((k) => counts[k])
+        .map((k) => ({ key: k, label: D.MARKETS[k].label, n: counts[k] }))
     );
 
     filters.innerHTML = "";
@@ -196,20 +237,19 @@
       b.className = "filter" + (i === 0 ? " active" : "");
       b.type = "button";
       b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", i === 0 ? "true" : "false");
       b.dataset.key = t.key;
       b.innerHTML = `${esc(t.label)} <span class="filter-n">${t.n}</span>`;
       b.addEventListener("click", () => {
-        filters.querySelectorAll(".filter").forEach((x) => x.classList.remove("active"));
+        filters.querySelectorAll(".filter").forEach((x) => {
+          x.classList.remove("active");
+          x.setAttribute("aria-selected", "false");
+        });
         b.classList.add("active");
-        onPick(t.key);
+        b.setAttribute("aria-selected", "true");
+        renderPicks(t.key);
       });
       filters.appendChild(b);
-    });
-  }
-
-  function applyFilter(key) {
-    document.querySelectorAll(".pick-card").forEach((c) => {
-      c.style.display = key === "all" || c.dataset.market === key ? "" : "none";
     });
   }
 
@@ -496,13 +536,13 @@
     renderHeroStats(rec);
     renderRecord(rec);
 
-    // picks board
-    const grid = $("#picks-grid");
-    grid.innerHTML = "";
-    picks.forEach((p) => grid.appendChild(pickCard(p, books)));
-    $("#picks-sub").textContent =
-      `${picks.length} model-backed picks for ${new Date().toLocaleDateString(undefined, { month: "long", day: "numeric" })} — tap “Why this pick” for the reasoning.`;
-    buildFilters(picks, applyFilter);
+    // picks board: render each card once, keyed by id, then let the tabs
+    // re-order/filter the grid (default tab = cross-market "best").
+    allPicks = picks;
+    pickCards = {};
+    picks.forEach((p) => (pickCards[p.id] = pickCard(p, books)));
+    buildFilters();
+    renderPicks(BEST_KEY);
 
     // live feed: independent best-effort poll, doesn't block the rest of the page
     initFeed();
