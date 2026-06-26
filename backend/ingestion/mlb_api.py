@@ -13,6 +13,12 @@ from typing import AsyncGenerator
 import httpx
 from dotenv import load_dotenv
 
+from backend.ingestion.vocab import (
+    CALL_CODE_TO_DESCRIPTION,
+    ab_result_category,
+    result_category,
+)
+
 load_dotenv()
 
 MLB_API_BASE = os.environ.get("MLB_API_BASE", "https://statsapi.mlb.com/api/v1")
@@ -30,47 +36,6 @@ def _get_client() -> httpx.AsyncClient:
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=20),
         )
     return _client
-
-# Map MLB Stats API call codes -> Statcast-style description strings, so live and
-# historical pitches share one vocabulary downstream.
-CALL_CODE_TO_DESCRIPTION = {
-    "B": "ball",
-    "*B": "blocked_ball",
-    "V": "automatic_ball",
-    "I": "intent_ball",
-    "P": "pitchout",
-    "C": "called_strike",
-    "S": "swinging_strike",
-    "W": "swinging_strike_blocked",
-    "M": "missed_bunt",
-    "Q": "swinging_pitchout",
-    "F": "foul",
-    "T": "foul_tip",
-    "L": "foul_bunt",
-    "R": "foul_pitchout",
-    "X": "hit_into_play",
-    "D": "hit_into_play",
-    "E": "hit_into_play",
-    "H": "hit_by_pitch",
-    "Z": "called_strike",
-}
-
-_STRIKE_FOUL = {
-    "called_strike", "swinging_strike", "swinging_strike_blocked",
-    "foul", "foul_tip", "foul_bunt", "missed_bunt",
-}
-_BALL = {"ball", "blocked_ball", "automatic_ball", "intent_ball"}
-_IN_PLAY = {"hit_into_play"}
-
-
-def _result_category(description: str | None) -> str:
-    if description in _STRIKE_FOUL:
-        return "strike_foul"
-    if description in _BALL:
-        return "ball"
-    if description in _IN_PLAY:
-        return "in_play"
-    return "other"
 
 
 def _flatten_pitch(game_pk: int, play: dict, event: dict) -> dict:
@@ -94,7 +59,7 @@ def _flatten_pitch(game_pk: int, play: dict, event: dict) -> dict:
         "start_speed": pitch_data.get("startSpeed"),
         "zone": pitch_data.get("zone"),
         "description": description,
-        "result_category": _result_category(description),
+        "result_category": result_category(description),
         "balls": count.get("balls"),
         "strikes": count.get("strikes"),
         "outs": count.get("outs"),
@@ -102,6 +67,34 @@ def _flatten_pitch(game_pk: int, play: dict, event: dict) -> dict:
         "top_inning": about.get("isTopInning"),
         "pitch_ts": event.get("startTime"),
         "raw_json": event,
+    }
+
+
+def _flatten_at_bat_result(game_pk: int, play: dict) -> dict | None:
+    """A completed-at-bat row, or None if this play hasn't ended yet.
+
+    `play.result.eventType` is only populated once the at-bat is over, so
+    this doubles as the "is this AB complete" check the live poller needs to
+    grade ab_result/ab_pitches_ou predictions without waiting for a Savant
+    backfill.
+    """
+    result = play.get("result") or {}
+    event_type = result.get("eventType")
+    if not event_type:
+        return None
+    about = play.get("about") or {}
+    matchup = play.get("matchup") or {}
+    pitch_events = [e for e in play.get("playEvents") or [] if e.get("type") == "pitch"]
+    return {
+        "game_pk": game_pk,
+        "at_bat_index": about.get("atBatIndex"),
+        "pitcher_id": (matchup.get("pitcher") or {}).get("id"),
+        "batter_id": (matchup.get("batter") or {}).get("id"),
+        "pitch_count": len(pitch_events),
+        "result": ab_result_category(event_type),
+        "result_detail": event_type,
+        "start_ts": pitch_events[0].get("startTime") if pitch_events else None,
+        "end_ts": pitch_events[-1].get("startTime") if pitch_events else None,
     }
 
 
@@ -133,16 +126,31 @@ async def get_live_game_state(game_pk: int) -> dict:
     return r.json()
 
 
-async def get_play_by_play(game_pk: int) -> list[dict]:
+async def get_play_by_play_with_at_bats(game_pk: int) -> tuple[list[dict], list[dict]]:
+    """Pitches + completed at-bats from a single playByPlay fetch.
+
+    Used by the live poller so at_bats gets populated as games progress,
+    instead of only ever via the historical Savant backfill — needed so
+    ab_result/ab_pitches_ou predictions can be graded same-day.
+    """
     r = await _get_client().get(f"/game/{game_pk}/playByPlay")
     r.raise_for_status()
     data = r.json()
     pitches: list[dict] = []
+    at_bats: list[dict] = []
     for play in data.get("allPlays", []):
         for event in play.get("playEvents", []):
             if event.get("type") != "pitch":
                 continue
             pitches.append(_flatten_pitch(game_pk, play, event))
+        ab = _flatten_at_bat_result(game_pk, play)
+        if ab is not None:
+            at_bats.append(ab)
+    return pitches, at_bats
+
+
+async def get_play_by_play(game_pk: int) -> list[dict]:
+    pitches, _ = await get_play_by_play_with_at_bats(game_pk)
     return pitches
 
 

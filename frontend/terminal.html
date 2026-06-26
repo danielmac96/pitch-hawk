@@ -840,7 +840,7 @@ function GamePane({ g, filters, flash }) {
 // ══════════════════════════════════════════════════════════════════════════
 const { useState: useS, useEffect: useE, useMemo: useM, useRef: useR } = React;
 
-const API_BASE = window.PITCH_EDGE_API || "http://localhost:8001";
+const API_BASE = window.PITCH_EDGE_API || "http://localhost:8080";
 const POLL_MS = 8000;
 
 function parseTeams(label) {

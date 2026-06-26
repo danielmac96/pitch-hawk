@@ -81,6 +81,15 @@ create table if not exists predictions (
     market          text,
     predicted_value numeric(8,4),
     confidence      numeric(5,4),
+    probs           jsonb,
+    recommendation  text,
+    line            numeric(6,2),
+    price           int,
+    edge            numeric(7,4),
+    units           numeric(4,2) default 1,
+    result          text,
+    profit_units    numeric(7,3),
+    graded_at       timestamptz,
     model_version   text default 'stub_v0',
     created_at      timestamptz default now()
 );

@@ -8,6 +8,7 @@ import httpx
 import pandas as pd
 
 from backend.db.client import get_client
+from backend.ingestion.vocab import result_category
 
 _RETRYABLE = (httpx.TransportError, httpx.RemoteProtocolError, httpx.TimeoutException)
 
@@ -26,27 +27,6 @@ def _upsert_with_retry(table: str, batch: list[dict], on_conflict: str,
                   f"sleeping {wait}s before attempt {n + 2}/{attempts}")
             time.sleep(wait)
     raise RuntimeError(f"upsert to {table} failed after {attempts} attempts") from last
-
-# Statcast description values -> result_category bucket. Vocabulary aligned with
-# the call-code mapping in backend.ingestion.mlb_api so live and historical
-# pitches share one set of buckets.
-_STRIKE_FOUL = {
-    "called_strike", "swinging_strike", "swinging_strike_blocked",
-    "foul", "foul_tip", "foul_bunt", "missed_bunt", "bunt_foul_tip",
-}
-_BALL = {"ball", "blocked_ball", "intent_ball", "pitchout"}
-_IN_PLAY = {"hit_into_play", "hit_into_play_score", "hit_into_play_no_out"}
-
-
-def _result_category(description: str | None) -> str:
-    if description in _STRIKE_FOUL:
-        return "strike_foul"
-    if description in _BALL:
-        return "ball"
-    if description in _IN_PLAY:
-        return "in_play"
-    return "other"
-
 
 def fetch_statcast_range(start_date: str, end_date: str) -> pd.DataFrame:
     """Pull Statcast pitches in [start_date, end_date] and map to pitches schema."""
@@ -75,7 +55,7 @@ def fetch_statcast_range(start_date: str, end_date: str) -> pd.DataFrame:
         "events":       raw.get("events"),  # used by build_at_bats; not loaded to pitches
     })
     df = df.dropna(subset=["start_speed"])
-    df["result_category"] = df["description"].map(_result_category)
+    df["result_category"] = df["description"].map(result_category)
     return df
 
 

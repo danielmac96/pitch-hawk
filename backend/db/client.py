@@ -21,3 +21,9 @@ def get_client() -> Client:
 def upsert_live_state(game_pk: int, payload: dict) -> None:
     row = {"game_pk": game_pk, **payload}
     get_client().table("live_state").upsert(row, on_conflict="game_pk").execute()
+
+
+def upsert_at_bats(rows: list[dict]) -> None:
+    if not rows:
+        return
+    get_client().table("at_bats").upsert(rows, on_conflict="game_pk,at_bat_index").execute()

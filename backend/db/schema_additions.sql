@@ -1,6 +1,36 @@
 -- MLB Pitch Predictor — aggregate functions for freq_v1 model
 -- Apply via the Supabase SQL editor (additive; safe to re-run with create or replace).
 
+-- Phase 3: persist full prediction distributions + grading, for an existing
+-- project whose `predictions` table predates these columns (schema.sql's
+-- `create table if not exists` won't add columns to an already-created
+-- table — these ALTERs are what actually land on a live Supabase project).
+alter table predictions add column if not exists probs jsonb;
+alter table predictions add column if not exists recommendation text;
+alter table predictions add column if not exists line numeric(6,2);
+alter table predictions add column if not exists price int;
+alter table predictions add column if not exists edge numeric(7,4);
+alter table predictions add column if not exists units numeric(4,2) default 1;
+alter table predictions add column if not exists result text;
+alter table predictions add column if not exists profit_units numeric(7,3);
+alter table predictions add column if not exists graded_at timestamptz;
+
+-- Per-game venue/umpire/weather enrichment (backend/ingestion/game_context.py).
+-- Not previously captured in any schema file in this repo.
+create table if not exists game_context (
+    game_pk         bigint primary key,
+    venue_id        int,
+    venue_name      text,
+    umpire_id       int,
+    umpire_name     text,
+    temperature_f   numeric(5,1),
+    wind_speed_mph  numeric(5,1),
+    wind_dir_deg    int,
+    is_dome         boolean default false,
+    roof_closed     boolean,
+    updated_at      timestamptz default now()
+);
+
 create or replace function get_pitcher_stats()
 returns table (
     pitcher_id          int,

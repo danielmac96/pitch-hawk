@@ -8,24 +8,27 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.auth import require_api_key
 from backend.api.live_store import get_store
-from backend.api.routes import admin, bets, edge, live, odds, predictions
-from backend.db.client import get_client, upsert_live_state
+from backend.api.routes import admin, bets, edge, live, odds, picks, predictions
+from backend.config import (
+    POLL_INTERVAL_SECONDS,
+    ROLLING_REFRESH_SECONDS,
+    STATS_REFRESH_SECONDS,
+)
+from backend.db.client import get_client, upsert_at_bats, upsert_live_state
 from backend.ingestion.game_context import upsert_game_context
-from backend.ingestion.mlb_api import get_live_games, get_play_by_play
+from backend.ingestion.mlb_api import get_live_games, get_play_by_play_with_at_bats
 from backend.ingestion.pitcher_game_log import update_pitcher_game_log
 from backend.ingestion.player_info import ensure_players
+from backend.jobs.settle_predictions import settle_pending
 from backend.models.predictor import PitchPredictor
 from backend.models.stats_cache import get_cache
 
 log = logging.getLogger("backend.poller")
-
-POLL_INTERVAL_SECONDS = 8
-STATS_REFRESH_SECONDS = 3600
-ROLLING_REFRESH_SECONDS = 6 * 3600
 
 _LIVE_PITCH_COLS = [
     "game_pk", "at_bat_index", "pitch_number", "pitcher_id", "batter_id",
@@ -89,6 +92,13 @@ def get_game_label(game_pk: int) -> str:
     away = info.get("away_team") or "Away"
     home = info.get("home_team") or "Home"
     return f"{away} @ {home}"
+
+
+def get_game_teams(game_pk: int) -> tuple[str | None, str | None]:
+    info = _GAMES_CACHE.get(game_pk)
+    if not info:
+        return None, None
+    return info.get("away_team"), info.get("home_team")
 
 
 def _build_live_state(pitches: list[dict]) -> dict | None:
@@ -168,7 +178,7 @@ def _build_current_pa_pitches(pitches: list[dict]) -> list[dict]:
 
 async def _process_game(game_pk: int) -> None:
     try:
-        pitches = await get_play_by_play(game_pk)
+        pitches, at_bats = await get_play_by_play_with_at_bats(game_pk)
     except Exception as exc:
         print(f"[POLLER] game={game_pk} failed: {exc}")
         return
@@ -192,24 +202,28 @@ async def _process_game(game_pk: int) -> None:
     # Supabase is the audit log only. Write fire-and-forget so a slow or failing
     # Supabase never blocks this tick or any /live request — the store is already
     # updated above, so requests are served regardless of the write's outcome.
-    _spawn(_persist_game_async(game_pk, pitches, state))
+    _spawn(_persist_game_async(game_pk, pitches, at_bats, state))
 
     # Phase 2 enrichments run detached so the next poll tick isn't blocked.
     _spawn(_enrich_async(game_pk, pitches, state))
 
 
-def _persist_game(game_pk: int, pitches: list[dict], state: dict | None) -> int:
+def _persist_game(game_pk: int, pitches: list[dict], at_bats: list[dict], state: dict | None) -> int:
     n = _upsert_pitches(pitches)
+    if at_bats:
+        upsert_at_bats(at_bats)
     if state is not None:
         ls = {k: v for k, v in state.items() if k != "game_pk"}
         upsert_live_state(game_pk, ls)
     return n
 
 
-async def _persist_game_async(game_pk: int, pitches: list[dict], state: dict | None) -> None:
+async def _persist_game_async(
+    game_pk: int, pitches: list[dict], at_bats: list[dict], state: dict | None,
+) -> None:
     try:
-        n = await asyncio.to_thread(_persist_game, game_pk, pitches, state)
-        print(f"[POLLER] persisted game={game_pk} pitches_total={n}")
+        n = await asyncio.to_thread(_persist_game, game_pk, pitches, at_bats, state)
+        print(f"[POLLER] persisted game={game_pk} pitches_total={n} at_bats={len(at_bats)}")
     except Exception as exc:
         print(f"[POLLER] persist failed game={game_pk}: {exc}")
 
@@ -268,6 +282,17 @@ async def _rolling_stats_refresh_loop() -> None:
             print(f"[rolling] refresh failed: {exc}")
 
 
+async def _settlement_loop() -> None:
+    while True:
+        await asyncio.sleep(POLL_INTERVAL_SECONDS * 4)
+        try:
+            n = await asyncio.to_thread(settle_pending)
+            if n:
+                print(f"[settlement] graded {n} predictions")
+        except Exception as exc:
+            print(f"[settlement] failed: {exc}")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _warn_if_multi_worker()
@@ -278,10 +303,11 @@ async def lifespan(app: FastAPI):
     poll_task = asyncio.create_task(_poll_loop())
     stats_task = asyncio.create_task(_stats_refresh_loop())
     rolling_task = asyncio.create_task(_rolling_stats_refresh_loop())
+    settlement_task = asyncio.create_task(_settlement_loop())
     try:
         yield
     finally:
-        tasks = (poll_task, stats_task, rolling_task)
+        tasks = (poll_task, stats_task, rolling_task, settlement_task)
         for t in tasks:
             t.cancel()
         for t in tasks:
@@ -291,7 +317,11 @@ async def lifespan(app: FastAPI):
                 pass
 
 
-app = FastAPI(title="MLB Pitch Predictor — MVP", lifespan=lifespan)
+app = FastAPI(
+    title="MLB Pitch Predictor — MVP",
+    lifespan=lifespan,
+    dependencies=[Depends(require_api_key)],
+)
 
 app.add_middleware(
     CORSMiddleware,
@@ -306,6 +336,7 @@ app.include_router(edge.router)
 app.include_router(live.router)
 app.include_router(bets.router)
 app.include_router(admin.router)
+app.include_router(picks.router)
 
 
 @app.get("/health")

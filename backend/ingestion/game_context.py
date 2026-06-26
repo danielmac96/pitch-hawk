@@ -33,41 +33,33 @@ _DOME_VENUE_IDS: set[int] = {
     4169,  # loanDepot Park (Marlins, retractable)
 }
 
-# Approx lat/lon for 30 MLB parks (outdoor + domed alike — used only for
-# outdoor parks since domes short-circuit).
-_VENUE_LATLON: dict[int, tuple[float, float]] = {
-    1:    (39.9056, -75.1665),   # Citizens Bank Park (Phillies)
-    2:    (39.2840, -76.6217),   # Oriole Park at Camden Yards
-    3:    (40.8296, -73.9262),   # Yankee Stadium
-    4:    (42.3467, -71.0972),   # Fenway Park
-    5:    (41.3296, -81.6850),   # Progressive Field
-    7:    (41.6611, -87.6347),   # Guaranteed Rate Field
-    9:    (37.7786, -122.3893),  # Oracle Park (Giants)
-    10:   (39.7559, -104.9942),  # Coors Field
-    12:   (27.7682, -82.6534),   # Tropicana Field
-    13:   (33.8003, -117.8827),  # Angel Stadium
-    14:   (43.6414, -79.3894),   # Rogers Centre
-    15:   (34.0739, -118.2400),  # Dodger Stadium
-    17:   (41.9484, -87.6553),   # Wrigley Field
-    19:   (39.0517, -94.4803),   # Kauffman Stadium
-    22:   (38.6226, -90.1928),   # Busch Stadium
-    31:   (42.3390, -83.0485),   # Comerica Park
-    32:   (43.0280, -87.9712),   # American Family Field
-    51:   (32.7073, -117.1566),  # Petco Park
-    345:  (33.7355, -112.2244),  # actually used by spring; placeholder
-    401:  (33.7350, -112.2110),  # placeholder
-    680:  (47.5914, -122.3325),  # T-Mobile Park
-    2392: (29.7573, -95.3555),   # Minute Maid Park
-    2602: (38.8730, -77.0074),   # Nationals Park
-    2680: (33.4453, -112.0667),  # Chase Field
-    2889: (44.9817, -93.2776),   # Target Field
-    3289: (40.7571, -74.0741),   # Citi Field
-    3309: (40.4469, -79.9856),   # PNC Park
-    4169: (25.7782, -80.2197),   # loanDepot Park
-    4705: (33.8908, -84.4678),   # Truist Park
-    5325: (32.7475, -97.0817),   # Globe Life Field
-    7067: (38.7390, -121.5910),  # Sutter Health Park (Athletics' temp 2025+)
-}
+STATS_API_BASE = "https://statsapi.mlb.com/api/v1"
+
+# venue_id -> (lat, lon) | None, looked up once per process from MLB's venues
+# endpoint instead of a hand-maintained dict (which had drifted: missing
+# newer parks like Sutter Health Park, and carried two outright placeholder
+# coordinates for venues 345/401).
+_venue_latlon_cache: dict[int, tuple[float, float] | None] = {}
+
+
+async def _fetch_venue_latlon(venue_id: int) -> tuple[float, float] | None:
+    if venue_id in _venue_latlon_cache:
+        return _venue_latlon_cache[venue_id]
+    result: tuple[float, float] | None = None
+    try:
+        async with httpx.AsyncClient(base_url=STATS_API_BASE, timeout=15.0) as c:
+            r = await c.get(f"/venues/{venue_id}")
+            r.raise_for_status()
+            venues = r.json().get("venues") or []
+            loc = (venues[0].get("location") or {}) if venues else {}
+            lat, lon = loc.get("latitude"), loc.get("longitude")
+            if lat is not None and lon is not None:
+                result = (float(lat), float(lon))
+    except Exception as exc:
+        print(f"[game_context] venue lookup failed venue={venue_id}: {exc}")
+    _venue_latlon_cache[venue_id] = result
+    return result
+
 
 _COMPASS_TO_DEG = {
     "N": 0, "NNE": 22, "NE": 45, "ENE": 67,
@@ -152,7 +144,7 @@ async def fetch_game_context(game_pk: int) -> dict:
         out["roof_closed"] = True
         return out
 
-    latlon = _VENUE_LATLON.get(out["venue_id"]) if out["venue_id"] is not None else None
+    latlon = await _fetch_venue_latlon(out["venue_id"]) if out["venue_id"] is not None else None
     if latlon is None:
         return out
 

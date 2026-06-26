@@ -13,7 +13,7 @@ from __future__ import annotations
 import asyncio
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.db.client import get_client
 from backend.ingestion.sportsbooks import registry
@@ -25,7 +25,7 @@ _BG_TASKS: set[asyncio.Task] = set()
 
 
 class ClickIn(BaseModel):
-    game_pk: int | None = None
+    game_pk: int | None = Field(default=None, gt=0)
     market: str | None = None
     side: str | None = None
     book: str | None = None

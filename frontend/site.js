@@ -14,7 +14,7 @@
 
   // The Feed section talks to the live backend directly (raw /health, /games,
   // /live), independent of the mock picks/record data above.
-  const FEED_API_BASE = window.PITCH_EDGE_API || "http://localhost:8001";
+  const FEED_API_BASE = window.PITCH_EDGE_API || "http://localhost:8080";
   const FEED_POLL_MS = 8000;
 
   const D = window.PICKS_DATA;
@@ -56,13 +56,26 @@
   }
 
   async function loadPicks() {
-    // TODO: when a curated GET /picks/today exists, fetch and map it here.
-    return D.PICKS;
+    if (!API_BASE) return D.PICKS;
+    try {
+      const r = await fetch(`${API_BASE}/picks/today`);
+      if (!r.ok) throw new Error(r.status);
+      const picks = await r.json();
+      return picks.length ? picks : D.PICKS;
+    } catch (_e) {
+      return D.PICKS; // offline / not deployed yet
+    }
   }
 
   async function loadRecord() {
-    // TODO: wire to GET /record once it serves graded history.
-    return D.RECORD;
+    if (!API_BASE) return D.RECORD;
+    try {
+      const r = await fetch(`${API_BASE}/record`);
+      if (!r.ok) throw new Error(r.status);
+      return await r.json();
+    } catch (_e) {
+      return D.RECORD; // offline / not deployed yet
+    }
   }
 
   // ── affiliate CTA ────────────────────────────────────────────────────
@@ -259,7 +272,7 @@
       `Every graded pick, kept in the open. Updated ${rec.updated}.`;
 
     const o = rec.overall;
-    const winPct = (o.wins / (o.wins + o.losses)) * 100;
+    const winPct = o.wins + o.losses > 0 ? (o.wins / (o.wins + o.losses)) * 100 : 0;
     const tiles = [
       { big: `${o.wins}–${o.losses}${o.pushes ? `–${o.pushes}` : ""}`, lbl: "Overall record", sub: `${o.picks} picks graded` },
       { big: `${winPct.toFixed(1)}%`, lbl: "Win rate", sub: "Wins vs losses" },
@@ -276,7 +289,7 @@
 
     // by-market table
     const bm = rec.byMarket.map((m) => {
-      const wp = (m.wins / (m.wins + m.losses)) * 100;
+      const wp = m.wins + m.losses > 0 ? (m.wins / (m.wins + m.losses)) * 100 : 0;
       return `<tr>
         <td>${esc(m.label)}</td>
         <td class="num">${m.wins}–${m.losses}${m.pushes ? `–${m.pushes}` : ""}</td>

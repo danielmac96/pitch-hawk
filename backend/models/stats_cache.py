@@ -16,18 +16,19 @@ from datetime import datetime, timezone
 from threading import Lock
 from typing import Optional
 
+from backend.config import (
+    FALLBACK_TTL_SECONDS as _FALLBACK_TTL_SECONDS,
+    GAME_CTX_TTL_SECONDS as _GAME_CTX_TTL_SECONDS,
+    GAME_LOG_TTL_SECONDS as _GAME_LOG_TTL_SECONDS,
+    MATCHUP_TTL_SECONDS as _MATCHUP_TTL_SECONDS,
+    ROLLING_TTL_SECONDS as _ROLLING_TTL_SECONDS,
+)
 from backend.db.client import get_client
 
 LEAGUE_AVG_SPEED = 92.5
 LEAGUE_PITCH_RESULT = {"strike_foul": 0.455, "ball": 0.352, "in_play": 0.193}
 LEAGUE_AB_RESULT = {"strikeout": 0.221, "walk": 0.087, "hit": 0.239, "out": 0.453}
 LEAGUE_AVG_PITCHES_PA = 3.82
-
-_FALLBACK_TTL_SECONDS = 300
-_ROLLING_TTL_SECONDS = 300
-_MATCHUP_TTL_SECONDS = 300
-_GAME_CTX_TTL_SECONDS = 3600
-_GAME_LOG_TTL_SECONDS = 60
 
 
 @dataclass(frozen=True)

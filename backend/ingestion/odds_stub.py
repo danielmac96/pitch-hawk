@@ -1,25 +1,27 @@
-"""Placeholder DraftKings odds + edge calculator."""
+"""Backward-compatible alias for the stub odds provider.
 
-# TODO: replace with DraftKings API or scraper
+The real abstraction now lives in `backend.ingestion.odds_provider`
+(`OddsProvider`, `StubOddsProvider`, `get_provider`). This module is kept so
+existing imports (`from backend.ingestion.odds_stub import get_odds,
+calculate_edge`) keep working — it always uses the stub, regardless of
+`ODDS_PROVIDER`, since callers importing this module by name are asking for
+the stub specifically.
+"""
 
-_STUB_ODDS: list[dict] = [
-    {"market": "pitch_speed_ou", "line": 92.5, "over_price": -115, "under_price": -105},
-    {"market": "pitch_result",   "line": None, "over_price": None, "under_price": None},
-    {"market": "ab_result",      "line": None, "over_price": None, "under_price": None},
-    {"market": "ab_pitches_ou",  "line": 3.5,  "over_price": -120, "under_price": 100},
-]
+from __future__ import annotations
+
+from backend.ingestion.odds_provider import (
+    StubOddsProvider,
+    calculate_edge,
+    implied_probability,
+)
+
+_STUB_ODDS: list[dict] = StubOddsProvider.ODDS
+_stub = StubOddsProvider()
 
 
 def get_odds(game_pk: int) -> list[dict]:
-    return [{**o, "game_pk": game_pk, "source": "draftkings_stub"} for o in _STUB_ODDS]
+    return _stub.get_odds(game_pk)
 
 
-def implied_probability(american_odds: int) -> float:
-    if american_odds >= 0:
-        return 100.0 / (american_odds + 100.0)
-    return abs(american_odds) / (abs(american_odds) + 100.0)
-
-
-def calculate_edge(predicted_prob: float, american_odds: int) -> float:
-    """Positive = value bet for the side priced at american_odds."""
-    return predicted_prob - implied_probability(american_odds)
+__all__ = ["get_odds", "implied_probability", "calculate_edge", "_STUB_ODDS"]
