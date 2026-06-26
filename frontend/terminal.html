@@ -831,6 +831,240 @@ function GamePane({ g, filters, flash }) {
 
 
 // ══════════════════════════════════════════════════════════════════════════
+// explorer.jsx — Data Explorer tab
+//
+// A plain-table view of the same live feed the game panes render, but stripped
+// to clean, human-readable rows: a live-games overview, a per-PA pitch-by-pitch
+// table, and a live-edges table. Filterable down to a single game so a user can
+// see that game's whole datafeed (pitches + every market/edge) in one place.
+// ══════════════════════════════════════════════════════════════════════════
+
+// One flat, display-ready row per market (or per outcome for prob markets) for
+// a game — the shape the edges table renders. Reuses the same MARKET_META /
+// formatters the panes use so labels never drift between the two views.
+function marketBetText(m) {
+  if (m.market.endsWith("_ou")) {
+    if (m.line == null) return "no line yet";
+    return `${(m.recommendation || "").toUpperCase()} ${fmtLine(m.line)}${m.market.includes("speed") ? " mph" : ""}`;
+  }
+  return predictionFor(m);
+}
+
+function edgeRowsForGame(g) {
+  const rows = [];
+  const push = (m) => {
+    const meta = MARKET_META[m.market];
+    if (!meta) return;
+    if (m.outcomes && m.outcomes.length) {
+      for (const o of m.outcomes) {
+        rows.push({
+          game_pk: g.game_pk, gameLabel: g.game_label,
+          marketLabel: meta.label, cat: meta.cat, subj: meta.subj,
+          bet: o.name.replace("_", "/"), line: null, price: o.price,
+          predicted: fmtPct(o.prob), edge: o.edge,
+          confidence: o.confidence, sample: m.sample_size,
+        });
+      }
+    } else {
+      rows.push({
+        game_pk: g.game_pk, gameLabel: g.game_label,
+        marketLabel: meta.label, cat: meta.cat, subj: meta.subj,
+        bet: marketBetText(m), line: m.line, price: m.price,
+        predicted: predictionFor(m), edge: m.edge,
+        confidence: m.confidence, sample: m.sample_size,
+      });
+    }
+  };
+  for (const m of (g.markets || [])) push(m);
+  for (const m of (g.next_ab_markets || [])) push(m);
+  return rows;
+}
+
+// ── Live-games overview table (no game focused) ────────────────────────
+function GamesTable({ games, onPick }) {
+  if (!games.length) return <div className="dx-empty">No live games right now.</div>;
+  return (
+    <div className="dx-card">
+      <div className="dx-card-head"><span className="dot cat-live" /> LIVE GAMES <span className="dx-count">{games.length}</span></div>
+      <table className="dx-table">
+        <thead>
+          <tr>
+            <th>Game</th><th>Inn</th><th>Count</th><th className="num">Outs</th>
+            <th className="num">Score</th><th>Pitching</th><th>At bat</th>
+            <th className="num">Game P#</th><th className="num">Top edge</th><th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {games.map((g) => {
+            const stale = isStale(g);
+            return (
+              <tr key={g.game_pk} className="dx-clickable" onClick={() => onPick(g.game_pk)}>
+                <td className="dx-strong">{g.game_label}</td>
+                <td>{g.situation.half}{g.situation.inning}</td>
+                <td>{g.situation.count}</td>
+                <td className="num">{g.situation.outs ?? "—"}</td>
+                <td className="num">{g.score.away}–{g.score.home}</td>
+                <td className="dx-name">{g.pitcher_name} <span className="dx-hand">{g.pitcher_hand}HP</span></td>
+                <td className="dx-name">{g.batter_name} <span className="dx-hand">{g.batter_hand}HB</span></td>
+                <td className="num">{g.situation.pitch_count_game}</td>
+                <td className={`num dx-edge edge-${edgeTier(g.top_edge)}`}>{g.top_edge > 0 ? fmtEdge(g.top_edge) : "—"}</td>
+                <td>{stale ? <span className="dx-tag stale">STALE</span> : <span className="dx-tag live">LIVE</span>}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Pitch-by-pitch table for one game's current at-bat ─────────────────
+function PitchTable({ g }) {
+  const pitches = g.current_pa_pitches || [];
+  return (
+    <div className="dx-card">
+      <div className="dx-card-head">
+        <span className="dot cat-ip" /> PITCH BY PITCH · THIS AT BAT
+        <span className="dx-count">{pitches.length}</span>
+        <span className="dx-sub">{g.pitcher_name} → {g.batter_name}</span>
+      </div>
+      {pitches.length === 0 ? (
+        <div className="dx-empty">No pitches yet in this at-bat.</div>
+      ) : (
+        <table className="dx-table">
+          <thead>
+            <tr><th className="num">#</th><th>Type</th><th className="num">MPH</th><th className="num">Zone</th><th>Result</th><th>Count</th></tr>
+          </thead>
+          <tbody>
+            {pitches.map((p, i) => (
+              <tr key={p.pitch_number} className={i === pitches.length - 1 ? "dx-latest" : ""}>
+                <td className="num">{p.pitch_number}</td>
+                <td><span className="dx-pt" style={{ color: pitchTypeColor(p.pitch_type) }}>{p.pitch_type || "—"}</span></td>
+                <td className="num">{fmtMph(p.start_speed)}</td>
+                <td className="num">{p.zone ?? "—"}</td>
+                <td className={pitchDescClass(p.description)}>{pitchDescLabel(p.description)}</td>
+                <td>{p.balls}–{p.strikes}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// ── Edges/markets table. `compact` = the priced-only cross-game overview. ──
+function EdgesTable({ rows, showGame, title, compact }) {
+  if (!rows.length) return <div className="dx-empty">No markets to show.</div>;
+  return (
+    <div className="dx-card">
+      <div className="dx-card-head"><span className="dot cat-up" /> {title} <span className="dx-count">{rows.length}</span></div>
+      <table className="dx-table">
+        <thead>
+          <tr>
+            {showGame && <th>Game</th>}
+            <th>Market</th><th>Bet</th><th className="num">Price</th>
+            <th className="num">Implied</th><th className="num">Predicted</th>
+            <th className="num">Edge</th><th>Conf</th>
+            {!compact && <th className="num">n</th>}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr key={`${r.game_pk}:${r.marketLabel}:${r.bet}:${i}`} className={r.edge != null && r.edge >= 0.05 ? "dx-ispick" : ""}>
+              {showGame && <td className="dx-strong">{r.gameLabel}</td>}
+              <td><span className="dx-market">{r.marketLabel}</span> <span className="dx-subj">{r.subj}</span></td>
+              <td className="dx-strong">{r.bet}</td>
+              <td className="num">{r.price != null ? fmtAmer(r.price) : "—"}</td>
+              <td className="num">{r.price != null ? fmtPct(impliedFromAmerican(r.price)) : "—"}</td>
+              <td className="num">{r.predicted}</td>
+              <td className={`num dx-edge edge-${edgeTier(r.edge)}`}>{fmtEdge(r.edge)}</td>
+              <td><ConfBar value={r.confidence} /></td>
+              {!compact && <td className="num dx-dim">{r.sample || "—"}</td>}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ── Single-game situation strip ────────────────────────────────────────
+function GameSummary({ g }) {
+  const stale = isStale(g);
+  return (
+    <div className="dx-summary">
+      <span className="dx-sum-match">{g.game_label}</span>
+      <span className="dx-sum-score">{g.score.away}–{g.score.home}</span>
+      <span className="dx-sum-inn">{g.situation.half}{g.situation.inning}</span>
+      <span className="dx-sum-item"><i>Count</i> {g.situation.count}</span>
+      <span className="dx-sum-item"><i>Outs</i> {g.situation.outs ?? "—"}</span>
+      <span className="dx-sum-item"><i>P</i> {g.pitcher_name} <b>{g.pitcher_hand}HP</b></span>
+      <span className="dx-sum-item"><i>B</i> {g.batter_name} <b>{g.batter_hand}HB</b></span>
+      <span className="dx-sum-item"><i>On deck</i> {g.on_deck}</span>
+      <span className="dx-sum-item"><i>Game P#</i> {g.situation.pitch_count_game}</span>
+      {stale && <span className="dx-tag stale">STALE {Math.round(stalenessMs(g) / 1000)}s</span>}
+    </div>
+  );
+}
+
+// ── DataExplorer: the whole tab ────────────────────────────────────────
+function DataExplorer({ games, focusGamePk, setFocus }) {
+  const focusGame = focusGamePk != null ? games.find((g) => g.game_pk === focusGamePk) : null;
+
+  // Cross-game live edges: only priced/edged rows, hottest first.
+  const allEdgeRows = useMemo(() => {
+    const rows = games.flatMap(edgeRowsForGame).filter((r) => r.edge != null);
+    rows.sort((a, b) => b.edge - a.edge);
+    return rows;
+  }, [games]);
+
+  return (
+    <div className="data-explorer">
+      <div className="dx-toolbar">
+        <span className="dx-tool-lbl">FILTER BY GAME</span>
+        <div className="dx-chips">
+          <button className={`dx-chip ${focusGamePk == null ? "on" : ""}`} onClick={() => setFocus(null)}>
+            All games <b>{games.length}</b>
+          </button>
+          {games.map((g) => (
+            <button
+              key={g.game_pk}
+              className={`dx-chip ${focusGamePk === g.game_pk ? "on" : ""} ${isStale(g) ? "stale" : ""}`}
+              onClick={() => setFocus(g.game_pk)}
+            >
+              {g.game_label}
+              {g.top_edge > 0 && <span className="dx-chip-edge">{fmtEdge(g.top_edge)}</span>}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {games.length === 0 ? (
+        <div className="dx-empty big">No live games right now. Tables populate as games go live.</div>
+      ) : focusGame ? (
+        <div className="dx-stack">
+          <GameSummary g={focusGame} />
+          <PitchTable g={focusGame} />
+          <EdgesTable
+            rows={edgeRowsForGame(focusGame)}
+            showGame={false}
+            title="MARKETS & EDGES"
+            compact={false}
+          />
+        </div>
+      ) : (
+        <div className="dx-stack">
+          <GamesTable games={games} onPick={setFocus} />
+          <EdgesTable rows={allEdgeRows} showGame={true} title="LIVE EDGES" compact={true} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════
 // app.jsx — Top bar, App root, live-feed poller
 //
 // Live game state (situation + pitches + names) comes from the backend
@@ -944,23 +1178,35 @@ function TopBar({ filters, setFilters, allGames, gameCount, edgeCount, tickAgo, 
           <span className="d" /> Upcoming
           <span className="ct">next AB markets</span>
         </button>
+        <button
+          role="tab"
+          className={`tb-tab tab-data ${filters.tab === "data" ? "on" : ""}`}
+          onClick={() => setFilters({ ...filters, tab: "data" })}
+        >
+          <span className="d" /> Data
+          <span className="ct">clean feed tables</span>
+        </button>
       </div>
 
-      <GamePicker
-        allGames={allGames}
-        selected={filters.selectedGamePks}
-        onChange={(next) => setFilters({ ...filters, selectedGamePks: next })}
-      />
-
-      <label className="tb-thresh">
-        <span className="lbl">edge ≥</span>
-        <input
-          type="range" min="0" max="10" step="0.5"
-          value={filters.minEdge * 100}
-          onChange={(e) => setFilters({ ...filters, minEdge: parseFloat(e.target.value) / 100 })}
+      {filters.tab !== "data" && (
+        <GamePicker
+          allGames={allGames}
+          selected={filters.selectedGamePks}
+          onChange={(next) => setFilters({ ...filters, selectedGamePks: next })}
         />
-        <span className="val">{(filters.minEdge * 100).toFixed(1)}%</span>
-      </label>
+      )}
+
+      {filters.tab !== "data" && (
+        <label className="tb-thresh">
+          <span className="lbl">edge ≥</span>
+          <input
+            type="range" min="0" max="10" step="0.5"
+            value={filters.minEdge * 100}
+            onChange={(e) => setFilters({ ...filters, minEdge: parseFloat(e.target.value) / 100 })}
+          />
+          <span className="val">{(filters.minEdge * 100).toFixed(1)}%</span>
+        </label>
+      )}
 
       <div className="tb-right">
         <span className="tb-stat"><b>{edgeCount}</b> edges · <b>{gameCount}</b> live</span>
@@ -1001,6 +1247,7 @@ function App() {
     minEdge: 0.05,
     tab: "live",
     selectedGamePks: new Set(),
+    focusGamePk: null,   // Data Explorer: which single game is focused (null = all)
   });
 
   // Keep latest games available inside the poll closure without retriggering
@@ -1156,6 +1403,15 @@ function App() {
         modelVersion="freq_v2"
         fetchErr={fetchErr}
       />
+      {filters.tab === "data" ? (
+        <main className="main-data">
+          <DataExplorer
+            games={sortedGames}
+            focusGamePk={filters.focusGamePk}
+            setFocus={(pk) => setFilters((f) => ({ ...f, focusGamePk: pk }))}
+          />
+        </main>
+      ) : (
       <main className="main-grid">
         {visibleGames.length === 0 ? (
           <div className="empty-tab">
@@ -1197,6 +1453,7 @@ function App() {
           ))
         )}
       </main>
+      )}
       {books.disclaimer && (
         <footer className="compliance-bar">{books.disclaimer}</footer>
       )}
