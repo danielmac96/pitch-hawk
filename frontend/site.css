@@ -1,7 +1,7 @@
 /* ============================================================
    NextPitch — consumer picks site
    Clean, trustworthy, sportsbook-adjacent. Light surface, deep
-   navy ink, green for +EV. Distinct from the dark terminal.html.
+   navy ink, green for +EV. Distinct from the live board (nextpitch.html).
    ============================================================ */
 
 :root {
@@ -83,7 +83,7 @@ h1, h2, h3 { margin: 0; line-height: 1.15; letter-spacing: -0.02em; }
 .nav { display: flex; gap: 1.4rem; margin-left: auto; }
 .nav a { color: var(--ink-2); font-weight: 500; font-size: .95rem; }
 .nav a:hover { color: var(--ink); }
-.nav-cta { margin-left: .25rem; }
+.nav-cta { margin-left: .25rem; white-space: nowrap; }
 
 /* ── hero ─────────────────────────────────────────────────── */
 .hero {
@@ -118,6 +118,30 @@ h1, h2, h3 { margin: 0; line-height: 1.15; letter-spacing: -0.02em; }
 .stat-lbl { font-size: .76rem; color: #9fb2c9; margin-top: .15rem; }
 .stat-link { font-size: .88rem; font-weight: 600; color: #8fd3ad; }
 .stat-link:hover { color: #b6e6cd; }
+
+/* ── live board promo ─────────────────────────────────────── */
+.nav-live { color: var(--accent); font-weight: 700; }
+.nav-live:hover { color: var(--accent-2); }
+.live-promo-wrap { padding-top: 0; }
+.live-promo {
+  display: grid; grid-template-columns: 1.05fr .95fr; gap: 2.6rem; align-items: center;
+  background:
+    radial-gradient(900px 300px at 90% -20%, rgba(74,222,128,.16), transparent 60%),
+    var(--navy);
+  border: 1px solid var(--navy-2); border-radius: 20px;
+  padding: clamp(1.8rem, 4vw, 3rem); box-shadow: var(--shadow-lg);
+}
+.live-promo h2 { color: #fff; font-size: clamp(1.5rem, 3vw, 2.1rem); font-weight: 800; }
+.live-promo p { color: #b7c6da; font-size: 1.02rem; line-height: 1.6; margin: .9rem 0 1.5rem; max-width: 34rem; }
+.eyebrow-dark { color: #6ee7a0; background: rgba(74,222,128,.13); }
+.live-promo-feats { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .9rem; }
+.live-promo-feats li {
+  display: flex; flex-direction: column; gap: .2rem;
+  background: rgba(255,255,255,.05); border: 1px solid rgba(255,255,255,.09);
+  border-radius: var(--radius-sm); padding: .85rem 1rem;
+}
+.live-promo-feats b { color: #fff; font-size: .96rem; }
+.live-promo-feats span { color: #93a6bd; font-size: .86rem; line-height: 1.5; }
 
 /* ── sections ─────────────────────────────────────────────── */
 .section { padding: clamp(2.5rem, 5vw, 4.2rem) 0; }
@@ -295,6 +319,7 @@ h1, h2, h3 { margin: 0; line-height: 1.15; letter-spacing: -0.02em; }
   .hero-inner { grid-template-columns: 1fr; }
   .record-cols { grid-template-columns: 1fr; }
   .footer-inner { grid-template-columns: 1fr; }
+  .live-promo { grid-template-columns: 1fr; gap: 1.6rem; }
   .nav { display: none; }
 }
 @media (max-width: 520px) {
