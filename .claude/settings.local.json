@@ -42,7 +42,10 @@
       "Bash(node /tmp/np_harness.js)",
       "Bash(node --check frontend/picks-data.js)",
       "Bash(git add *)",
-      "Bash(git commit -m ' *)"
+      "Bash(git commit -m ' *)",
+      "mcp__a52849fa-c674-405b-ac6a-1383cc8b2892",
+      "mcp__d0535be8-3f4f-46c0-9177-b9b7295e2c54",
+      "mcp__github"
     ]
   }
 }
