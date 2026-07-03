@@ -3,183 +3,19 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Next Pitch — MLB At-Bat Picks</title>
-  <meta name="description" content="Data-driven MLB at-bat picks — strikeouts, pitch speed, and more — with a transparent, verifiable track record.">
-  <link rel="stylesheet" href="site.css">
+  <title>NextPitch — MLB At-Bat Markets</title>
+  <meta name="description" content="Model-driven MLB at-bat picks and a real-time live-markets board — the model's pitch-by-pitch read, with a verifiable track record.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="nextpitch.css">
 </head>
 <body>
-  <!-- ── Header / nav ─────────────────────────────────────────────── -->
-  <header class="site-header">
-    <div class="wrap header-inner">
-      <a class="brand" href="#top">
-        <span class="brand-mark">◆</span>
-        <span class="brand-name">Next<span>Pitch</span></span>
-      </a>
-      <nav class="nav">
-        <a href="#picks">Today's Picks</a>
-        <a href="#record">Track Record</a>
-        <a href="#feed">Feed</a>
-        <a href="#how">How It Works</a>
-        <a href="nextpitch.html" class="nav-live">Live Board</a>
-      </nav>
-      <a class="btn btn-primary nav-cta" href="nextpitch.html">Open live board <span aria-hidden="true">→</span></a>
-    </div>
-  </header>
-
-  <main id="top">
-    <!-- ── Hero ───────────────────────────────────────────────────── -->
-    <section class="hero">
-      <div class="wrap hero-inner">
-        <div class="hero-copy">
-          <span class="eyebrow">MLB · At-Bat Markets</span>
-          <h1>The next pitch, called before it's thrown.</h1>
-          <p class="lede">
-            Model-driven picks on strikeouts, pitch speed, and at-bat outcomes —
-            each with the reasoning laid out and a track record you can check
-            before you trust it.
-          </p>
-          <div class="hero-actions">
-            <a class="btn btn-primary" href="nextpitch.html">Open the live board <span aria-hidden="true">→</span></a>
-            <a class="btn btn-ghost" href="#picks">See today's picks</a>
-          </div>
-          <p class="hero-fineprint">21+ · For entertainment · 1-800-GAMBLER</p>
-        </div>
-        <!-- Confidence stats pulled from the track record -->
-        <aside class="hero-stats" id="hero-stats" aria-label="Track record summary">
-          <div class="stat-card skeleton-card"></div>
-        </aside>
-      </div>
-    </section>
-
-    <!-- ── Today's picks ──────────────────────────────────────────── -->
-    <section id="picks" class="section">
-      <div class="wrap">
-        <div class="section-head">
-          <div>
-            <h2>Today's quick picks</h2>
-            <p class="section-sub" id="picks-sub">Loading today's board…</p>
-          </div>
-          <div class="filters" id="filters" role="tablist" aria-label="Best live opportunities, or pick a single market"></div>
-        </div>
-        <div class="picks-grid" id="picks-grid"></div>
-      </div>
-    </section>
-
-    <!-- ── Track record ───────────────────────────────────────────── -->
-    <section class="section live-promo-wrap">
-      <div class="wrap">
-        <div class="live-promo">
-          <div class="live-promo-copy">
-            <span class="eyebrow eyebrow-dark">The live board</span>
-            <h2>Watch the game with the model open.</h2>
-            <p>Real-time edges on every live at-bat — model probability against the best price across DraftKings, FanDuel, Kalshi and Polymarket. Pre-scout the on-deck hitter, then read the broadcast-style situation at a glance.</p>
-            <a class="btn btn-primary" href="nextpitch.html">Open the live board <span aria-hidden="true">→</span></a>
-          </div>
-          <ul class="live-promo-feats">
-            <li><b>Live &amp; upcoming edges</b><span>Best +EV pick per at-bat — sort by edge, price or implied odds, or pre-scout the next batter.</span></li>
-            <li><b>Compare your sources</b><span>Multi-select sportsbooks and prediction markets to find the number that beats the model.</span></li>
-            <li><b>Broadcast situation</b><span>Bases, balls, strikes, outs, score and the model call in a single glance.</span></li>
-          </ul>
-        </div>
-      </div>
-    </section>
-
-    <section id="record" class="section section-alt">
-      <div class="wrap">
-        <div class="section-head">
-          <div>
-            <h2>Track record</h2>
-            <p class="section-sub" id="record-sub">Every graded pick, kept in the open.</p>
-          </div>
-        </div>
-        <div class="record-tiles" id="record-tiles"></div>
-        <div class="record-cols">
-          <div class="record-block">
-            <h3>By market</h3>
-            <div class="table-scroll">
-              <table class="rec-table" id="bymarket-table"></table>
-            </div>
-          </div>
-          <div class="record-block">
-            <h3>Recently settled</h3>
-            <div class="table-scroll">
-              <table class="rec-table" id="recent-table"></table>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ── Live data feed ────────────────────────────────────────────── -->
-    <section id="feed" class="section">
-      <div class="wrap">
-        <div class="section-head">
-          <div>
-            <h2>Live data feed</h2>
-            <p class="section-sub" id="feed-sub">The raw signals behind the picks, unfiltered — pick a live game below.</p>
-          </div>
-        </div>
-        <div class="feed-status" id="feed-status"></div>
-        <div class="feed-subtabs" id="feed-subtabs" role="tablist" aria-label="Select a live game feed"></div>
-        <div id="feed-panes"></div>
-
-        <div class="section-head" style="margin-top: 2.2rem;">
-          <div>
-            <h3>Database tables</h3>
-            <p class="section-sub">Latest 10 rows, every column, straight from Supabase.</p>
-          </div>
-        </div>
-        <div id="db-tables"></div>
-      </div>
-    </section>
-
-    <!-- ── How it works ───────────────────────────────────────────── -->
-    <section id="how" class="section">
-      <div class="wrap">
-        <div class="section-head"><h2>How it works</h2></div>
-        <ol class="steps">
-          <li>
-            <span class="step-num">1</span>
-            <h3>Ingest</h3>
-            <p>Historical Statcast plus a live MLB feed give us pitch-by-pitch context for every matchup.</p>
-          </li>
-          <li>
-            <span class="step-num">2</span>
-            <h3>Model</h3>
-            <p>Per-market models project the next pitch and at-bat, then compare to the live line to find an edge.</p>
-          </li>
-          <li>
-            <span class="step-num">3</span>
-            <h3>Publish</h3>
-            <p>Only +EV picks make the board — each with the supporting reasons and a one-tap link to the book.</p>
-          </li>
-          <li>
-            <span class="step-num">4</span>
-            <h3>Grade</h3>
-            <p>Every pick is settled win/loss/push and added to the public record. No deleting cold streaks.</p>
-          </li>
-        </ol>
-      </div>
-    </section>
-  </main>
-
-  <!-- ── Footer ───────────────────────────────────────────────────── -->
-  <footer class="site-footer">
-    <div class="wrap footer-inner">
-      <div class="footer-brand">
-        <span class="brand-mark">◆</span>
-        <span class="brand-name">Next<span>Pitch</span></span>
-        <p class="footer-tag">MLB at-bat picks, with the receipts.</p>
-      </div>
-      <p class="disclaimer" id="disclaimer"></p>
-    </div>
-    <div class="wrap footer-legal">
-      <span>© <span id="year"></span> NextPitch. Illustrative data — not affiliated with MLB.</span>
-      <span class="gamble-badge">Gambling problem? Call 1-800-GAMBLER</span>
-    </div>
-  </footer>
+  <!-- Single-page app: Home / Live Markets / Data Feed tabs, rendered by nextpitch.js -->
+  <div class="np-root" id="np-root" data-theme="light"></div>
 
   <script src="picks-data.js"></script>
-  <script src="site.js"></script>
+  <script src="nextpitch-data.js"></script>
+  <script src="nextpitch.js"></script>
 </body>
 </html>

@@ -30,7 +30,19 @@
       "PowerShell(Start-Sleep -Seconds 4; try { $r = Invoke-RestMethod -Uri \"http://127.0.0.1:8000/health\" -TimeoutSec 10; $r | ConvertTo-Json } catch { $_.Exception.Message; $_.Exception.Response.StatusCode })",
       "PowerShell(try { $r = Invoke-WebRequest -Uri \"http://127.0.0.1:8000/docs\" -UseBasicParsing -TimeoutSec 5; $r.StatusCode } catch { $_.Exception.Message }; try { $r2 = Invoke-WebRequest -Uri \"http://127.0.0.1:8000/\" -UseBasicParsing -TimeoutSec 5; $r2.StatusCode; $r2.Content } catch { $_.Exception.Message })",
       "PowerShell($r = Invoke-RestMethod -Uri \"http://127.0.0.1:8000/openapi.json\" -TimeoutSec 5; $r.paths.PSObject.Properties.Name)",
-      "PowerShell(Stop-Process *)"
+      "PowerShell(Stop-Process *)",
+      "Bash(cp design_handoff_nextpitch_frontend/index.html frontend/index.html)",
+      "Bash(cp design_handoff_nextpitch_frontend/site.css frontend/site.css)",
+      "Bash(cp design_handoff_nextpitch_frontend/site.js frontend/site.js)",
+      "Bash(cp design_handoff_nextpitch_frontend/picks-data.js frontend/picks-data.js)",
+      "Bash(node --check frontend/nextpitch.js)",
+      "Bash(node --check frontend/nextpitch-data.js)",
+      "Bash(node --check frontend/site.js)",
+      "Bash(sed -i 's/ctx.window.matchMedia = \\(\\) => \\({ matches: false }\\);/ctx.window.matchMedia = \\(\\) => \\({ matches: false }\\);\\\\n  ctx.window.dispatchEvent = \\(\\) => {};\\\\n  ctx.window.addEventListener = \\(\\) => {};\\\\n  ctx.Event = class Event { constructor\\(t\\){ this.type=t; } };/' /tmp/np_harness.js)",
+      "Bash(node /tmp/np_harness.js)",
+      "Bash(node --check frontend/picks-data.js)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)"
     ]
   }
 }
