@@ -530,9 +530,20 @@ begin
     end loop;
 end $$;
 
+-- Supabase always has the anon/authenticated roles; guard so the migration
+-- also applies cleanly on a vanilla Postgres (roles simply absent -> skipped).
 do $$
-declare t text;
+declare
+    t text;
+    roles text := (
+        select string_agg(quote_ident(rolname), ', ')
+        from pg_roles where rolname in ('anon', 'authenticated')
+    );
 begin
+    if roles is null then
+        raise notice 'anon/authenticated roles absent; skipping public-read policies';
+        return;
+    end if;
     foreach t in array array[
         'games','pitches','at_bats','live_state','player_info','game_context',
         'pitcher_game_log','matchup_history','umpire_stats',
@@ -544,20 +555,17 @@ begin
             where schemaname = 'public' and tablename = t and policyname = 'public read'
         ) then
             execute format(
-                'create policy "public read" on %I for select to anon, authenticated using (true)', t);
+                'create policy "public read" on %I for select to %s using (true)', t, roles);
         end if;
     end loop;
-end $$;
 
--- Click tracking: anon may insert (fire-and-forget funnel data), not read.
-do $$
-begin
+    -- Click tracking: anon may insert (fire-and-forget funnel data), not read.
     if not exists (
         select 1 from pg_policies
         where schemaname = 'public' and tablename = 'bet_clicks'
           and policyname = 'public insert'
     ) then
-        create policy "public insert" on bet_clicks
-            for insert to anon, authenticated with check (true);
+        execute format(
+            'create policy "public insert" on bet_clicks for insert to %s with check (true)', roles);
     end if;
 end $$;

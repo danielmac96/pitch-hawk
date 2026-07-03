@@ -74,7 +74,7 @@ async function live(): Promise<Response> {
   const playersBy = new Map((playerRowsP ?? []).map((p: any) => [p.player_id, p]));
 
   const payloads = states.map((ls: any) => {
-    const g = gamesBy.get(ls.game_pk) ?? {};
+    const g: any = gamesBy.get(ls.game_pk) ?? {};
     const raw = ls.raw_json ?? {};
     // newest prediction row per market for this game
     const markets: any[] = [];
@@ -99,8 +99,8 @@ async function live(): Promise<Response> {
     markets.sort((a, b) => (b.edge ?? -9) - (a.edge ?? -9));
     const edges = markets.map((m) => m.edge).filter((e) => e != null) as number[];
     const topEdge = edges.length ? Math.max(...edges) : 0;
-    const pitcher = playersBy.get(ls.pitcher_id);
-    const batter = playersBy.get(ls.batter_id);
+    const pitcher: any = playersBy.get(ls.pitcher_id);
+    const batter: any = playersBy.get(ls.batter_id);
     return {
       game_pk: ls.game_pk,
       game_label: `${g.away_team ?? raw.away_team ?? "Away"} @ ${g.home_team ?? raw.home_team ?? "Home"}`,
