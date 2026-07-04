@@ -26,20 +26,17 @@ cd "$ROOT"
 echo "== Linking project $REF"
 supabase link --project-ref "$REF"
 
-echo "== Preparing cron migration (substituting project ref)"
-CRON_MIG="supabase/migrations/20260703000002_cron.sql"
-tmp="$(mktemp)"
-sed "s/{{PROJECT_REF}}/$REF/g" "$CRON_MIG" > "$tmp"
-cp "$tmp" "$CRON_MIG"
-rm -f "$tmp"
-
 echo "== Pushing migrations"
 supabase db push
 
-echo "== Storing cron secret"
+echo "== Storing cron secret + functions base URL"
 CRON_SECRET="${CRON_SECRET:-$(openssl rand -hex 24)}"
-supabase db query "insert into app_secrets(key,value) values('cron_secret','$CRON_SECRET') on conflict (key) do update set value=excluded.value;" >/dev/null
-echo "   cron secret stored (len=${#CRON_SECRET})"
+FUNCTIONS_URL="https://$REF.supabase.co/functions/v1"
+supabase db query "insert into app_secrets(key,value) values
+  ('cron_secret','$CRON_SECRET'),
+  ('functions_base_url','$FUNCTIONS_URL')
+  on conflict (key) do update set value=excluded.value;" >/dev/null
+echo "   cron secret stored (len=${#CRON_SECRET}); functions_base_url=$FUNCTIONS_URL"
 
 echo "== Deploying edge functions"
 for fn in api backfill daily-ingest live-poll odds-ingest settle; do

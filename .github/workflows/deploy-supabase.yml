@@ -1,0 +1,98 @@
+name: Deploy pipeline to Supabase
+
+# One-click provisioning + deploy of the whole hosted pipeline. Runs on
+# GitHub's runners (which can reach Supabase), so no local machine or MCP
+# access is required.
+#
+# Setup (once): add these repository secrets under Settings → Secrets and
+# variables → Actions:
+#   SUPABASE_ACCESS_TOKEN   personal access token (supabase.com/dashboard/account/tokens)
+#   SUPABASE_PROJECT_REF    your project ref (Project Settings → General)
+#   SUPABASE_DB_PASSWORD    database password (Project Settings → Database)
+#
+# Then run this workflow from the Actions tab ("Run workflow"). It is
+# idempotent — safe to re-run to ship function/migration changes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      seed_demo:
+        description: "Load the demo seed (populated board for off-hours demos)"
+        type: boolean
+        default: false
+      run_backfill:
+        description: "Seed the historical backfill window"
+        type: boolean
+        default: true
+      backfill_start:
+        description: "Backfill start date (YYYY-MM-DD)"
+        type: string
+        default: "2025-03-27"
+
+concurrency:
+  group: deploy-supabase
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Guard secrets
+        run: |
+          test -n "$SUPABASE_ACCESS_TOKEN" || { echo "::error::SUPABASE_ACCESS_TOKEN secret missing"; exit 1; }
+          test -n "$REF" || { echo "::error::SUPABASE_PROJECT_REF secret missing"; exit 1; }
+
+      - name: Link project
+        run: supabase link --project-ref "$REF" --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
+
+      - name: Push migrations
+        run: supabase db push --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
+
+      - name: Store cron secret + functions base URL
+        run: |
+          CRON_SECRET="$(openssl rand -hex 24)"
+          FUNCTIONS_URL="https://$REF.supabase.co/functions/v1"
+          supabase db query "insert into app_secrets(key,value) values
+            ('cron_secret','$CRON_SECRET'),
+            ('functions_base_url','$FUNCTIONS_URL')
+            on conflict (key) do update set value=excluded.value;"
+
+      - name: Deploy edge functions
+        run: |
+          for fn in api backfill daily-ingest live-poll odds-ingest settle; do
+            echo "== deploying $fn"
+            supabase functions deploy "$fn" --no-verify-jwt --project-ref "$REF"
+          done
+
+      - name: Seed backfill window
+        if: ${{ inputs.run_backfill }}
+        run: |
+          supabase db query "insert into backfill_progress(id,start_date,end_date,cursor_date)
+            values(1,'${{ inputs.backfill_start }}',current_date-1,current_date-1)
+            on conflict (id) do update set start_date=excluded.start_date,
+              end_date=excluded.end_date, cursor_date=excluded.cursor_date, done=false;"
+
+      - name: Load demo seed
+        if: ${{ inputs.seed_demo }}
+        run: supabase db query < supabase/seed_demo.sql
+
+      - name: Summary
+        run: |
+          {
+            echo "### Pipeline deployed ✅"
+            echo ""
+            echo "- Functions live at \`https://$REF.supabase.co/functions/v1\`"
+            echo "- Set the frontend: \`PITCH_EDGE_API = https://$REF.supabase.co/functions/v1/api\`"
+            echo "- Live board polls every 30s; odds every 5m; settle every 10m."
+            echo "- Backfill drains automatically (watch \`select * from backfill_progress;\`)."
+            echo "- After it has data, run \`python scripts/train_models.py\` (or the train job)."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,37 @@
+name: Train models
+
+# Fits v1 models from the backfilled dataset and writes them to model_params
+# (is_active=true). Runs on GitHub's runners, which can reach Supabase.
+#
+# Setup (once): add repository secrets
+#   SUPABASE_URL   https://<ref>.supabase.co
+#   SUPABASE_KEY   service_role key (Project Settings → API)  [kept secret]
+#
+# Run manually after the backfill has data, or on the weekly schedule below.
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 12 * * 1"   # Mondays 12:00 UTC
+
+concurrency:
+  group: train-models
+  cancel-in-progress: true
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-train.txt
+      - name: Train
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scripts/train_models.py

@@ -1,18 +1,27 @@
 -- Pipeline scheduling: pg_cron + pg_net invoke the edge functions.
 --
--- {{PROJECT_REF}} is substituted with the real project ref at apply time
--- (see scripts/provision_supabase.md). The cron secret is generated once and
--- stored in app_secrets('cron_secret') — also at apply time, never committed.
+-- Ref-agnostic: the functions base URL and cron secret are read from
+-- app_secrets at call time (seeded once by scripts/provision.sh or the deploy
+-- workflow), so this migration contains no project-specific values and never
+-- needs string substitution.
 
 create extension if not exists pg_cron;
 create extension if not exists pg_net;
 
--- Helper: POST to an edge function with the cron secret header.
+-- Helper: POST to an edge function with the cron secret header. Both the base
+-- URL (functions_base_url, e.g. https://<ref>.supabase.co/functions/v1) and
+-- the shared secret live in app_secrets. No-op if the base URL isn't set yet.
 create or replace function call_edge_function(fn text, payload jsonb default '{}'::jsonb)
 returns void language plpgsql security definer as $$
+declare base text;
 begin
+    select value into base from app_secrets where key = 'functions_base_url';
+    if base is null then
+        raise notice 'functions_base_url not set in app_secrets; skipping %', fn;
+        return;
+    end if;
     perform net.http_post(
-        url := 'https://{{PROJECT_REF}}.supabase.co/functions/v1/' || fn,
+        url := base || '/' || fn,
         headers := jsonb_build_object(
             'Content-Type', 'application/json',
             'x-cron-secret', (select value from app_secrets where key = 'cron_secret')
