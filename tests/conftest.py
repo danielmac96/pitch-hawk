@@ -118,7 +118,11 @@ class _Table:
 
 
 class FakeSupabaseClient:
-    def __init__(self): self._store: dict = {}
+    def __init__(self, seed: dict | None = None):
+        self._store: dict = {}
+        for name, rows in (seed or {}).items():
+            self.seed(name, rows)
+
     def table(self, name): return _Table(self._store, name)
 
     def seed(self, name, rows):
@@ -127,6 +131,9 @@ class FakeSupabaseClient:
             r = dict(r)
             r.setdefault("id", len(bucket) + 1)
             bucket.append(r)
+
+    def rows_for(self, name):
+        return self._store.get(name, [])
 
     def rpc(self, name, _params):
         # only refresh_* RPCs are ever called from code under test here
@@ -149,3 +156,25 @@ def fake_client(monkeypatch):
         if hasattr(m, "get_client"):
             monkeypatch.setattr(m, "get_client", _get_client)
     return client
+
+
+class _StubStatsCache:
+    """A PitchPredictor stats cache with nothing loaded — every getter returns
+    None, so predictions fall back to the league-average constants instantly
+    instead of round-tripping (and failing) against a fake Supabase host."""
+
+    def get_pitch_stats(self, _pitcher_id): return None
+    def get_ab_stats(self, _pitcher_id): return None
+    def get_pitcher_rolling(self, _pitcher_id): return None
+    def get_batter_rolling(self, _batter_id): return None
+    def get_matchup_history(self, _pitcher_id, _batter_id): return None
+    def get_game_context(self, _game_pk): return None
+    def get_pitcher_game_log(self, _game_pk, _pitcher_id): return None
+    def get_player_info(self, _player_id): return None
+
+
+@pytest.fixture
+def stub_predictor_cache(monkeypatch):
+    cache = _StubStatsCache()
+    monkeypatch.setattr("backend.models.predictor.get_cache", lambda: cache)
+    return cache

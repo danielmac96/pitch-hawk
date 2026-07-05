@@ -92,23 +92,24 @@ python scripts/verify_feeds.py
 # 3. start the API + live poller
 .venv\Scripts\python.exe -m uvicorn backend.api.main:app --host 127.0.0.1 --port 8080 --reload
 
-# 4. open the picks site (front door) or the live board
-start frontend\index.html      # consumer picks site
-start frontend\nextpitch.html  # dense real-time edge board
+# 4. open the app
+start frontend\index.html
 ```
 
 ### Frontend
 
-Two static front-ends, no build step — open the HTML files directly or serve the `frontend/` folder. They link to each other (homepage nav/hero/promo → live board; the board's logo, "← Home" and footer → homepage).
+A single static single-page app, no build step — open `frontend/index.html` directly or serve the `frontend/` folder. It renders three tabs off one shell: **Home** (public picks site), **Live Markets** (dense real-time edge board), and **Data Feed** (raw table/game previews).
 
-| file | audience | purpose |
-|---|---|---|
-| `index.html` | public / casual bettors | **Consumer picks site (the front door).** Today's quick at-bat picks as cards, each with an affiliate "Bet at <book>" CTA and an expandable **"Why this pick"** dropdown, a live-board promo band, a public **track record** (record, win%, units, ROI, by-market + recently-settled tables), and a raw **live data feed** (`/health`, `/games`, `/live`, DB table previews). Styled by `site.css`, rendered by `site.js`, sample data in `picks-data.js`. |
-| `nextpitch.html` | power users | **Live edge board.** Dense real-time dashboard with **Edges / Markets / Data Feed** tabs, a light/dark theme (persisted in `localStorage`, honors `prefers-color-scheme`), Live/Upcoming phase, game + source multi-select filters, and edge/price/implied sorting. Styled by `nextpitch.css`, rendered by `nextpitch.js`; the edge engine + live adapter live in `nextpitch-data.js`. |
+| file | role |
+|---|---|
+| `index.html` | shell — mounts `<div id="np-root">`, loads the scripts below |
+| `nextpitch.css` | all styling: layout, light/dark theme tokens (persisted in `localStorage`, honors `prefers-color-scheme`) |
+| `nextpitch.js` | renders all three tabs, tab switching, filters, edge/price/implied sorting |
+| `nextpitch-data.js` | bundled sample games/markets/sources + the edge engine + `NEXTPITCH.loadLive()` live adapter |
+| `picks-data.js` | bundled sample picks + track record for the Home tab |
+| `config.js` | injects `window.PITCH_EDGE_API` from `SUPABASE_FUNCTIONS_URL` at deploy time (see `scripts/build_frontend.sh`) |
 
-The picks site runs standalone on bundled sample data (`picks-data.js`) and is API-ready: set `API_BASE` in `site.js` to the deployed backend and the loaders pull live `/sportsbooks` (affiliate-resolved book URLs), `/picks/today`, and `/record`, and log affiliate clicks to `/track/click`. `/record` is built from real graded picks (see `backend/jobs/settle_predictions.py`) — it will be honestly empty/zero until predictions have actually settled, not the illustrative sample numbers in `picks-data.js`.
-
-The live board boots on `nextpitch-data.js`'s bundled sample so it's never blank, then polls the backend every 8s via `NEXTPITCH.loadLive()` (which fetches `GET /live` + `GET /edge/{game_pk}` and normalizes them into the board's shape) and swaps in live games when the API answers with live content; if the backend is down or has no games, the sample board stays up with a simulated tick. Point it at a deployed API with `window.PITCH_EDGE_API` (defaults to `http://localhost:8080`). Only over/under markets are priced by a source today, so only those show an edge on the Edges/Markets boards; categorical markets still show the model distribution in the Data Feed. On-deck ("Upcoming") projections are derived by perturbing the live book until a backend next-batter endpoint exists.
+The app boots on the bundled sample data (`picks-data.js` / `nextpitch-data.js`) so it's never blank, then polls the backend every 8s via `NEXTPITCH.loadLive()` (which fetches `GET /live` + `GET /edge/{game_pk}` and normalizes them into the board's shape) and swaps in live games when the API answers with live content; the Home tab separately pulls `/sportsbooks`, `/picks/today`, and `/record`, and logs affiliate clicks to `/track/click`. `/record` is built from real graded picks (see `backend/jobs/settle_predictions.py`) — it will be honestly empty/zero until predictions have actually settled, not the illustrative sample numbers in `picks-data.js`. Point either at a deployed API with `window.PITCH_EDGE_API` (defaults to `http://localhost:8080`). Only over/under markets are priced by a source today, so only those show an edge on the Live Markets tab; categorical markets still show the model distribution in the Data Feed. On-deck ("Upcoming") projections are derived by perturbing the live book until a backend next-batter endpoint exists.
 
 ### Tables
 
@@ -121,7 +122,7 @@ The live board boots on `nextpitch-data.js`'s bundled sample so it's never blank
 | `game_context` | one row per game: venue, home-plate umpire, weather. Lat/lon for outdoor venues comes from MLB Stats API's `/venues/{id}` endpoint (looked up + cached per process), not a hand-maintained dict. |
 | `odds`        | reserved for when stub odds are replaced with a real source; currently unused. |
 
-Odds come from `backend/ingestion/odds_provider.py`: a `get_odds(game_pk)` call resolves to whichever `OddsProvider` is configured (`ODDS_PROVIDER` env var, default `"stub"` → `StubOddsProvider`). Every route imports `get_odds`/`calculate_edge` from `odds_provider`, not a hardcoded stub, so wiring in a real sportsbook feed later is a new `OddsProvider` subclass + a config change, not a rewrite of call sites. `backend/ingestion/odds_stub.py` still exists as a thin backward-compatible alias to the stub provider.
+Odds come from `backend/ingestion/odds_provider.py`: a `get_odds(game_pk)` call resolves to whichever `OddsProvider` is configured (`ODDS_PROVIDER` env var, default `"stub"` → `StubOddsProvider`). `backend/api/routes/predictions.py` imports `get_odds` from `odds_provider`, so wiring in a real sportsbook feed there later is a new `OddsProvider` subclass + a config change, not a rewrite of the call site. `backend/api/routes/live.py` and `odds.py` currently import directly from `backend/ingestion/odds_stub.py` (a thin backward-compatible alias that always uses the stub regardless of `ODDS_PROVIDER`) — worth revisiting if those routes need to honor a configured non-stub provider too.
 
 ### Tests
 
