@@ -158,6 +158,94 @@ async function ingestKalshi(
   return { rows, matched: matchedGames.size };
 }
 
+// The Odds API — real sportsbook lines (DraftKings/FanDuel/…). Ships dark:
+// only runs when app_secrets.the_odds_api_key is set. Free tier is 500 req/mo,
+// so the caller polls it far less often than the free ESPN/Kalshi feeds. Each
+// bookmaker becomes its own `source` so the frontend can line-shop.
+const THE_ODDS_API = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds";
+
+async function ingestTheOddsApi(
+  apiKey: string, idx: ReturnType<typeof indexGames>, unmatched: string[],
+): Promise<{ rows: any[]; matched: number }> {
+  const url = new URL(THE_ODDS_API);
+  url.searchParams.set("apiKey", apiKey);
+  url.searchParams.set("regions", "us");
+  url.searchParams.set("markets", "h2h,totals");
+  url.searchParams.set("oddsFormat", "american");
+  const data = await fetchJson<any[]>(url, { timeoutMs: 10_000, retries: 2 });
+  const rows: any[] = [];
+  const matchedGames = new Set<number>();
+  const now = new Date().toISOString();
+  for (const ev of data ?? []) {
+    const homeId = teamIdByText(ev.home_team);
+    const awayId = teamIdByText(ev.away_team);
+    const g = homeId != null && awayId != null
+      ? idx.byPair.get(`${awayId}:${homeId}`)
+      : undefined;
+    if (!g) {
+      if ((ev.bookmakers?.length ?? 0) > 0) unmatched.push(`oddsapi:${ev.away_team}@${ev.home_team}`);
+      continue;
+    }
+    for (const bk of ev.bookmakers ?? []) {
+      const source = bk.key ?? "the_odds_api";
+      for (const mk of bk.markets ?? []) {
+        if (mk.key === "h2h") {
+          for (const o of mk.outcomes ?? []) {
+            const oid = teamIdByText(o.name);
+            const outcome = oid === g.home_team_id ? "home" : oid === g.away_team_id ? "away" : null;
+            if (!outcome || o.price == null) continue;
+            matchedGames.add(g.game_pk);
+            rows.push({
+              game_pk: g.game_pk, market: "game_moneyline", outcome,
+              price_american: o.price, implied_prob: round4(americanToProb(o.price)),
+              source, meta: { book: bk.title }, fetched_at: now,
+            });
+          }
+        } else if (mk.key === "totals") {
+          for (const o of mk.outcomes ?? []) {
+            const outcome = String(o.name ?? "").toLowerCase(); // "over" / "under"
+            if ((outcome !== "over" && outcome !== "under") || o.price == null) continue;
+            matchedGames.add(g.game_pk);
+            rows.push({
+              game_pk: g.game_pk, market: "game_total", outcome,
+              line: o.point ?? null, price_american: o.price,
+              implied_prob: round4(americanToProb(o.price)),
+              source, meta: { book: bk.title }, fetched_at: now,
+            });
+          }
+        }
+      }
+    }
+  }
+  return { rows, matched: matchedGames.size };
+}
+
+// De-vig: for each (game, market, source) with a complete two-sided pair
+// (home+away or over+under), normalize implied probs to sum to 1 so the book's
+// margin is removed. Single-sided quotes keep novig = implied. Mutates rows.
+function applyNovig(rows: any[]): void {
+  const groups = new Map<string, any[]>();
+  for (const r of rows) {
+    const k = `${r.game_pk}:${r.market}:${r.source}`;
+    (groups.get(k) ?? groups.set(k, []).get(k)!).push(r);
+  }
+  for (const grp of groups.values()) {
+    const pair = grp[0].market === "game_total"
+      ? ["over", "under"] : ["home", "away"];
+    const a = grp.find((r) => r.outcome === pair[0] && r.implied_prob != null);
+    const b = grp.find((r) => r.outcome === pair[1] && r.implied_prob != null);
+    if (a && b) {
+      const s = Number(a.implied_prob) + Number(b.implied_prob);
+      if (s > 0) {
+        a.novig_prob = round4(Number(a.implied_prob) / s);
+        b.novig_prob = round4(Number(b.implied_prob) / s);
+        continue;
+      }
+    }
+    for (const r of grp) if (r.implied_prob != null) r.novig_prob = r.implied_prob;
+  }
+}
+
 // Team season win% from the games table (for the pregame log5 model).
 async function seasonWinPct(teamId: number | null): Promise<number | null> {
   if (teamId == null) return null;
@@ -191,19 +279,30 @@ Deno.serve(async (req) => {
     detail.games_today = games.length;
     const idx = indexGames(games);
     const unmatched: string[] = [];
+
+    // Pluggable providers. ESPN + Kalshi are free/no-auth and always run; The
+    // Odds API activates only when its key is configured in app_secrets.
+    const { data: keyRow } = await svc().from("app_secrets")
+      .select("value").eq("key", "the_odds_api_key").maybeSingle();
+    const providers: { name: string; run: () => Promise<{ rows: any[]; matched: number }> }[] = [
+      { name: "espn", run: () => ingestEspn(idx, unmatched) },
+      { name: "kalshi", run: () => ingestKalshi(idx, unmatched) },
+    ];
+    if (keyRow?.value) {
+      providers.push({ name: "the_odds_api", run: () => ingestTheOddsApi(keyRow.value, idx, unmatched) });
+    }
+
     let rows: any[] = [];
+    for (const p of providers) {
+      try {
+        const res = await p.run();
+        rows = rows.concat(res.rows);
+        detail[p.name] = { rows: res.rows.length, matched: res.matched };
+      } catch (e) { errors.push(`${p.name}: ${String(e).slice(0, 120)}`); }
+    }
 
-    try {
-      const espn = await ingestEspn(idx, unmatched);
-      rows = rows.concat(espn.rows);
-      detail.espn = { rows: espn.rows.length, matched: espn.matched };
-    } catch (e) { errors.push(`espn: ${String(e).slice(0, 120)}`); }
-
-    try {
-      const kalshi = await ingestKalshi(idx, unmatched);
-      rows = rows.concat(kalshi.rows);
-      detail.kalshi = { rows: kalshi.rows.length, matched: kalshi.matched };
-    } catch (e) { errors.push(`kalshi: ${String(e).slice(0, 120)}`); }
+    // De-vig every two-sided pair before persisting/using for edges.
+    applyNovig(rows);
 
     // Surface silent drops so a broken match rule is visible in ingest_runs.
     if (unmatched.length) detail.unmatched = unmatched.slice(0, 20);
@@ -225,10 +324,12 @@ Deno.serve(async (req) => {
       const pHome = log5HomeProb(hPct, aPct);
       for (const side of ["home", "away"] as const) {
         const pSide = side === "home" ? pHome : 1 - pHome;
-        const qs = quotes.filter((q) => q.outcome === side && q.implied_prob != null);
+        // Edge vs the de-vigged market prob (falls back to raw implied).
+        const marketProb = (q: any) => Number(q.novig_prob ?? q.implied_prob);
+        const qs = quotes.filter((q) => q.outcome === side && (q.novig_prob ?? q.implied_prob) != null);
         if (!qs.length) continue;
-        const best = qs.reduce((a, b) => (a.implied_prob < b.implied_prob ? a : b));
-        const edge = round4(pSide - Number(best.implied_prob));
+        const best = qs.reduce((a, b) => (marketProb(a) < marketProb(b) ? a : b));
+        const edge = round4(pSide - marketProb(best));
         if (edge != null && edge >= PICK_EDGE) {
           const label = `${side === "home" ? g.home_team : g.away_team} ML`;
           const { error } = await svc().from("picks").upsert({
@@ -246,7 +347,7 @@ Deno.serve(async (req) => {
               },
               bullets: [
                 `Season strength model gives ${label} a ${(pSide * 100).toFixed(1)}% win probability.`,
-                `Best market price implies ${(Number(best.implied_prob) * 100).toFixed(1)}% (${best.source}).`,
+                `Best de-vigged market price implies ${(marketProb(best) * 100).toFixed(1)}% (${best.source}).`,
               ],
             },
           }, { onConflict: "pick_date,game_pk,market,at_bat_index,recommendation", ignoreDuplicates: true });

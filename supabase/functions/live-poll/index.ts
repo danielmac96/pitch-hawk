@@ -41,27 +41,49 @@ async function latestOdds(gamePk: number): Promise<Record<string, any[]>> {
   return byMarket;
 }
 
+// Join an over/under model prediction to a line. If a real book quote exists we
+// price against it and edge = model - implied. If not (no book publishes
+// per-pitch/per-AB lines), we fall back to a MODEL-FAIR line at even money:
+// edge is then measured vs a 50% coin-flip, and the row is tagged book:
+// "model_fair" so it's never mistaken for beating a real sportsbook.
 function ouJoin(
   pred: MarketPrediction, overProb: (line: number) => number, odds: any[] | undefined,
+  modelFair = false,
 ): Record<string, unknown> {
   const row: Record<string, unknown> = {
     market: pred.market, predicted_value: pred.predicted_value,
     confidence: pred.confidence, probs: pred.probs, recommendation: null,
     line: null, price: null, edge: null, model_version: pred.model_version,
+    book: null,
   };
   const quote = (odds ?? []).find((o) => o.line != null);
-  if (!quote || pred.predicted_value == null) return row;
-  const line = Number(quote.line);
-  const pOver = overProb(line);
-  const side = pOver >= 0.5 ? "over" : "under";
-  const pSide = side === "over" ? pOver : 1 - pOver;
-  const price = side === "over" ? quote.over_price : quote.under_price;
-  const implied = americanToProb(price);
-  row.recommendation = side;
-  row.line = line;
-  row.price = price;
-  row.confidence = Math.round(pSide * 10000) / 10000;
-  row.edge = implied != null ? Math.round((pSide - implied) * 10000) / 10000 : null;
+  if (quote && pred.predicted_value != null) {
+    const line = Number(quote.line);
+    const pOver = overProb(line);
+    const side = pOver >= 0.5 ? "over" : "under";
+    const pSide = side === "over" ? pOver : 1 - pOver;
+    const price = side === "over" ? quote.over_price : quote.under_price;
+    const implied = americanToProb(price);
+    row.recommendation = side;
+    row.line = line;
+    row.price = price;
+    row.book = quote.source ?? null;
+    row.confidence = Math.round(pSide * 10000) / 10000;
+    row.edge = implied != null ? Math.round((pSide - implied) * 10000) / 10000 : null;
+    return row;
+  }
+  if (modelFair && pred.predicted_value != null) {
+    const line = Math.round(Number(pred.predicted_value) * 2) / 2; // nearest 0.5
+    const pOver = overProb(line);
+    const side = pOver >= 0.5 ? "over" : "under";
+    const pSide = side === "over" ? pOver : 1 - pOver;
+    row.recommendation = side;
+    row.line = line;
+    row.price = 100; // even money
+    row.book = "model_fair";
+    row.confidence = Math.round(pSide * 10000) / 10000;
+    row.edge = Math.round((pSide - 0.5) * 10000) / 10000; // vs 50% fair
+  }
   return row;
 }
 
@@ -146,7 +168,7 @@ Deno.serve(async (req) => {
         const abr = predictAbResult(models, ctx);
 
         const marketRows = [
-          ouJoin(speed, (line) => speedOverProb(speed.predicted_value!, speed.sigma, line), odds["pitch_speed_ou"]),
+          ouJoin(speed, (line) => speedOverProb(speed.predicted_value!, speed.sigma, line), odds["pitch_speed_ou"], true),
           {
             market: "pitch_result", predicted_value: pres.predicted_value,
             confidence: pres.confidence, probs: pres.probs,
@@ -159,7 +181,7 @@ Deno.serve(async (req) => {
             recommendation: topClass(abr.probs), line: null, price: null,
             edge: null, model_version: abr.model_version,
           },
-          ouJoin(abp, (line) => pitchesOverProb(ctx.pitch_count_pa, abp.dist, abp.predicted_value!, line), odds["ab_pitches_ou"]),
+          ouJoin(abp, (line) => pitchesOverProb(ctx.pitch_count_pa, abp.dist, abp.predicted_value!, line), odds["ab_pitches_ou"], true),
         ];
 
         // Moneyline: MLB live win prob vs freshest market quote.
@@ -227,6 +249,29 @@ Deno.serve(async (req) => {
             });
           }
         }
+
+        // Model-fair micro-market picks (pitch speed / AB pitches): even money
+        // vs the model's own fair line, tagged book "model_fair" so the record
+        // never reads as beating a real sportsbook. Published only when the
+        // model is meaningfully off a coin flip.
+        for (const mr of marketRows) {
+          const mkt = mr.market as string;
+          if ((mkt === "pitch_speed_ou" || mkt === "ab_pitches_ou") &&
+              mr.book === "model_fair" && mr.recommendation != null &&
+              Number(mr.confidence) >= 0.58) {
+            const isSpeed = mkt === "pitch_speed_ou";
+            const side = String(mr.recommendation);
+            picksWritten += await publishPick(g, {
+              market: mkt, recommendation: side,
+              label: `${isSpeed ? "Next pitch" : "AB pitches"} ${side} ${mr.line} ${isSpeed ? "mph" : ""}`.trim(),
+              line: mr.line as number, price: 100,
+              confidence: Number(mr.confidence),
+              edge: mr.edge != null ? Number(mr.edge) : null,
+              source: "model_fair", model_version: String(mr.model_version),
+              at_bat_index: abi,
+            });
+          }
+        }
       } catch (e) {
         errors.push(`game ${g.game_pk}: ${String(e).slice(0, 160)}`);
       }
@@ -258,7 +303,7 @@ function latestAbIndex(pitches: { at_bat_index: number | null }[]): number | nul
 async function publishPick(g: any, p: {
   market: string; recommendation: string; label: string; price: number | null;
   confidence: number; edge: number | null; source: string | null;
-  model_version: string; at_bat_index: number | null;
+  model_version: string; at_bat_index: number | null; line?: number | null;
   extraPayload?: Record<string, unknown>;
 }): Promise<number> {
   const payload = {
@@ -274,6 +319,7 @@ async function publishPick(g: any, p: {
     pick_date: new Date().toISOString().slice(0, 10),
     game_pk: g.game_pk, at_bat_index: p.at_bat_index,
     market: p.market, recommendation: p.recommendation, label: p.label,
+    line: p.line ?? null,
     price: p.price, confidence: Math.round(p.confidence * 10000) / 10000,
     edge: p.edge, units: 1, book: p.source, source: p.source ?? "model",
     model_version: p.model_version, status: "pending", payload,

@@ -107,6 +107,7 @@ async function live(): Promise<Response> {
         edge: p.edge != null ? Number(p.edge) : null,
         confidence: p.confidence != null ? Number(p.confidence) : null,
         probs: p.probs,
+        book: p.book ?? null,
         model_version: p.model_version,
         features_used: [],
         sample_size: 0,
@@ -176,6 +177,31 @@ async function picksToday(): Promise<Response> {
   return json((data ?? []).map(pickOut));
 }
 
+// GET /odds/today — latest snapshot per (game, market, source, outcome) in the
+// last hour, grouped by game, incl. de-vigged novig_prob for a line-shop board.
+async function oddsToday(): Promise<Response> {
+  const { data } = await svc().from("odds")
+    .select("game_pk,market,outcome,line,price_american,implied_prob,novig_prob,source,fetched_at")
+    .gte("fetched_at", new Date(Date.now() - 60 * 60_000).toISOString())
+    .order("fetched_at", { ascending: false }).limit(2000);
+  const seen = new Set<string>();
+  const byGame = new Map<number, any[]>();
+  for (const r of data ?? []) {
+    const k = `${r.game_pk}:${r.market}:${r.source}:${r.outcome ?? ""}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    (byGame.get(r.game_pk) ?? byGame.set(r.game_pk, []).get(r.game_pk)!).push({
+      market: r.market, outcome: r.outcome,
+      line: r.line != null ? Number(r.line) : null,
+      price: r.price_american,
+      implied_prob: r.implied_prob != null ? Number(r.implied_prob) : null,
+      novig_prob: r.novig_prob != null ? Number(r.novig_prob) : null,
+      source: r.source, fetched_at: r.fetched_at,
+    });
+  }
+  return json([...byGame.entries()].map(([game_pk, quotes]) => ({ game_pk, quotes })));
+}
+
 function bucket() { return { wins: 0, losses: 0, pushes: 0, units: 0, risked: 0, picks: 0 }; }
 function tally(b: any, r: any) {
   const units = Number(r.units ?? 1), profit = Number(r.profit_units ?? 0);
@@ -233,7 +259,7 @@ async function edge(gamePk: number): Promise<Response> {
     db.from("predictions").select("*").eq("game_pk", gamePk)
       .order("id", { ascending: false }).limit(30),
     db.from("odds")
-      .select("market,outcome,line,over_price,under_price,price_american,implied_prob,source,fetched_at")
+      .select("market,outcome,line,over_price,under_price,price_american,implied_prob,novig_prob,source,fetched_at")
       .eq("game_pk", gamePk)
       .gte("fetched_at", new Date(Date.now() - 45 * 60_000).toISOString())
       .order("fetched_at", { ascending: false }).limit(80),
@@ -257,6 +283,8 @@ async function edge(gamePk: number): Promise<Response> {
     const quotes = latest.filter((q) => q.market === p.market);
     const sources = quotes.map((q) => {
       const implied = q.implied_prob != null ? Number(q.implied_prob) : null;
+      // Edge vs the de-vigged prob when available (falls back to raw implied).
+      const fair = q.novig_prob != null ? Number(q.novig_prob) : implied;
       const conf = p.confidence != null ? Number(p.confidence) : null;
       return {
         source: q.source,
@@ -265,8 +293,9 @@ async function edge(gamePk: number): Promise<Response> {
         line: q.line != null ? Number(q.line) : null,
         price: q.price_american ?? (p.recommendation === "over" ? q.over_price : q.under_price),
         implied_prob: implied,
-        edge: implied != null && conf != null && q.outcome === p.recommendation
-          ? Math.round((conf - implied) * 10000) / 10000
+        novig_prob: q.novig_prob != null ? Number(q.novig_prob) : null,
+        edge: fair != null && conf != null && q.outcome === p.recommendation
+          ? Math.round((conf - fair) * 10000) / 10000
           : null,
       };
     });
@@ -315,6 +344,7 @@ Deno.serve(async (req) => {
       case "games": return await games();
       case "live": return await live();
       case "picks/today": return await picksToday();
+      case "odds/today": return await oddsToday();
       case "record": return await record();
       case "sportsbooks": return json({ disclaimer: DISCLAIMER, books: BOOKS });
       default: {
