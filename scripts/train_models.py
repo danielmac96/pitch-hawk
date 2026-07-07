@@ -7,6 +7,14 @@ function (supabase/functions/_shared/model.ts) scores with them directly.
 
 Usage:
     SUPABASE_URL=... SUPABASE_KEY=<service-or-anon-key> python scripts/train_models.py
+    # flags:
+    #   --dry-run  fit + insert as inactive, print metrics, never activate
+    #   --force    activate even if the quality gate would hold the version
+
+A new version only auto-activates if it is not worse than the current active by
+more than 2% on its quality metric (log-loss / sigma); otherwise it is inserted
+inactive and can be promoted later with the activate_model() RPC. See
+docs/MODELS.md.
 
 Requires: numpy, scikit-learn (pip install numpy scikit-learn supabase).
 """
@@ -158,19 +166,60 @@ def train_moneyline() -> tuple[dict, dict]:
     return params, {"games": games, "home_win_rate": round(hw, 4)}
 
 
+# Quality gate: (metric key, direction). A new version only auto-activates if it
+# is not worse than the current active by more than QUALITY_TOLERANCE. Markets
+# without a comparable metric (ab_pitches_ou, game_moneyline) always activate.
+QUALITY_METRIC = {
+    "pitch_result": ("weighted_logloss", "lower"),
+    "ab_result": ("weighted_logloss", "lower"),
+    "pitch_speed_ou": ("sigma", "lower"),
+}
+QUALITY_TOLERANCE = 0.02
+
+FORCE = "--force" in sys.argv
+DRY_RUN = "--dry-run" in sys.argv
+
+
+def _active_metrics(client, market: str) -> dict | None:
+    rows = client.table("model_params").select("metrics") \
+        .eq("market", market).eq("is_active", True).limit(1).execute().data
+    return (rows[0].get("metrics") if rows else None) or None
+
+
 def save(market: str, params: dict, metrics: dict) -> None:
     client = get_client()
-    client.table("model_params").update({"is_active": False}) \
-        .eq("market", market).eq("is_active", True).execute()
+    activate, reason = True, "no active baseline"
+    if not FORCE and market in QUALITY_METRIC:
+        prev = _active_metrics(client, market)
+        key, direction = QUALITY_METRIC[market]
+        old = (prev or {}).get(key)
+        new = metrics.get(key)
+        if old is not None and new is not None:
+            worse = new > old * (1 + QUALITY_TOLERANCE) if direction == "lower" \
+                else new < old * (1 - QUALITY_TOLERANCE)
+            reason = f"{key} {new} vs active {old}"
+            if worse:
+                activate, reason = False, f"HELD: {key} {new} worse than active {old} (>2%)"
+    if DRY_RUN:
+        activate, reason = False, "dry-run"
+
+    if activate:
+        client.table("model_params").update({"is_active": False}) \
+            .eq("market", market).eq("is_active", True).execute()
     client.table("model_params").upsert({
         "market": market, "version": VERSION, "params": params,
         "metrics": metrics, "training_rows": metrics.get("rows") or metrics.get("games"),
-        "is_active": True,
+        "is_active": activate,
+        "activated_at": datetime.now(timezone.utc).isoformat() if activate else None,
+        "notes": reason,
     }, on_conflict="market,version").execute()
-    print(f"[train] saved {market} {VERSION} metrics={json.dumps(metrics)}")
+    status = "ACTIVATED" if activate else "inactive"
+    print(f"[train] {market} {VERSION} {status} ({reason}) metrics={json.dumps(metrics)}")
 
 
 def main() -> int:
+    if DRY_RUN:
+        print("[train] --dry-run: fitting + inserting inactive, no activation")
     trainers = {
         "pitch_result": train_pitch_result,
         "ab_result": train_ab_result,
