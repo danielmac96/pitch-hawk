@@ -178,6 +178,12 @@ QUALITY_TOLERANCE = 0.02
 
 FORCE = "--force" in sys.argv
 DRY_RUN = "--dry-run" in sys.argv
+# --emit <dir>: write fitted params/metrics to <dir>/<market>.json instead of the
+# DB. Lets a read-only (anon-key) run produce artifacts that are applied to
+# model_params out of band (e.g. via the Supabase SQL editor / MCP), when the
+# training host has no service_role key.
+EMIT_DIR = next((sys.argv[i + 1] for i, a in enumerate(sys.argv)
+                 if a == "--emit" and i + 1 < len(sys.argv)), None)
 
 
 def _active_metrics(client, market: str) -> dict | None:
@@ -187,6 +193,14 @@ def _active_metrics(client, market: str) -> dict | None:
 
 
 def save(market: str, params: dict, metrics: dict) -> None:
+    if EMIT_DIR:
+        os.makedirs(EMIT_DIR, exist_ok=True)
+        path = os.path.join(EMIT_DIR, f"{market}.json")
+        with open(path, "w") as fh:
+            json.dump({"market": market, "version": VERSION,
+                       "params": params, "metrics": metrics}, fh)
+        print(f"[train] emitted {market} -> {path} metrics={json.dumps(metrics)}")
+        return
     client = get_client()
     activate, reason = True, "no active baseline"
     if not FORCE and market in QUALITY_METRIC:
