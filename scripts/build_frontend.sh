@@ -12,7 +12,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SRC="$ROOT/frontend"
 OUT="$ROOT/dist"
-URL="${SUPABASE_FUNCTIONS_URL:-}"
+# Default to this project's Supabase functions URL so a plain Vercel build wires
+# to the live public API without any dashboard env var; SUPABASE_FUNCTIONS_URL
+# overrides it (set to empty string to force sample-data demo mode).
+URL="${SUPABASE_FUNCTIONS_URL-https://gfxpchtyncgsczqdvohr.supabase.co/functions/v1}"
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
