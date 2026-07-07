@@ -31,16 +31,32 @@ const DISCLAIMER =
 
 async function health(): Promise<Response> {
   const db = svc();
-  const [{ count: pitchCount }, { data: lastRun }, { data: model }] = await Promise.all([
+  const [{ count: pitchCount }, { data: runs }, { data: model }, { data: bf }] = await Promise.all([
     db.from("pitches").select("id", { count: "exact", head: true }),
-    db.from("ingest_runs").select("job,finished_at,ok").order("id", { ascending: false }).limit(1),
+    db.from("ingest_runs").select("job,finished_at,ok").order("id", { ascending: false }).limit(200),
     db.from("model_params").select("market,version").eq("is_active", true),
+    db.from("backfill_progress").select("cursor_date,start_date,done,updated_at").eq("id", 1).maybeSingle(),
   ]);
+  const now = Date.now();
+  // Last SUCCESSFUL finish per job + how stale it is.
+  const jobs: Record<string, { last_success: string | null; age_seconds: number | null }> = {};
+  for (const r of runs ?? []) {
+    if (!r.ok || !r.finished_at || jobs[r.job]) continue;
+    jobs[r.job] = {
+      last_success: r.finished_at,
+      age_seconds: Math.round((now - new Date(r.finished_at).getTime()) / 1000),
+    };
+  }
+  // The live board is "fresh" when live-poll succeeded within the last 2 min.
+  const liveAge = jobs["live-poll"]?.age_seconds ?? null;
+  const dataFresh = liveAge != null ? liveAge <= 120 : true;
   return json({
     status: "ok",
     timestamp: new Date().toISOString(),
     pitches_rows: pitchCount ?? 0,
-    last_job: lastRun?.[0] ?? null,
+    jobs,
+    data_fresh: dataFresh,
+    backfill: bf ?? null,
     active_models: model ?? [],
   });
 }

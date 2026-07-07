@@ -11,7 +11,8 @@
 
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
 import { log5HomeProb } from "../_shared/model.ts";
-import { americanToProb } from "../_shared/vocab.ts";
+import { americanToProb, teamIdByAbbr, teamIdByText } from "../_shared/vocab.ts";
+import { fetchJson } from "../_shared/http.ts";
 
 const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard";
 const KALSHI_MARKETS = "https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXMLBGAME&status=open&limit=1000";
@@ -25,10 +26,28 @@ interface GameRef {
   venue_name: string | null; start_ts: string | null;
 }
 
-function nickname(team: string | null): string | null {
-  if (!team) return null;
-  const parts = team.trim().split(/\s+/);
-  return parts[parts.length - 1]?.toLowerCase() ?? null;
+// Index today's games by team_id so odds feeds join on the fixed MLB id rather
+// than a fragile nickname substring. gamesByTeam maps a team_id to the game it
+// plays in today (a team plays at most one game per slate for our purposes).
+function indexGames(games: GameRef[]): {
+  byPair: Map<string, GameRef>; byTeam: Map<number, GameRef>;
+} {
+  const byPair = new Map<string, GameRef>();
+  const byTeam = new Map<number, GameRef>();
+  for (const g of games) {
+    if (g.home_team_id != null && g.away_team_id != null) {
+      byPair.set(`${g.away_team_id}:${g.home_team_id}`, g);
+    }
+    if (g.home_team_id != null) byTeam.set(g.home_team_id, g);
+    if (g.away_team_id != null) byTeam.set(g.away_team_id, g);
+  }
+  return { byPair, byTeam };
+}
+
+// Resolve an ESPN competitor to an MLB team_id: abbreviation first, name fallback.
+function espnTeamId(team: any): number | null {
+  return teamIdByAbbr(team?.abbreviation) ??
+    teamIdByText(team?.displayName ?? team?.name ?? null);
 }
 
 async function todaysGames(): Promise<GameRef[]> {
@@ -39,10 +58,10 @@ async function todaysGames(): Promise<GameRef[]> {
   return (data ?? []) as GameRef[];
 }
 
-async function ingestEspn(games: GameRef[]): Promise<{ rows: any[]; matched: number }> {
-  const r = await fetch(ESPN_SCOREBOARD, { headers: { Accept: "application/json" } });
-  if (!r.ok) throw new Error(`espn ${r.status}`);
-  const data = await r.json();
+async function ingestEspn(
+  idx: ReturnType<typeof indexGames>, unmatched: string[],
+): Promise<{ rows: any[]; matched: number }> {
+  const data = await fetchJson(ESPN_SCOREBOARD, { timeoutMs: 10_000, retries: 2 });
   const rows: any[] = [];
   let matched = 0;
   for (const ev of data.events ?? []) {
@@ -50,12 +69,16 @@ async function ingestEspn(games: GameRef[]): Promise<{ rows: any[]; matched: num
     if (!comp) continue;
     const homeC = (comp.competitors ?? []).find((c: any) => c.homeAway === "home");
     const awayC = (comp.competitors ?? []).find((c: any) => c.homeAway === "away");
-    const homeNick = nickname(homeC?.team?.name ?? homeC?.team?.displayName);
-    const awayNick = nickname(awayC?.team?.name ?? awayC?.team?.displayName);
-    const g = games.find((x) =>
-      nickname(x.home_team) === homeNick && nickname(x.away_team) === awayNick
-    );
-    if (!g) continue;
+    const homeId = espnTeamId(homeC?.team);
+    const awayId = espnTeamId(awayC?.team);
+    const g = homeId != null && awayId != null
+      ? idx.byPair.get(`${awayId}:${homeId}`)
+      : undefined;
+    if (!g) {
+      const label = `${awayC?.team?.abbreviation ?? "?"}@${homeC?.team?.abbreviation ?? "?"}`;
+      if ((comp.odds?.length ?? 0) > 0) unmatched.push(`espn:${label}`);
+      continue;
+    }
     const odds = comp.odds?.[0];
     if (!odds) continue;
     matched += 1;
@@ -96,38 +119,41 @@ async function ingestEspn(games: GameRef[]): Promise<{ rows: any[]; matched: num
   return { rows, matched };
 }
 
-async function ingestKalshi(games: GameRef[]): Promise<{ rows: any[]; matched: number }> {
-  const r = await fetch(KALSHI_MARKETS, { headers: { Accept: "application/json" } });
-  if (!r.ok) throw new Error(`kalshi ${r.status}`);
-  const markets = (await r.json()).markets ?? [];
+async function ingestKalshi(
+  idx: ReturnType<typeof indexGames>, unmatched: string[],
+): Promise<{ rows: any[]; matched: number }> {
+  const data = await fetchJson(KALSHI_MARKETS, { timeoutMs: 10_000, retries: 2 });
+  const markets = data.markets ?? [];
   const rows: any[] = [];
   const matchedGames = new Set<number>();
   const now = new Date().toISOString();
   for (const m of markets) {
-    const teamBlob = String(m.yes_sub_title ?? m.title ?? "").toLowerCase();
+    const teamBlob = String(m.yes_sub_title ?? m.title ?? "");
     if (!teamBlob) continue;
-    for (const g of games) {
-      const hn = nickname(g.home_team), an = nickname(g.away_team);
-      let outcome: string | null = null;
-      if (hn && teamBlob.includes(hn)) outcome = "home";
-      else if (an && teamBlob.includes(an)) outcome = "away";
-      if (!outcome) continue;
+    const teamId = teamIdByText(teamBlob);
+    const g = teamId != null ? idx.byTeam.get(teamId) : undefined;
+    if (!g) {
       const bid = m.yes_bid, ask = m.yes_ask;
-      let prob: number | null = null;
-      if (bid != null && ask != null && (bid || ask)) prob = (bid + ask) / 200;
-      else if (m.last_price) prob = m.last_price / 100;
-      if (prob == null || prob <= 0 || prob >= 1) continue;
-      matchedGames.add(g.game_pk);
-      rows.push({
-        game_pk: g.game_pk, market: "game_moneyline", outcome,
-        implied_prob: round4(prob),
-        price_american: prob >= 0.5 ? -Math.round((prob / (1 - prob)) * 100) : Math.round(((1 - prob) / prob) * 100),
-        source: "kalshi",
-        meta: { ticker: m.ticker, yes_bid: bid, yes_ask: ask, volume: m.volume },
-        fetched_at: now,
-      });
-      break; // a Kalshi market maps to one game
+      if ((bid != null && ask != null && (bid || ask)) || m.last_price) {
+        unmatched.push(`kalshi:${teamBlob.slice(0, 40)}`);
+      }
+      continue;
     }
+    const outcome = teamId === g.home_team_id ? "home" : "away";
+    const bid = m.yes_bid, ask = m.yes_ask;
+    let prob: number | null = null;
+    if (bid != null && ask != null && (bid || ask)) prob = (bid + ask) / 200;
+    else if (m.last_price) prob = m.last_price / 100;
+    if (prob == null || prob <= 0 || prob >= 1) continue;
+    matchedGames.add(g.game_pk);
+    rows.push({
+      game_pk: g.game_pk, market: "game_moneyline", outcome,
+      implied_prob: round4(prob),
+      price_american: prob >= 0.5 ? -Math.round((prob / (1 - prob)) * 100) : Math.round(((1 - prob) / prob) * 100),
+      source: "kalshi",
+      meta: { ticker: m.ticker, yes_bid: bid, yes_ask: ask, volume: m.volume },
+      fetched_at: now,
+    });
   }
   return { rows, matched: matchedGames.size };
 }
@@ -163,19 +189,24 @@ Deno.serve(async (req) => {
   try {
     const games = await todaysGames();
     detail.games_today = games.length;
+    const idx = indexGames(games);
+    const unmatched: string[] = [];
     let rows: any[] = [];
 
     try {
-      const espn = await ingestEspn(games);
+      const espn = await ingestEspn(idx, unmatched);
       rows = rows.concat(espn.rows);
       detail.espn = { rows: espn.rows.length, matched: espn.matched };
     } catch (e) { errors.push(`espn: ${String(e).slice(0, 120)}`); }
 
     try {
-      const kalshi = await ingestKalshi(games);
+      const kalshi = await ingestKalshi(idx, unmatched);
       rows = rows.concat(kalshi.rows);
       detail.kalshi = { rows: kalshi.rows.length, matched: kalshi.matched };
     } catch (e) { errors.push(`kalshi: ${String(e).slice(0, 120)}`); }
+
+    // Surface silent drops so a broken match rule is visible in ingest_runs.
+    if (unmatched.length) detail.unmatched = unmatched.slice(0, 20);
 
     if (rows.length) {
       const { error } = await svc().from("odds").insert(rows);

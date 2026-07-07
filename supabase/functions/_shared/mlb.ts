@@ -1,6 +1,7 @@
 // MLB Stats API client + row flatteners (mirrors backend/ingestion/mlb_api.py).
 
 import { abResultCategory, CALL_CODE_TO_DESCRIPTION, resultCategory } from "./vocab.ts";
+import { fetchJson } from "./http.ts";
 
 export const MLB_BASE = "https://statsapi.mlb.com/api/v1";
 const LIVE_STATUSES = new Set(["In Progress", "Live", "Manager challenge"]);
@@ -8,9 +9,8 @@ const LIVE_STATUSES = new Set(["In Progress", "Live", "Manager challenge"]);
 export async function mlbGet(path: string, params: Record<string, string> = {}): Promise<any> {
   const url = new URL(MLB_BASE + path);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const r = await fetch(url, { headers: { Accept: "application/json" } });
-  if (!r.ok) throw new Error(`MLB ${path} -> ${r.status}`);
-  return await r.json();
+  // Play-by-play/schedule payloads are large; give them a longer budget.
+  return await fetchJson(url, { timeoutMs: 15_000, retries: 2 });
 }
 
 export interface GameRow {
