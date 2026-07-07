@@ -46,11 +46,15 @@ is preconfigured) and set env var `SUPABASE_FUNCTIONS_URL` =
 
 1. **Migrations** — apply, in order, `supabase/migrations/*.sql`
    (via MCP `apply_migration`, `supabase db push`, or the SQL editor).
-   In `20260703000002_cron.sql`, replace `{{PROJECT_REF}}` with your
-   project ref first.
-2. **Cron secret** — generate a random string and store it:
+   The cron migration is ref-agnostic: it reads the functions base URL and
+   cron secret from `app_secrets` at call time, so there is nothing to
+   substitute.
+2. **Cron secret + functions URL** — generate a random secret and store both
+   (the cron dispatcher `call_edge_function` uses them):
    ```sql
-   insert into app_secrets (key, value) values ('cron_secret', '<random>')
+   insert into app_secrets (key, value) values
+     ('cron_secret', '<random 32+ chars>'),
+     ('functions_base_url', 'https://<ref>.supabase.co/functions/v1')
    on conflict (key) do update set value = excluded.value;
    ```
 3. **Edge functions** — deploy `backfill`, `daily-ingest`, `live-poll`,
@@ -82,6 +86,25 @@ is preconfigured) and set env var `SUPABASE_FUNCTIONS_URL` =
 7. **Frontend** — in `frontend/config.js` replace
    `{{SUPABASE_FUNCTIONS_URL}}` with `https://<ref>.supabase.co/functions/v1`,
    then host `frontend/` anywhere static (Vercel, GitHub Pages, S3…).
+
+## Optional `app_secrets` (set via SQL / MCP `execute_sql`)
+
+| key | effect |
+|---|---|
+| `allowed_origins` | comma-separated CORS allowlist for the `api` function (e.g. your Vercel domain). Until set, CORS is `*`. |
+| `the_odds_api_key` | activates the The Odds API provider in `odds-ingest` (DraftKings/FanDuel/… lines, per-book `source`). Free tier is 500 req/mo. |
+| `season_start` | backfill window start (`YYYY-MM-DD`); defaults to `<year>-03-15`. |
+
+```sql
+insert into app_secrets (key, value) values
+  ('allowed_origins', 'https://<your-app>.vercel.app'),
+  ('the_odds_api_key', '<key>')
+on conflict (key) do update set value = excluded.value;
+```
+
+The entire provisioning flow can also be driven through the Supabase MCP tools
+(`apply_migration`, `execute_sql`, `deploy_edge_function`, `get_advisors`) with
+no local CLI — see `docs/MODELS.md` for the model-registry commands.
 
 ## Ops queries
 
