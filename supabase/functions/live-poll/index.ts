@@ -20,9 +20,12 @@ import {
 } from "../_shared/model.ts";
 import { americanToProb, probToAmerican } from "../_shared/vocab.ts";
 
-const AB_PICK_MARGIN = 0.08;   // model prob must beat league baseline by this
+// ab_result picks have no real prop price, so settle grades them flat even-money
+// (±1 unit). Only a win prob above the break-even is +EV — "beats the league base
+// rate" is not (a 30% strikeout still loses at even money). Gate on the calibrated
+// prob clearing 0.5 with a small buffer. See docs/MODELS.md.
+const AB_PICK_MIN_PROB = 0.52;
 const ML_PICK_EDGE = 0.04;     // model win prob vs market implied
-const LEAGUE_AB = { strikeout: 0.221, walk: 0.087, hit: 0.239, out: 0.453 } as Record<string, number>;
 
 async function latestOdds(gamePk: number): Promise<Record<string, any[]>> {
   const { data } = await svc().from("odds")
@@ -228,18 +231,20 @@ Deno.serve(async (req) => {
 
         // Publish an at-bat pick once, at the start of the PA (first pitch just
         // landed — the earliest live_state we ever observe for a new batter),
-        // when the model strongly beats the league base rate. The unique
-        // constraint on (date, game, market, at_bat_index, rec) dedupes.
+        // when the calibrated win prob clears the even-money break-even (these
+        // grade flat ±1 with no real prop price). The unique constraint on
+        // (date, game, market, at_bat_index, rec) dedupes. edge is vs the 0.5
+        // implied of an even-money bet, matching every other market's edge.
         const abProbs = abr.probs ?? {};
         for (const cls of ["strikeout", "walk", "hit"]) {
           const p = abProbs[cls];
-          if (p != null && p - LEAGUE_AB[cls] >= AB_PICK_MARGIN && ctx.pitch_count_pa <= 1) {
+          if (p != null && p >= AB_PICK_MIN_PROB && ctx.pitch_count_pa <= 1) {
             const batterName = (bInfo as any).data?.full_name ?? "Batter";
             picksWritten += await publishPick(g, {
               market: "ab_result", recommendation: cls,
               label: `${batterName} — ${cls[0].toUpperCase()}${cls.slice(1)}`,
               price: null, confidence: p,
-              edge: Math.round((p - LEAGUE_AB[cls]) * 10000) / 10000,
+              edge: Math.round((p - 0.5) * 10000) / 10000,
               source: "model", model_version: abr.model_version,
               at_bat_index: abi,
               extraPayload: {

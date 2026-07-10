@@ -75,7 +75,9 @@
       "mcp__vercel__deploy_to_vercel",
       "Bash(git push *)",
       "mcp__vercel__list_teams",
-      "mcp__vercel__list_projects"
+      "mcp__vercel__list_projects",
+      "WebFetch(domain:mlb-next-pitch.vercel.app)",
+      "mcp__supabase__get_edge_function"
     ]
   },
   "enabledMcpjsonServers": [

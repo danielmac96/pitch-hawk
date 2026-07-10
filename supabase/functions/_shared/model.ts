@@ -56,6 +56,23 @@ function normalize(p: Record<string, number>): Record<string, number> {
   return out;
 }
 
+// The v1 multinomial models were fit with light regularization (C=10) and run
+// hot on the tails: graded ab_result strikeout picks show model prob ~1.4x the
+// realized rate (e.g. model 0.55 -> actual 0.38). Until a recalibrated version
+// ships, shrink each class toward the league prior, keeping CALIB_SHRINK of the
+// model's deviation from it. Coarse but monotonic (preserves ranking); the prior
+// sums to 1 so the blend stays a distribution. See docs/MODELS.md.
+const CALIB_SHRINK = 0.7;
+function shrinkToPrior(
+  probs: Record<string, number>, prior: Record<string, number>, shrink = CALIB_SHRINK,
+): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(probs)) {
+    out[k] = shrink * v + (1 - shrink) * (prior[k] ?? 0);
+  }
+  return normalize(out);
+}
+
 function blend(v: number | null | undefined, league: number, n: number, k = 500): number {
   if (v == null) return league;
   const w = 0.85 * (1 - Math.exp(-n / k));
@@ -168,7 +185,7 @@ export function predictAbResult(models: Record<string, Params>, ctx: ScoreContex
   let probs: Record<string, number>;
   let version = "heuristic_v0";
   if (m && m.type === "multinomial_logistic") {
-    probs = scoreMultinomial(m, ctx);
+    probs = shrinkToPrior(scoreMultinomial(m, ctx), LEAGUE.ab_result);
     version = m.version;
   } else {
     const al = LEAGUE.ab_result;
