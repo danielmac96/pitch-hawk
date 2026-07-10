@@ -29,18 +29,102 @@ const DISCLAIMER =
   "confirm the live price before wagering. Not financial advice. " +
   "Problem gambling? Call 1-800-GAMBLER.";
 
+// ── Edge/CDN cache TTLs (seconds). Data only changes at the poll cadence, so
+// caching collapses ~500 req/s at 1000 users into a handful of origin hits.
+const TTL: Record<string, number> = {
+  "": 0, "health": 0,
+  "live": 10, "edge": 15, "odds/today": 30,
+  "picks/today": 60, "record": 60, "games": 60,
+  "sportsbooks": 3600,
+};
+
+// In-instance memo so even a CDN miss on a warm instance skips Postgres.
+const memo = new Map<string, { expires: number; text: string; status: number }>();
+
+// CORS allowlist from app_secrets.allowed_origins (comma-separated); falls back
+// to "*" until configured. localhost is always allowed for dev.
+let originsCache: { expires: number; list: string[] | null } = { expires: 0, list: null };
+async function allowedOrigins(): Promise<string[] | null> {
+  if (originsCache.expires > Date.now()) return originsCache.list;
+  const { data } = await svc().from("app_secrets").select("value").eq("key", "allowed_origins").maybeSingle();
+  const list = data?.value ? data.value.split(",").map((s: string) => s.trim()).filter(Boolean) : null;
+  originsCache = { expires: Date.now() + 300_000, list };
+  return list;
+}
+function pickOrigin(list: string[] | null, reqOrigin: string | null): string {
+  if (!list || !list.length) return "*";
+  if (reqOrigin && list.includes(reqOrigin)) return reqOrigin;
+  if (reqOrigin && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(reqOrigin)) return reqOrigin;
+  return list[0]; // any non-allowed browser origin won't match -> blocked
+}
+
+function corsHeaders(origin: string, cacheTtl?: number): Record<string, string> {
+  const h: Record<string, string> = {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Vary": "Origin",
+  };
+  if (cacheTtl && cacheTtl > 0) {
+    h["Cache-Control"] = `public, s-maxage=${cacheTtl}, stale-while-revalidate=${cacheTtl}`;
+  }
+  return h;
+}
+
+// Wrap a JSON-returning handler with the in-instance memo + cache/CORS headers.
+async function cached(key: string, ttl: number, origin: string, fn: () => Promise<Response>): Promise<Response> {
+  const now = Date.now();
+  const hit = memo.get(key);
+  let text: string, status: number;
+  if (hit && hit.expires > now) {
+    text = hit.text; status = hit.status;
+  } else {
+    const resp = await fn();
+    text = await resp.text();
+    status = resp.status;
+    if (status === 200 && ttl > 0) memo.set(key, { expires: now + ttl * 1000, text, status });
+  }
+  return new Response(text, { status, headers: { "Content-Type": "application/json", ...corsHeaders(origin, ttl) } });
+}
+
+// Per-IP in-memory rate limit for the public click funnel (10/min).
+const clickHits = new Map<string, { count: number; resetAt: number }>();
+function clickRateLimited(ip: string): boolean {
+  const now = Date.now();
+  const e = clickHits.get(ip);
+  if (!e || e.resetAt < now) { clickHits.set(ip, { count: 1, resetAt: now + 60_000 }); return false; }
+  e.count += 1;
+  return e.count > 10;
+}
+
 async function health(): Promise<Response> {
   const db = svc();
-  const [{ count: pitchCount }, { data: lastRun }, { data: model }] = await Promise.all([
+  const [{ count: pitchCount }, { data: runs }, { data: model }, { data: bf }] = await Promise.all([
     db.from("pitches").select("id", { count: "exact", head: true }),
-    db.from("ingest_runs").select("job,finished_at,ok").order("id", { ascending: false }).limit(1),
+    db.from("ingest_runs").select("job,finished_at,ok").order("id", { ascending: false }).limit(200),
     db.from("model_params").select("market,version").eq("is_active", true),
+    db.from("backfill_progress").select("cursor_date,start_date,done,updated_at").eq("id", 1).maybeSingle(),
   ]);
+  const now = Date.now();
+  // Last SUCCESSFUL finish per job + how stale it is.
+  const jobs: Record<string, { last_success: string | null; age_seconds: number | null }> = {};
+  for (const r of runs ?? []) {
+    if (!r.ok || !r.finished_at || jobs[r.job]) continue;
+    jobs[r.job] = {
+      last_success: r.finished_at,
+      age_seconds: Math.round((now - new Date(r.finished_at).getTime()) / 1000),
+    };
+  }
+  // The live board is "fresh" when live-poll succeeded within the last 2 min.
+  const liveAge = jobs["live-poll"]?.age_seconds ?? null;
+  const dataFresh = liveAge != null ? liveAge <= 120 : true;
   return json({
     status: "ok",
     timestamp: new Date().toISOString(),
     pitches_rows: pitchCount ?? 0,
-    last_job: lastRun?.[0] ?? null,
+    jobs,
+    data_fresh: dataFresh,
+    backfill: bf ?? null,
     active_models: model ?? [],
   });
 }
@@ -91,6 +175,7 @@ async function live(): Promise<Response> {
         edge: p.edge != null ? Number(p.edge) : null,
         confidence: p.confidence != null ? Number(p.confidence) : null,
         probs: p.probs,
+        book: p.book ?? null,
         model_version: p.model_version,
         features_used: [],
         sample_size: 0,
@@ -160,44 +245,47 @@ async function picksToday(): Promise<Response> {
   return json((data ?? []).map(pickOut));
 }
 
-function bucket() { return { wins: 0, losses: 0, pushes: 0, units: 0, risked: 0, picks: 0 }; }
-function tally(b: any, r: any) {
-  const units = Number(r.units ?? 1), profit = Number(r.profit_units ?? 0);
-  b.picks += 1; b.risked += units; b.units += profit;
-  if (r.status === "win") b.wins += 1;
-  else if (r.status === "loss") b.losses += 1;
-  else if (r.status === "push") b.pushes += 1;
-}
-function finish(b: any) {
-  const { risked, ...rest } = b;
-  rest.units = Math.round(rest.units * 100) / 100;
-  rest.roi = risked ? Math.round((1000 * rest.units) / risked) / 10 : 0;
-  return rest;
+// GET /odds/today — latest snapshot per (game, market, source, outcome) in the
+// last hour, grouped by game, incl. de-vigged novig_prob for a line-shop board.
+async function oddsToday(): Promise<Response> {
+  const { data } = await svc().from("odds")
+    .select("game_pk,market,outcome,line,price_american,implied_prob,novig_prob,source,fetched_at")
+    .gte("fetched_at", new Date(Date.now() - 60 * 60_000).toISOString())
+    .order("fetched_at", { ascending: false }).limit(2000);
+  const seen = new Set<string>();
+  const byGame = new Map<number, any[]>();
+  for (const r of data ?? []) {
+    const k = `${r.game_pk}:${r.market}:${r.source}:${r.outcome ?? ""}`;
+    if (seen.has(k)) continue;
+    seen.add(k);
+    (byGame.get(r.game_pk) ?? byGame.set(r.game_pk, []).get(r.game_pk)!).push({
+      market: r.market, outcome: r.outcome,
+      line: r.line != null ? Number(r.line) : null,
+      price: r.price_american,
+      implied_prob: r.implied_prob != null ? Number(r.implied_prob) : null,
+      novig_prob: r.novig_prob != null ? Number(r.novig_prob) : null,
+      source: r.source, fetched_at: r.fetched_at,
+    });
+  }
+  return json([...byGame.entries()].map(([game_pk, quotes]) => ({ game_pk, quotes })));
 }
 
+// Aggregates come from the pick_record() RPC (single grouped query) instead of
+// scanning thousands of rows; only the 12 recent rows are fetched directly.
 async function record(): Promise<Response> {
-  const { data } = await svc().from("picks")
-    .select("pick_date,market,label,recommendation,price,units,status,profit_units,payload,graded_at")
-    .in("status", ["win", "loss", "push"])
-    .order("graded_at", { ascending: false }).limit(5000);
-  const rows = data ?? [];
-  const overall = bucket(), last30 = bucket();
-  const byMarket: Record<string, any> = {};
-  const cutoff = new Date(Date.now() - 30 * 864e5).toISOString().slice(0, 10);
-  for (const r of rows) {
-    tally(overall, r);
-    (byMarket[r.market ?? "other"] ??= bucket());
-    tally(byMarket[r.market ?? "other"], r);
-    if ((r.pick_date ?? "") >= cutoff) tally(last30, r);
-  }
+  const db = svc();
+  const [{ data: agg }, { data: recentRows }] = await Promise.all([
+    db.rpc("pick_record"),
+    db.from("picks").select("pick_date,market,label,recommendation,price,units,status,payload")
+      .in("status", ["win", "loss", "push"]).order("graded_at", { ascending: false }).limit(12),
+  ]);
+  const a: any = agg ?? { overall: {}, last30: {}, byMarket: [] };
   return json({
     updated: new Date().toISOString().slice(0, 10),
-    overall: finish(overall),
-    last30: finish(last30),
-    byMarket: Object.entries(byMarket).map(([m, b]) => ({
-      market: m, label: MARKET_LABELS[m] ?? m, ...finish(b),
-    })),
-    recent: rows.slice(0, 12).map((r: any) => ({
+    overall: a.overall ?? {},
+    last30: a.last30 ?? {},
+    byMarket: (a.byMarket ?? []).map((b: any) => ({ ...b, label: MARKET_LABELS[b.market] ?? b.market })),
+    recent: (recentRows ?? []).map((r: any) => ({
       date: r.pick_date,
       matchup: r.payload?.game?.matchup ?? `${r.payload?.game?.away ?? "?"} @ ${r.payload?.game?.home ?? "?"}`,
       pick: r.label ?? r.recommendation,
@@ -217,7 +305,7 @@ async function edge(gamePk: number): Promise<Response> {
     db.from("predictions").select("*").eq("game_pk", gamePk)
       .order("id", { ascending: false }).limit(30),
     db.from("odds")
-      .select("market,outcome,line,over_price,under_price,price_american,implied_prob,source,fetched_at")
+      .select("market,outcome,line,over_price,under_price,price_american,implied_prob,novig_prob,source,fetched_at")
       .eq("game_pk", gamePk)
       .gte("fetched_at", new Date(Date.now() - 45 * 60_000).toISOString())
       .order("fetched_at", { ascending: false }).limit(80),
@@ -241,6 +329,8 @@ async function edge(gamePk: number): Promise<Response> {
     const quotes = latest.filter((q) => q.market === p.market);
     const sources = quotes.map((q) => {
       const implied = q.implied_prob != null ? Number(q.implied_prob) : null;
+      // Edge vs the de-vigged prob when available (falls back to raw implied).
+      const fair = q.novig_prob != null ? Number(q.novig_prob) : implied;
       const conf = p.confidence != null ? Number(p.confidence) : null;
       return {
         source: q.source,
@@ -249,8 +339,9 @@ async function edge(gamePk: number): Promise<Response> {
         line: q.line != null ? Number(q.line) : null,
         price: q.price_american ?? (p.recommendation === "over" ? q.over_price : q.under_price),
         implied_prob: implied,
-        edge: implied != null && conf != null && q.outcome === p.recommendation
-          ? Math.round((conf - implied) * 10000) / 10000
+        novig_prob: q.novig_prob != null ? Number(q.novig_prob) : null,
+        edge: fair != null && conf != null && q.outcome === p.recommendation
+          ? Math.round((conf - fair) * 10000) / 10000
           : null,
       };
     });
@@ -274,40 +365,54 @@ async function edge(gamePk: number): Promise<Response> {
   return json(rows);
 }
 
-async function trackClick(req: Request): Promise<Response> {
+function jsonWith(body: unknown, origin: string, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status, headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
+  });
+}
+
+async function trackClick(req: Request, origin: string): Promise<Response> {
+  const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
+  if (clickRateLimited(ip)) return jsonWith({ ok: false, error: "rate_limited" }, origin, 429);
   try {
-    const body = await req.json();
+    const raw = await req.text();
+    if (raw.length > 1024) return jsonWith({ ok: false, error: "payload_too_large" }, origin, 413);
+    const body = JSON.parse(raw || "{}");
+    const num = (v: unknown) => (typeof v === "number" && isFinite(v) ? v : null);
+    const str = (v: unknown) => (typeof v === "string" ? v.slice(0, 64) : null);
     await svc().from("bet_clicks").insert({
-      game_pk: body.game_pk ?? null, market: body.market ?? null,
-      side: body.side ?? null, book: body.book ?? null,
-      edge: body.edge ?? null,
-      affiliate_configured: body.affiliate_configured ?? null,
+      game_pk: num(body.game_pk), market: str(body.market),
+      side: str(body.side), book: str(body.book), edge: num(body.edge),
+      affiliate_configured: typeof body.affiliate_configured === "boolean" ? body.affiliate_configured : null,
     });
   } catch (_e) { /* fire-and-forget */ }
-  return json({ ok: true });
+  return jsonWith({ ok: true }, origin);
 }
 
 Deno.serve(async (req) => {
-  if (req.method === "OPTIONS") return json({ ok: true });
   const url = new URL(req.url);
   // Path arrives as /api/<route...>
   const route = url.pathname.replace(/^\/api\/?/, "").replace(/\/+$/, "");
+  const origin = pickOrigin(await allowedOrigins(), req.headers.get("origin"));
+  if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(origin) });
   try {
-    if (req.method === "POST" && route === "track/click") return await trackClick(req);
+    if (req.method === "POST" && route === "track/click") return await trackClick(req, origin);
+    const em = route.match(/^edge\/(\d+)$/);
+    if (em) return await cached(`edge/${em[1]}`, TTL["edge"], origin, () => edge(Number(em[1])));
     switch (route) {
-      case "health": case "": return await health();
-      case "games": return await games();
-      case "live": return await live();
-      case "picks/today": return await picksToday();
-      case "record": return await record();
-      case "sportsbooks": return json({ disclaimer: DISCLAIMER, books: BOOKS });
-      default: {
-        const em = route.match(/^edge\/(\d+)$/);
-        if (em) return await edge(Number(em[1]));
-        return json({ error: `no route: ${route}` }, 404);
-      }
+      case "health": case "": return await cached(route, TTL[route] ?? 0, origin, health);
+      case "games": return await cached("games", TTL["games"], origin, games);
+      case "live": return await cached("live", TTL["live"], origin, live);
+      case "picks/today": return await cached("picks/today", TTL["picks/today"], origin, picksToday);
+      case "odds/today": return await cached("odds/today", TTL["odds/today"], origin, oddsToday);
+      case "record": return await cached("record", TTL["record"], origin, record);
+      case "sportsbooks":
+        return await cached("sportsbooks", TTL["sportsbooks"], origin,
+          () => json({ disclaimer: DISCLAIMER, books: BOOKS }));
+      default:
+        return jsonWith({ error: `no route: ${route}` }, origin, 404);
     }
   } catch (e) {
-    return json({ error: String(e) }, 500);
+    return jsonWith({ error: String(e) }, origin, 500);
   }
 });

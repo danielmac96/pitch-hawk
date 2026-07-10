@@ -11,7 +11,8 @@
 
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
 import { log5HomeProb } from "../_shared/model.ts";
-import { americanToProb } from "../_shared/vocab.ts";
+import { americanToProb, teamIdByAbbr, teamIdByText } from "../_shared/vocab.ts";
+import { fetchJson } from "../_shared/http.ts";
 
 const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard";
 const KALSHI_MARKETS = "https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXMLBGAME&status=open&limit=1000";
@@ -25,10 +26,28 @@ interface GameRef {
   venue_name: string | null; start_ts: string | null;
 }
 
-function nickname(team: string | null): string | null {
-  if (!team) return null;
-  const parts = team.trim().split(/\s+/);
-  return parts[parts.length - 1]?.toLowerCase() ?? null;
+// Index today's games by team_id so odds feeds join on the fixed MLB id rather
+// than a fragile nickname substring. gamesByTeam maps a team_id to the game it
+// plays in today (a team plays at most one game per slate for our purposes).
+function indexGames(games: GameRef[]): {
+  byPair: Map<string, GameRef>; byTeam: Map<number, GameRef>;
+} {
+  const byPair = new Map<string, GameRef>();
+  const byTeam = new Map<number, GameRef>();
+  for (const g of games) {
+    if (g.home_team_id != null && g.away_team_id != null) {
+      byPair.set(`${g.away_team_id}:${g.home_team_id}`, g);
+    }
+    if (g.home_team_id != null) byTeam.set(g.home_team_id, g);
+    if (g.away_team_id != null) byTeam.set(g.away_team_id, g);
+  }
+  return { byPair, byTeam };
+}
+
+// Resolve an ESPN competitor to an MLB team_id: abbreviation first, name fallback.
+function espnTeamId(team: any): number | null {
+  return teamIdByAbbr(team?.abbreviation) ??
+    teamIdByText(team?.displayName ?? team?.name ?? null);
 }
 
 async function todaysGames(): Promise<GameRef[]> {
@@ -39,10 +58,10 @@ async function todaysGames(): Promise<GameRef[]> {
   return (data ?? []) as GameRef[];
 }
 
-async function ingestEspn(games: GameRef[]): Promise<{ rows: any[]; matched: number }> {
-  const r = await fetch(ESPN_SCOREBOARD, { headers: { Accept: "application/json" } });
-  if (!r.ok) throw new Error(`espn ${r.status}`);
-  const data = await r.json();
+async function ingestEspn(
+  idx: ReturnType<typeof indexGames>, unmatched: string[],
+): Promise<{ rows: any[]; matched: number }> {
+  const data = await fetchJson(ESPN_SCOREBOARD, { timeoutMs: 10_000, retries: 2 });
   const rows: any[] = [];
   let matched = 0;
   for (const ev of data.events ?? []) {
@@ -50,12 +69,16 @@ async function ingestEspn(games: GameRef[]): Promise<{ rows: any[]; matched: num
     if (!comp) continue;
     const homeC = (comp.competitors ?? []).find((c: any) => c.homeAway === "home");
     const awayC = (comp.competitors ?? []).find((c: any) => c.homeAway === "away");
-    const homeNick = nickname(homeC?.team?.name ?? homeC?.team?.displayName);
-    const awayNick = nickname(awayC?.team?.name ?? awayC?.team?.displayName);
-    const g = games.find((x) =>
-      nickname(x.home_team) === homeNick && nickname(x.away_team) === awayNick
-    );
-    if (!g) continue;
+    const homeId = espnTeamId(homeC?.team);
+    const awayId = espnTeamId(awayC?.team);
+    const g = homeId != null && awayId != null
+      ? idx.byPair.get(`${awayId}:${homeId}`)
+      : undefined;
+    if (!g) {
+      const label = `${awayC?.team?.abbreviation ?? "?"}@${homeC?.team?.abbreviation ?? "?"}`;
+      if ((comp.odds?.length ?? 0) > 0) unmatched.push(`espn:${label}`);
+      continue;
+    }
     const odds = comp.odds?.[0];
     if (!odds) continue;
     matched += 1;
@@ -96,40 +119,131 @@ async function ingestEspn(games: GameRef[]): Promise<{ rows: any[]; matched: num
   return { rows, matched };
 }
 
-async function ingestKalshi(games: GameRef[]): Promise<{ rows: any[]; matched: number }> {
-  const r = await fetch(KALSHI_MARKETS, { headers: { Accept: "application/json" } });
-  if (!r.ok) throw new Error(`kalshi ${r.status}`);
-  const markets = (await r.json()).markets ?? [];
+async function ingestKalshi(
+  idx: ReturnType<typeof indexGames>, unmatched: string[],
+): Promise<{ rows: any[]; matched: number }> {
+  const data = await fetchJson(KALSHI_MARKETS, { timeoutMs: 10_000, retries: 2 });
+  const markets = data.markets ?? [];
   const rows: any[] = [];
   const matchedGames = new Set<number>();
   const now = new Date().toISOString();
   for (const m of markets) {
-    const teamBlob = String(m.yes_sub_title ?? m.title ?? "").toLowerCase();
+    const teamBlob = String(m.yes_sub_title ?? m.title ?? "");
     if (!teamBlob) continue;
-    for (const g of games) {
-      const hn = nickname(g.home_team), an = nickname(g.away_team);
-      let outcome: string | null = null;
-      if (hn && teamBlob.includes(hn)) outcome = "home";
-      else if (an && teamBlob.includes(an)) outcome = "away";
-      if (!outcome) continue;
+    const teamId = teamIdByText(teamBlob);
+    const g = teamId != null ? idx.byTeam.get(teamId) : undefined;
+    if (!g) {
       const bid = m.yes_bid, ask = m.yes_ask;
-      let prob: number | null = null;
-      if (bid != null && ask != null && (bid || ask)) prob = (bid + ask) / 200;
-      else if (m.last_price) prob = m.last_price / 100;
-      if (prob == null || prob <= 0 || prob >= 1) continue;
-      matchedGames.add(g.game_pk);
-      rows.push({
-        game_pk: g.game_pk, market: "game_moneyline", outcome,
-        implied_prob: round4(prob),
-        price_american: prob >= 0.5 ? -Math.round((prob / (1 - prob)) * 100) : Math.round(((1 - prob) / prob) * 100),
-        source: "kalshi",
-        meta: { ticker: m.ticker, yes_bid: bid, yes_ask: ask, volume: m.volume },
-        fetched_at: now,
-      });
-      break; // a Kalshi market maps to one game
+      if ((bid != null && ask != null && (bid || ask)) || m.last_price) {
+        unmatched.push(`kalshi:${teamBlob.slice(0, 40)}`);
+      }
+      continue;
+    }
+    const outcome = teamId === g.home_team_id ? "home" : "away";
+    const bid = m.yes_bid, ask = m.yes_ask;
+    let prob: number | null = null;
+    if (bid != null && ask != null && (bid || ask)) prob = (bid + ask) / 200;
+    else if (m.last_price) prob = m.last_price / 100;
+    if (prob == null || prob <= 0 || prob >= 1) continue;
+    matchedGames.add(g.game_pk);
+    rows.push({
+      game_pk: g.game_pk, market: "game_moneyline", outcome,
+      implied_prob: round4(prob),
+      price_american: prob >= 0.5 ? -Math.round((prob / (1 - prob)) * 100) : Math.round(((1 - prob) / prob) * 100),
+      source: "kalshi",
+      meta: { ticker: m.ticker, yes_bid: bid, yes_ask: ask, volume: m.volume },
+      fetched_at: now,
+    });
+  }
+  return { rows, matched: matchedGames.size };
+}
+
+// The Odds API — real sportsbook lines (DraftKings/FanDuel/…). Ships dark:
+// only runs when app_secrets.the_odds_api_key is set. Free tier is 500 req/mo,
+// so the caller polls it far less often than the free ESPN/Kalshi feeds. Each
+// bookmaker becomes its own `source` so the frontend can line-shop.
+const THE_ODDS_API = "https://api.the-odds-api.com/v4/sports/baseball_mlb/odds";
+
+async function ingestTheOddsApi(
+  apiKey: string, idx: ReturnType<typeof indexGames>, unmatched: string[],
+): Promise<{ rows: any[]; matched: number }> {
+  const url = new URL(THE_ODDS_API);
+  url.searchParams.set("apiKey", apiKey);
+  url.searchParams.set("regions", "us");
+  url.searchParams.set("markets", "h2h,totals");
+  url.searchParams.set("oddsFormat", "american");
+  const data = await fetchJson<any[]>(url, { timeoutMs: 10_000, retries: 2 });
+  const rows: any[] = [];
+  const matchedGames = new Set<number>();
+  const now = new Date().toISOString();
+  for (const ev of data ?? []) {
+    const homeId = teamIdByText(ev.home_team);
+    const awayId = teamIdByText(ev.away_team);
+    const g = homeId != null && awayId != null
+      ? idx.byPair.get(`${awayId}:${homeId}`)
+      : undefined;
+    if (!g) {
+      if ((ev.bookmakers?.length ?? 0) > 0) unmatched.push(`oddsapi:${ev.away_team}@${ev.home_team}`);
+      continue;
+    }
+    for (const bk of ev.bookmakers ?? []) {
+      const source = bk.key ?? "the_odds_api";
+      for (const mk of bk.markets ?? []) {
+        if (mk.key === "h2h") {
+          for (const o of mk.outcomes ?? []) {
+            const oid = teamIdByText(o.name);
+            const outcome = oid === g.home_team_id ? "home" : oid === g.away_team_id ? "away" : null;
+            if (!outcome || o.price == null) continue;
+            matchedGames.add(g.game_pk);
+            rows.push({
+              game_pk: g.game_pk, market: "game_moneyline", outcome,
+              price_american: o.price, implied_prob: round4(americanToProb(o.price)),
+              source, meta: { book: bk.title }, fetched_at: now,
+            });
+          }
+        } else if (mk.key === "totals") {
+          for (const o of mk.outcomes ?? []) {
+            const outcome = String(o.name ?? "").toLowerCase(); // "over" / "under"
+            if ((outcome !== "over" && outcome !== "under") || o.price == null) continue;
+            matchedGames.add(g.game_pk);
+            rows.push({
+              game_pk: g.game_pk, market: "game_total", outcome,
+              line: o.point ?? null, price_american: o.price,
+              implied_prob: round4(americanToProb(o.price)),
+              source, meta: { book: bk.title }, fetched_at: now,
+            });
+          }
+        }
+      }
     }
   }
   return { rows, matched: matchedGames.size };
+}
+
+// De-vig: for each (game, market, source) with a complete two-sided pair
+// (home+away or over+under), normalize implied probs to sum to 1 so the book's
+// margin is removed. Single-sided quotes keep novig = implied. Mutates rows.
+function applyNovig(rows: any[]): void {
+  const groups = new Map<string, any[]>();
+  for (const r of rows) {
+    const k = `${r.game_pk}:${r.market}:${r.source}`;
+    (groups.get(k) ?? groups.set(k, []).get(k)!).push(r);
+  }
+  for (const grp of groups.values()) {
+    const pair = grp[0].market === "game_total"
+      ? ["over", "under"] : ["home", "away"];
+    const a = grp.find((r) => r.outcome === pair[0] && r.implied_prob != null);
+    const b = grp.find((r) => r.outcome === pair[1] && r.implied_prob != null);
+    if (a && b) {
+      const s = Number(a.implied_prob) + Number(b.implied_prob);
+      if (s > 0) {
+        a.novig_prob = round4(Number(a.implied_prob) / s);
+        b.novig_prob = round4(Number(b.implied_prob) / s);
+        continue;
+      }
+    }
+    for (const r of grp) if (r.implied_prob != null) r.novig_prob = r.implied_prob;
+  }
 }
 
 // Team season win% from the games table (for the pregame log5 model).
@@ -163,19 +277,35 @@ Deno.serve(async (req) => {
   try {
     const games = await todaysGames();
     detail.games_today = games.length;
+    const idx = indexGames(games);
+    const unmatched: string[] = [];
+
+    // Pluggable providers. ESPN + Kalshi are free/no-auth and always run; The
+    // Odds API activates only when its key is configured in app_secrets.
+    const { data: keyRow } = await svc().from("app_secrets")
+      .select("value").eq("key", "the_odds_api_key").maybeSingle();
+    const providers: { name: string; run: () => Promise<{ rows: any[]; matched: number }> }[] = [
+      { name: "espn", run: () => ingestEspn(idx, unmatched) },
+      { name: "kalshi", run: () => ingestKalshi(idx, unmatched) },
+    ];
+    if (keyRow?.value) {
+      providers.push({ name: "the_odds_api", run: () => ingestTheOddsApi(keyRow.value, idx, unmatched) });
+    }
+
     let rows: any[] = [];
+    for (const p of providers) {
+      try {
+        const res = await p.run();
+        rows = rows.concat(res.rows);
+        detail[p.name] = { rows: res.rows.length, matched: res.matched };
+      } catch (e) { errors.push(`${p.name}: ${String(e).slice(0, 120)}`); }
+    }
 
-    try {
-      const espn = await ingestEspn(games);
-      rows = rows.concat(espn.rows);
-      detail.espn = { rows: espn.rows.length, matched: espn.matched };
-    } catch (e) { errors.push(`espn: ${String(e).slice(0, 120)}`); }
+    // De-vig every two-sided pair before persisting/using for edges.
+    applyNovig(rows);
 
-    try {
-      const kalshi = await ingestKalshi(games);
-      rows = rows.concat(kalshi.rows);
-      detail.kalshi = { rows: kalshi.rows.length, matched: kalshi.matched };
-    } catch (e) { errors.push(`kalshi: ${String(e).slice(0, 120)}`); }
+    // Surface silent drops so a broken match rule is visible in ingest_runs.
+    if (unmatched.length) detail.unmatched = unmatched.slice(0, 20);
 
     if (rows.length) {
       const { error } = await svc().from("odds").insert(rows);
@@ -194,10 +324,12 @@ Deno.serve(async (req) => {
       const pHome = log5HomeProb(hPct, aPct);
       for (const side of ["home", "away"] as const) {
         const pSide = side === "home" ? pHome : 1 - pHome;
-        const qs = quotes.filter((q) => q.outcome === side && q.implied_prob != null);
+        // Edge vs the de-vigged market prob (falls back to raw implied).
+        const marketProb = (q: any) => Number(q.novig_prob ?? q.implied_prob);
+        const qs = quotes.filter((q) => q.outcome === side && (q.novig_prob ?? q.implied_prob) != null);
         if (!qs.length) continue;
-        const best = qs.reduce((a, b) => (a.implied_prob < b.implied_prob ? a : b));
-        const edge = round4(pSide - Number(best.implied_prob));
+        const best = qs.reduce((a, b) => (marketProb(a) < marketProb(b) ? a : b));
+        const edge = round4(pSide - marketProb(best));
         if (edge != null && edge >= PICK_EDGE) {
           const label = `${side === "home" ? g.home_team : g.away_team} ML`;
           const { error } = await svc().from("picks").upsert({
@@ -215,7 +347,7 @@ Deno.serve(async (req) => {
               },
               bullets: [
                 `Season strength model gives ${label} a ${(pSide * 100).toFixed(1)}% win probability.`,
-                `Best market price implies ${(Number(best.implied_prob) * 100).toFixed(1)}% (${best.source}).`,
+                `Best de-vigged market price implies ${(marketProb(best) * 100).toFixed(1)}% (${best.source}).`,
               ],
             },
           }, { onConflict: "pick_date,game_pk,market,at_bat_index,recommendation", ignoreDuplicates: true });

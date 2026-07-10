@@ -11,6 +11,58 @@ static frontend reads it directly for a live investor demo.
 > in `backend/` remains a full local-dev stack that mirrors the same logic, but
 > nothing in production depends on it.
 
+### Quick start
+
+Three ways to run it, fastest first. The live API is already deployed on
+Supabase, so you don't need a backend to see real data.
+
+**A — Frontend against the live hosted API (fastest, no backend).**
+`build_frontend.sh` wires `dist/` to the live functions URL by default:
+
+```
+bash scripts/build_frontend.sh          # writes dist/ pointed at the live API
+python -m http.server 5173 -d dist       # or any static server
+# open http://localhost:5173
+```
+
+(Opening `frontend/index.html` raw instead runs in bundled sample-data mode —
+the placeholder in `config.js` is only substituted by the build.)
+
+**B — Full local backend (FastAPI + live poller), for backend iteration.**
+Mirrors the hosted logic. Needs a Supabase project:
+
+```
+python -m venv .venv && .venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                      # set SUPABASE_URL + SUPABASE_KEY (service-role)
+# apply backend/db/schema.sql in the Supabase SQL editor once
+.venv\Scripts\python.exe -m uvicorn backend.api.main:app --port 8080 --reload
+```
+
+Health check `http://127.0.0.1:8080/health`, then open `frontend/index.html`
+with `window.PITCH_EDGE_API = "http://localhost:8080"` (see `frontend/config.js`).
+See [`STARTUP.md`](./STARTUP.md) for the full local runbook (backfill, feeds, tests).
+
+**C — Deploy the frontend to Vercel.** Static build; `vercel.json` is
+preconfigured (`bash scripts/build_frontend.sh` → `dist/`):
+
+```
+npx vercel deploy            # or import the repo at vercel.com/new
+```
+
+- The build **defaults to the live Supabase functions URL**, so a plain deploy
+  is wired with no env var. To target a different Supabase project, set
+  `SUPABASE_FUNCTIONS_URL=https://<ref>.supabase.co/functions/v1` in the Vercel
+  dashboard.
+- After the first deploy, lock CORS to your domain (until set it's `*`):
+  ```sql
+  insert into app_secrets (key, value) values ('allowed_origins','https://<your-app>.vercel.app')
+  on conflict (key) do update set value = excluded.value;
+  ```
+
+Deploying the **backend** (Supabase edge functions + pg_cron) is a separate,
+one-time step — see [`docs/DEPLOY.md`](docs/DEPLOY.md).
+
 ### Hosted pipeline (Supabase)
 
 | edge function | cadence (pg_cron) | job |

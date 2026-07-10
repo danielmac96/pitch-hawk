@@ -35,7 +35,12 @@ Deno.serve(async (req) => {
 
   if (!prog || body.reset) {
     const end = (body.end_date as string) ?? prevDay(new Date().toISOString().slice(0, 10));
-    const start = (body.start_date as string) ?? "2025-03-27";
+    // Season start is configurable via app_secrets.season_start so the window
+    // tracks the current season without a code change; fall back to mid-March
+    // of the current year (regular season always begins after that).
+    const { data: ss } = await db.from("app_secrets").select("value").eq("key", "season_start").maybeSingle();
+    const defaultStart = ss?.value ?? `${new Date().getUTCFullYear()}-03-15`;
+    const start = (body.start_date as string) ?? defaultStart;
     const row = {
       id: 1, start_date: start, end_date: end, cursor_date: end,
       games_done: 0, pitches_done: 0, done: false, updated_at: new Date().toISOString(),

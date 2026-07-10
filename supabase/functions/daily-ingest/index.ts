@@ -65,6 +65,12 @@ Deno.serve(async (req) => {
     for (const e of [e1, e2, e3]) if (e) errors.push(`rpc: ${e.message}`);
     detail.rolling = { pitchers: n1, batters: n2, matchups: n3 };
 
+    // Retention: bound the bookkeeping tables (ingest_runs 30d, odds 14d).
+    const { data: pr, error: e4 } = await svc().rpc("prune_ingest_runs");
+    const { data: po, error: e5 } = await svc().rpc("prune_odds");
+    for (const e of [e4, e5]) if (e) errors.push(`prune: ${e.message}`);
+    detail.pruned = { ingest_runs: pr, odds: po };
+
     detail.errors = errors.slice(0, 10);
     await logRun("daily-ingest", startedAt, errors.length === 0, detail);
     return json(detail);

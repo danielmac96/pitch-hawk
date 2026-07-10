@@ -52,7 +52,36 @@
       "Bash(grep -c \"^ERROR\" /tmp_pytest_out.txt)",
       "Bash(grep -E \"passed|failed|error\" /tmp_pytest_out.txt)",
       "Bash(deno --version)",
-      "Bash(sh)"
+      "Bash(sh)",
+      "Bash(node -e \"try{const c=require\\(require\\('os'\\).homedir\\(\\)+'/.claude.json'\\); const top=c.mcpServers?Object.keys\\(c.mcpServers\\):[]; console.log\\('top-level:',JSON.stringify\\(top\\)\\); if\\(c.projects\\){for\\(const[p,v]of Object.entries\\(c.projects\\)\\){if\\(v&&v.mcpServers&&Object.keys\\(v.mcpServers\\).length\\)console.log\\('project',p,'->',Object.keys\\(v.mcpServers\\)\\);}}}catch\\(e\\){console.log\\('err',e.message\\)}\")",
+      "Bash(git check-ignore *)",
+      "mcp__supabase__list_edge_functions",
+      "mcp__supabase__list_migrations",
+      "mcp__supabase__list_tables",
+      "mcp__supabase__get_project_url",
+      "mcp__supabase__execute_sql",
+      "mcp__supabase__apply_migration",
+      "mcp__supabase__deploy_edge_function",
+      "mcp__supabase__get_advisors",
+      "Bash(git checkout *)",
+      "Bash(git commit -q -m ' *)",
+      "Bash(py --version)",
+      "mcp__supabase__get_publishable_keys",
+      "Bash(export SUPABASE_URL=\"https://gfxpchtyncgsczqdvohr.supabase.co\")",
+      "Bash(export SUPABASE_KEY=\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdmeHBjaHR5bmNnc2N6cWR2b2hyIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg1NDQ4MTksImV4cCI6MjA5NDEyMDgxOX0.nFYAHBcGsWwVkkChMjVSmdFD82ZfLLXX2WWcmbIvfh8\")",
+      "Bash(supabase --version)",
+      "Bash(npx --yes supabase --version)",
+      "Bash(bash scripts/build_frontend.sh)",
+      "mcp__vercel__deploy_to_vercel",
+      "Bash(git push *)",
+      "mcp__vercel__list_teams",
+      "mcp__vercel__list_projects",
+      "WebFetch(domain:mlb-next-pitch.vercel.app)",
+      "mcp__supabase__get_edge_function"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "supabase",
+    "vercel"
+  ]
 }

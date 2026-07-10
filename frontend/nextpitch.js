@@ -857,7 +857,8 @@
           if (!games.some((g) => g.gamePk === this.state.feedGame)) this.state.feedGame = games[0].gamePk;
           this.render();
         }
-      } catch (_e) { /* backend down → keep the sample board */ }
+        // On a fetch error NP.loadLive returns null → keep last-good board.
+      } catch (_e) { console.warn("[nextpitch] live poll failed; keeping last data"); }
     }
     async hydrate() {
       try {
@@ -865,12 +866,47 @@
         if (next) { PD = next; if (this.state.view === "home") this.render(); }
       } catch (_e) { /* keep sample Home data */ }
     }
+    // ±20% jitter so 1000 clients don't stampede the origin in lockstep.
+    _jitter(ms) { return Math.round(ms * (0.8 + Math.random() * 0.4)); }
+    _scheduleNextPoll() {
+      clearTimeout(this._pollTo);
+      this._pollTo = setTimeout(() => this._pollTick(), this._jitter(POLL_MS));
+    }
+    async _pollTick() {
+      // Pause network work while the tab is backgrounded.
+      if (!document.hidden) { await this.poll(); await this.checkHealth(); }
+      this._scheduleNextPoll();
+    }
+    // Show a "data delayed" banner when /health reports live-poll is >2m stale.
+    async checkHealth() {
+      const h = await fetchJson("/health");
+      this._setStaleBanner(!!(h && h.data_fresh === false), h);
+    }
+    _setStaleBanner(stale, h) {
+      let el = document.getElementById("np-stale");
+      if (!stale) { if (el) el.remove(); return; }
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "np-stale";
+        el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#b9541b;" +
+          "color:#fff;text-align:center;font-size:.85rem;padding:.4rem;font-family:inherit;";
+        document.body.appendChild(el);
+      }
+      const age = h && h.jobs && h.jobs["live-poll"] ? h.jobs["live-poll"].age_seconds : null;
+      el.textContent = "⚠ Live data delayed" +
+        (age != null ? ` (updated ~${Math.round(age / 60)}m ago)` : "") +
+        " — showing last known prices.";
+    }
     start() {
       this.render();
       this.startSim();
       this.hydrate();
       this.poll();
-      this._pollIv = setInterval(() => this.poll(), POLL_MS);
+      this.checkHealth();
+      this._scheduleNextPoll();
+      document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) { clearTimeout(this._pollTo); this._pollTick(); }
+      });
     }
   }
 
