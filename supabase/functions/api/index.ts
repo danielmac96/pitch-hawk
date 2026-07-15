@@ -32,7 +32,7 @@ const DISCLAIMER =
 // ── Edge/CDN cache TTLs (seconds). Data only changes at the poll cadence, so
 // caching collapses ~500 req/s at 1000 users into a handful of origin hits.
 const TTL: Record<string, number> = {
-  "": 0, "health": 0,
+  "": 10, "health": 10, // staleness threshold is 120s, so 10s cache is safe
   "live": 10, "edge": 15, "odds/today": 30,
   "picks/today": 60, "record": 60, "games": 60,
   "sportsbooks": 3600,
@@ -91,6 +91,9 @@ async function cached(key: string, ttl: number, origin: string, fn: () => Promis
 const clickHits = new Map<string, { count: number; resetAt: number }>();
 function clickRateLimited(ip: string): boolean {
   const now = Date.now();
+  if (clickHits.size > 5_000) {
+    for (const [k, v] of clickHits) if (v.resetAt < now) clickHits.delete(k);
+  }
   const e = clickHits.get(ip);
   if (!e || e.resetAt < now) { clickHits.set(ip, { count: 1, resetAt: now + 60_000 }); return false; }
   e.count += 1;

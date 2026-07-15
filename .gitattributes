@@ -1,0 +1,9 @@
+# Normalize line endings. Shell scripts MUST be LF: Vercel runs
+# scripts/build_frontend.sh on Linux, and a CRLF checkout uploaded by a local
+# `vercel deploy` breaks bash ("set: pipefail: invalid option name").
+* text=auto
+*.sh text eol=lf
+*.sql text eol=lf
+*.ts text eol=lf
+*.js text eol=lf
+*.py text eol=lf

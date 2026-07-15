@@ -560,6 +560,7 @@ window.NEXTPITCH = (function () {
       runners: { first: false, second: false, third: false },
       pitchCountPa: sit.pitch_count_pa != null ? sit.pitch_count_pa : pitches.length,
       pitchCountGame: null, pitches, lastPitch: sit.last_pitch_ts, stale, m,
+      modelVersion: lg.model_version || null,
     };
   }
 

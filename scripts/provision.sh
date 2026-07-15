@@ -9,7 +9,8 @@
 #
 # What it does:
 #   1. Links the project and pushes every migration in supabase/migrations
-#      (substituting {{PROJECT_REF}} in the cron migration first).
+#      (the cron migration is ref-agnostic — it reads the functions URL and
+#      cron secret from app_secrets at call time, so nothing is substituted).
 #   2. Generates a cron secret and stores it in app_secrets.
 #   3. Deploys all edge functions with verify_jwt disabled (they self-auth
 #      via x-cron-secret; `api` is public read-only).

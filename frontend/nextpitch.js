@@ -800,7 +800,7 @@
           <div style="display:flex;gap:1.4rem;flex-wrap:wrap;margin-top:.9rem;padding-top:.7rem;border-top:1px solid var(--track);font-size:.78rem;color:var(--text-2);">
             <div><span style="color:var(--faint);">Pitches (PA)</span> <b style="font-weight:700;">${esc(sel.pitchCountPa)}</b></div>
             <div><span style="color:var(--faint);">AB pitches proj</span> <b style="font-weight:700;color:var(--accent);">${esc(abProj)}</b></div>
-            <div><span style="color:var(--faint);">Model</span> <b style="font-weight:700;">freq_v2</b></div>
+            <div><span style="color:var(--faint);">Model</span> <b style="font-weight:700;">${esc(sel.modelVersion || "sample")}</b></div>
           </div>
         </div>
       </div>

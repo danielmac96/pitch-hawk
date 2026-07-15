@@ -4,10 +4,17 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+.pytest_cache/
 
 # Env / secrets
 .env
+.env.local
+.env.*.local
 .mcp.json
+
+# Vercel / Node (no npm deps in this repo; artifacts come from CLI runs)
+.vercel/
+node_modules/
 
 # OS / editor
 .DS_Store
