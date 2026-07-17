@@ -6,6 +6,26 @@ is active via `loadActiveModels()` and degrades to a calibrated league-average
 heuristic (`heuristic_v0`) when no trained row exists — so the app works on day
 zero and sharpens the moment training runs.
 
+## Day-to-day: the CLI
+
+`scripts/models.py` wraps the whole lifecycle so nothing below needs
+hand-written SQL:
+
+```bash
+python scripts/models.py list                      # every version, per market
+python scripts/models.py show pitch_result         # active params + metrics (JSON)
+python scripts/models.py status --days 7           # live version + graded win rate/profit
+python scripts/models.py train --dry-run           # fit new versions, insert inactive
+python scripts/models.py activate pitch_result v2_20260718
+python scripts/models.py rollback pitch_result     # undo, atomically
+```
+
+The upgrade loop is: `train --dry-run` → inspect metrics in `list` → `activate`
+→ watch `status` for a few game days → `rollback` if the graded results
+disagree. `status` compares the registry's active version against
+`predictions.model_version` (what live scoring actually stamped), so a
+forgotten `live-poll` redeploy shows up as a mismatch instead of a mystery.
+
 ## The registry
 
 `model_params` columns that matter:
