@@ -40,7 +40,7 @@
       return r.ok ? await r.json() : null;
     } catch (_e) { return null; }
   }
-  // Today's schedule (GET /games). null = not loaded yet, [] = no games today.
+  // Upcoming games slate (GET /games). null = not loaded yet, [] = none scheduled.
   let SLATE = null;
   let SLATE_AT = 0;
   async function fetchSlate() {
@@ -200,11 +200,36 @@
         return isNaN(d) ? "TBD" : d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
       };
 
+      const fmtDay = (ts) => {
+        const d = new Date(ts);
+        return isNaN(d) ? "" : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
+      };
+      const fmtDow = (ts) => {
+        const d = new Date(ts);
+        return isNaN(d) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
+      };
+      const sameLocalDay = (ts, ref) => {
+        const d = new Date(ts);
+        return d.getFullYear() === ref.getFullYear() && d.getMonth() === ref.getMonth() && d.getDate() === ref.getDate();
+      };
+      // /games can span today and tomorrow — always render first upcoming to last.
+      const sorted = Array.isArray(slate)
+        ? slate.slice().sort((a, b) => new Date(a.start_ts) - new Date(b.start_ts))
+        : slate;
+
       // hero — live status at a glance (picks + record return when odds ship)
-      const total = Array.isArray(slate) ? slate.length : null;
-      const firstPitch = Array.isArray(slate) && slate.length ? fmtTime(slate[0].start_ts) : null;
+      const now = new Date();
+      const leftToday = Array.isArray(sorted)
+        ? sorted.filter((g) => sameLocalDay(g.start_ts, now) && !isFinalStatus(g.status)).length
+        : null;
+      const nextUp = Array.isArray(sorted)
+        ? sorted.find((g) => !isLiveStatus(g.status) && !isFinalStatus(g.status))
+        : null;
+      const firstPitch = nextUp
+        ? (sameLocalDay(nextUp.start_ts, now) ? "" : fmtDow(nextUp.start_ts) + " ") + fmtTime(nextUp.start_ts)
+        : null;
       const glance = [
-        { big: total == null ? "—" : String(total), lbl: "games today" },
+        { big: leftToday == null ? "—" : String(leftToday), lbl: "games left today" },
         { big: firstPitch || "—", lbl: "first pitch" },
         { big: String(liveNow), lbl: "live right now" },
       ].map((t) => `
@@ -227,14 +252,14 @@
         </div>
       </div>`;
 
-      // today's schedule (GET /games)
+      // upcoming games (GET /games — rest of today plus tomorrow)
       let slateRows;
-      if (slate === null) {
-        slateRows = `<div style="padding:1.4rem 1rem;color:var(--muted);font-style:italic;">Loading today's schedule…</div>`;
-      } else if (!slate.length) {
-        slateRows = `<div style="padding:1.4rem 1rem;color:var(--muted);">No MLB games scheduled today.</div>`;
+      if (sorted === null) {
+        slateRows = `<div style="padding:1.4rem 1rem;color:var(--muted);font-style:italic;">Loading upcoming games…</div>`;
+      } else if (!sorted.length) {
+        slateRows = `<div style="padding:1.4rem 1rem;color:var(--muted);">No upcoming MLB games on the schedule.</div>`;
       } else {
-        slateRows = slate.map((g) => {
+        slateRows = sorted.map((g) => {
           const liveG = isLiveStatus(g.status);
           const finalG = isFinalStatus(g.status);
           const chip = liveG
@@ -245,20 +270,19 @@
             ? `<button data-act="goLive" style="border:0;background:transparent;color:var(--accent);font-family:inherit;font-weight:700;font-size:.82rem;cursor:pointer;padding:0;">Watch live →</button>`
             : "";
           return `
-          <div style="display:grid;grid-template-columns:72px 1fr auto auto;gap:.8rem;align-items:center;padding:.75rem .85rem;border-bottom:1px solid var(--row-border);">
-            <span style="font-family:'IBM Plex Mono',monospace;font-size:.86rem;color:var(--muted);">${esc(fmtTime(g.start_ts))}</span>
+          <div style="display:grid;grid-template-columns:112px 1fr auto auto;gap:.8rem;align-items:center;padding:.75rem .85rem;border-bottom:1px solid var(--row-border);">
+            <span style="display:flex;flex-direction:column;"><span style="font-size:.7rem;font-weight:600;color:var(--faint);">${esc(fmtDay(g.start_ts))}</span><span style="font-family:'IBM Plex Mono',monospace;font-size:.86rem;color:var(--muted);">${esc(fmtTime(g.start_ts))}</span></span>
             <span style="font-weight:700;font-size:.95rem;">${esc(g.away_abbr || g.away_team)} <span style="color:var(--vs);font-weight:500;">@</span> ${esc(g.home_abbr || g.home_team)}<span style="display:block;font-size:.76rem;color:var(--muted);font-weight:500;margin-top:.08rem;">${esc(g.away_team)} at ${esc(g.home_team)}</span></span>
             <span style="${chip}">${esc(chipText)}</span>
             <span style="min-width:76px;text-align:right;">${watch}</span>
           </div>`;
         }).join("");
       }
-      const today = new Date().toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
       const slateBlock = `
       <div style="margin-bottom:1.6rem;">
         <div style="margin-bottom:1rem;">
-          <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">Today's schedule</h2>
-          <p style="margin:.35rem 0 0;color:var(--muted);font-size:.95rem;">${esc(today)} — live model reads open with each game window.</p>
+          <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">Upcoming games</h2>
+          <p style="margin:.35rem 0 0;color:var(--muted);font-size:.95rem;">The rest of today and tomorrow — live model reads open with each game window.</p>
         </div>
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);">${slateRows}</div>
       </div>`;
