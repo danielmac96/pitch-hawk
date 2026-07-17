@@ -398,10 +398,10 @@ window.NEXTPITCH = (function () {
     return c;
   }
   // Per-pitch pre-pitch model reads (predicted speed + strike/ball/in-play
-  // probabilities) for the live pitch feed. Deterministic per game so the
-  // numbers are stable between renders. Only used for the bundled sample games;
-  // the live backend has no per-pitch model reads, so live pitches leave these
-  // undefined and the feed renders "—" (no synthetic edges → no highlight).
+  // probabilities). Sample-data only and no longer rendered: the live backend
+  // serves just the latest next-pitch prediction per market (no per-past-pitch
+  // history), so the board shows the model's pitch-level read as a per-game
+  // "Next pitch · model read" block instead of per-row feed columns.
   const PITCH_BASE_SPEED = { FF: 96.2, SI: 94.1, FC: 90.4, SL: 85.6, CB: 80.2, CH: 84.8, SP: 89.1, KC: 82.3, CU: 79.4 };
   function enrichPitchPredictions(games) {
     for (const g of games) {

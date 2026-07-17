@@ -40,6 +40,10 @@
       return r.ok ? await r.json() : null;
     } catch (_e) { return null; }
   }
+  // Game status helpers shared by the home slate and the live-board filters.
+  const isLiveStatus = (s) => /in progress|live|manager challenge/i.test(s || "");
+  const isFinalStatus = (s) => /final|game over|completed/i.test(s || "");
+
   // Upcoming games slate (GET /games). null = not loaded yet, [] = none scheduled.
   let SLATE = null;
   let SLATE_AT = 0;
@@ -193,8 +197,6 @@
     homeHtml() {
       const slate = SLATE;
       const liveNow = NP.games.filter((g) => !g.stale).length;
-      const isLiveStatus = (s) => /in progress|live|manager challenge/i.test(s || "");
-      const isFinalStatus = (s) => /final|game over|completed/i.test(s || "");
       const fmtTime = (ts) => {
         const d = new Date(ts);
         return isNaN(d) ? "TBD" : d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -252,39 +254,58 @@
         </div>
       </div>`;
 
-      // upcoming games (GET /games — rest of today plus tomorrow)
-      let slateRows;
-      if (sorted === null) {
-        slateRows = `<div style="padding:1.4rem 1rem;color:var(--muted);font-style:italic;">Loading upcoming games…</div>`;
-      } else if (!sorted.length) {
-        slateRows = `<div style="padding:1.4rem 1rem;color:var(--muted);">No upcoming MLB games on the schedule.</div>`;
+      // Game slate (GET /games) as a card grid: live first, then upcoming by
+      // first pitch, finals (with final score) last. Scheduled games carry no
+      // status chip — the start time IS the status.
+      const statusRank = (g) => (isLiveStatus(g.status) ? 0 : isFinalStatus(g.status) ? 2 : 1);
+      const display = Array.isArray(sorted)
+        ? sorted.slice().sort((a, b) => statusRank(a) - statusRank(b) || new Date(a.start_ts) - new Date(b.start_ts))
+        : sorted;
+      let slateCards;
+      if (display === null) {
+        slateCards = `<div style="padding:1.4rem 1rem;color:var(--muted);font-style:italic;">Loading today's games…</div>`;
+      } else if (!display.length) {
+        slateCards = `<div style="padding:1.4rem 1rem;color:var(--muted);">No MLB games on today's schedule.</div>`;
       } else {
-        slateRows = sorted.map((g) => {
+        const cards = display.map((g) => {
           const liveG = isLiveStatus(g.status);
           const finalG = isFinalStatus(g.status);
+          const hasScore = g.away_score != null && g.home_score != null;
           const chip = liveG
-            ? `font-size:.68rem;font-weight:800;letter-spacing:.04em;padding:.2rem .55rem;border-radius:6px;color:var(--good-strong);background:var(--good-bg);white-space:nowrap;`
-            : `font-size:.68rem;font-weight:700;letter-spacing:.04em;padding:.2rem .55rem;border-radius:6px;color:var(--muted);background:var(--surface-2);white-space:nowrap;`;
-          const chipText = liveG ? "LIVE" : finalG ? "FINAL" : (g.status || "Scheduled").toUpperCase();
-          const watch = liveG
-            ? `<button data-act="goLive" style="border:0;background:transparent;color:var(--accent);font-family:inherit;font-weight:700;font-size:.82rem;cursor:pointer;padding:0;">Watch live →</button>`
-            : "";
+            ? `<span style="font-size:.64rem;font-weight:800;letter-spacing:.05em;padding:.18rem .5rem;border-radius:6px;color:var(--good-strong);background:var(--good-bg);white-space:nowrap;">● LIVE</span>`
+            : finalG
+              ? `<span style="font-size:.64rem;font-weight:700;letter-spacing:.05em;padding:.18rem .5rem;border-radius:6px;color:var(--muted);background:var(--surface-2);white-space:nowrap;">FINAL</span>`
+              : "";
+          // Big slot: score for live/final games, first-pitch time for scheduled.
+          const big = (liveG || finalG) && hasScore
+            ? `<span style="font-family:'IBM Plex Mono',monospace;font-size:1.45rem;font-weight:700;line-height:1;${finalG ? "" : "color:var(--good-strong);"}">${esc(g.away_score)}<span style="color:var(--vs);font-weight:600;"> – </span>${esc(g.home_score)}</span>`
+            : `<span style="font-family:'IBM Plex Mono',monospace;font-size:1.45rem;font-weight:700;line-height:1;">${esc(fmtTime(g.start_ts))}</span>`;
+          const when = (liveG || finalG) && hasScore
+            ? `${fmtDay(g.start_ts)} · ${fmtTime(g.start_ts)}`
+            : fmtDay(g.start_ts);
+          const foot = liveG
+            ? `<button data-act="goLive" style="border:0;background:transparent;color:var(--accent);font-family:inherit;font-weight:700;font-size:.8rem;cursor:pointer;padding:0;text-align:left;">Watch live →</button>`
+            : `<span style="font-size:.74rem;color:var(--muted);">${esc(g.away_team)} at ${esc(g.home_team)}</span>`;
           return `
-          <div style="display:grid;grid-template-columns:112px 1fr auto auto;gap:.8rem;align-items:center;padding:.75rem .85rem;border-bottom:1px solid var(--row-border);">
-            <span style="display:flex;flex-direction:column;"><span style="font-size:.7rem;font-weight:600;color:var(--faint);">${esc(fmtDay(g.start_ts))}</span><span style="font-family:'IBM Plex Mono',monospace;font-size:.86rem;color:var(--muted);">${esc(fmtTime(g.start_ts))}</span></span>
-            <span style="font-weight:700;font-size:.95rem;">${esc(g.away_abbr || g.away_team)} <span style="color:var(--vs);font-weight:500;">@</span> ${esc(g.home_abbr || g.home_team)}<span style="display:block;font-size:.76rem;color:var(--muted);font-weight:500;margin-top:.08rem;">${esc(g.away_team)} at ${esc(g.home_team)}</span></span>
-            <span style="${chip}">${esc(chipText)}</span>
-            <span style="min-width:76px;text-align:right;">${watch}</span>
+          <div style="display:flex;flex-direction:column;gap:.45rem;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.85rem 1rem;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);${finalG ? "opacity:.82;" : ""}">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;">
+              <span style="font-weight:800;font-size:.98rem;">${esc(g.away_abbr || g.away_team)} <span style="color:var(--vs);font-weight:500;">@</span> ${esc(g.home_abbr || g.home_team)}</span>
+              ${chip}
+            </div>
+            ${big}
+            <span style="font-size:.72rem;color:var(--faint);font-weight:600;">${esc(when)}</span>
+            ${foot}
           </div>`;
         }).join("");
+        slateCards = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:.8rem;">${cards}</div>`;
       }
       const slateBlock = `
       <div style="margin-bottom:1.6rem;">
         <div style="margin-bottom:1rem;">
-          <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">Upcoming games</h2>
-          <p style="margin:.35rem 0 0;color:var(--muted);font-size:.95rem;">The rest of today and tomorrow — live model reads open with each game window.</p>
+          <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">Today's games</h2>
+          <p style="margin:.35rem 0 0;color:var(--muted);font-size:.95rem;">Live now first, then up next, then finals — live model reads open with each game window.</p>
         </div>
-        <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);">${slateRows}</div>
+        ${slateCards}
       </div>`;
       // live board promo
       const promo = `
@@ -338,9 +359,6 @@
       }
       const thr = this.state.edgeThreshold;
       const sel = this.selLiveSourceSet();
-      // per-source edge adjustment: books carry vig (worse), markets near-fair
-      const SRC_ADJ = { draftkings: -0.012, fanduel: -0.008, kalshi: 0.004, polymarket: 0.008 };
-      const adjBest = (base) => { if (base == null) return null; let best = null; sel.forEach((k) => { const e = base + (SRC_ADJ[k] || 0); if (best == null || e > best) best = e; }); return best; };
       const bestOfSources = (sources) => { let best = null; (sources || []).forEach((s) => { if (sel.has(s.source) && (best == null || s.edge > best)) best = s.edge; }); return best; };
       const hot = (best) => (best != null && best >= thr);
       const chip = (best) => hot(best)
@@ -373,23 +391,42 @@
           const veloStyle = pt.speed != null
             ? `font-family:'IBM Plex Mono',monospace;font-weight:600;color:${this.veloColor(pt.speed)};`
             : `font-family:'IBM Plex Mono',monospace;font-weight:600;color:var(--faint);`;
-          const predText = pt.predSpeed != null ? pt.predSpeed.toFixed(1) : "—";
-          const pS = pt.pStrike != null ? Math.round(pt.pStrike * 100) + "%" : "—";
-          const pB = pt.pBall != null ? Math.round(pt.pBall * 100) + "%" : "—";
-          const pIP = pt.pInPlay != null ? Math.round(pt.pInPlay * 100) + "%" : "—";
           return `
-          <div style="display:grid;grid-template-columns:28px 44px 48px minmax(70px,1fr) 44px 48px 40px 40px 40px;gap:.35rem;align-items:center;padding:.42rem .25rem;border-bottom:1px solid var(--row-border);font-size:.8rem;">
+          <div style="display:grid;grid-template-columns:28px 48px 52px minmax(90px,1fr) 52px;gap:.35rem;align-items:center;padding:.42rem .25rem;border-bottom:1px solid var(--row-border);font-size:.8rem;">
             <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(pt.n)}</span>
             <span style="font-weight:700;color:${this.pitchColor(pt.type)};">${esc(pt.type)}</span>
             <span style="${veloStyle}">${esc(speedText)}</span>
             <span style="color:${rm[1]};font-weight:600;">${esc(rm[0])}</span>
             <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);text-align:right;">${esc(pt.balls)}-${esc(pt.strikes)}</span>
-            <span style="${chip(adjBest(pt.predSpeedEdge))}">${esc(predText)}</span>
-            <span style="${chip(adjBest(pt.pStrikeEdge))}">${esc(pS)}</span>
-            <span style="${chip(adjBest(pt.pBallEdge))}">${esc(pB)}</span>
-            <span style="${chip(adjBest(pt.pInPlayEdge))}">${esc(pIP)}</span>
           </div>`;
         }).join("");
+
+        // Next-pitch model read: the model predicts the UPCOMING pitch (result
+        // distribution + speed projection) — rendered per game, not per past
+        // pitch, because /live only carries the latest prediction per market.
+        const pres = g.m.pitch_result || {};
+        const spd = g.m.pitch_speed_ou || {};
+        const presRows = ["strike_foul", "ball", "in_play"]
+          .filter((name) => pres.probs && pres.probs[name] != null)
+          .map((name) => {
+            const pv = Math.round(pres.probs[name] * 100);
+            const isRec = name === pres.recommendation;
+            return `
+          <div style="display:grid;grid-template-columns:1.1fr 2fr auto;gap:.6rem;align-items:center;padding:.26rem 0;">
+            <div style="font-size:.84rem;font-weight:${isRec ? 700 : 500};color:${isRec ? "var(--good-strong)" : "var(--text-2)"};">${esc(NP.OUTCOME_LABEL[name] || name)}</div>
+            <div style="height:7px;background:var(--track);border-radius:999px;overflow:hidden;"><div style="height:100%;width:${pv}%;background:${isRec ? "var(--accent)" : "var(--vs)"};border-radius:999px;"></div></div>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:.82rem;font-weight:600;color:var(--text-2);min-width:34px;text-align:right;">${pv}%</span>
+          </div>`;
+          }).join("");
+        const spdLine = spd.predictedValue != null
+          ? `<div style="display:flex;justify-content:space-between;gap:.6rem;font-size:.8rem;margin-top:.45rem;"><span style="color:var(--faint);">Speed projection</span><b style="font-family:'IBM Plex Mono',monospace;font-weight:700;">${esc(Number(spd.predictedValue).toFixed(1))} mph${spd.line != null && spd.recommendation ? ` · ${esc(NP.OUTCOME_LABEL[spd.recommendation] || spd.recommendation)} ${esc(spd.line)}` : ""}</b></div>`
+          : "";
+        const nextPitchBlock = (presRows || spdLine) ? `
+              <div style="margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border);">
+                <div style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.6rem;">Next pitch · model read</div>
+                ${presRows || `<div style="font-size:.8rem;color:var(--faint);font-style:italic;">Model read pending…</div>`}
+                ${spdLine}
+              </div>` : "";
 
         const abr = g.m.ab_result, abp = g.m.ab_pitches_ou;
         const order = ["out", "hit", "strikeout", "walk"];
@@ -490,11 +527,11 @@
             <div style="display:flex;flex-direction:column;">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:.6rem;flex-wrap:wrap;margin-bottom:.6rem;">
                 <span style="font-weight:800;font-size:1rem;">Pitch feed</span>
-                <span style="font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);">This at-bat · model read</span>
+                <span style="font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);">This at-bat</span>
               </div>
-              <div style="overflow-x:auto;"><div style="min-width:520px;">
-                <div style="display:grid;grid-template-columns:28px 44px 48px minmax(70px,1fr) 44px 48px 40px 40px 40px;gap:.35rem;font-size:.58rem;text-transform:uppercase;letter-spacing:.03em;color:var(--faint);font-weight:700;padding:0 .25rem .4rem;border-bottom:1px solid var(--border);">
-                  <span>#</span><span>Type</span><span>Velo</span><span>Result</span><span style="text-align:right;">Count</span><span style="text-align:right;">Pred</span><span style="text-align:right;">Str</span><span style="text-align:right;">Ball</span><span style="text-align:right;">IP</span>
+              <div style="overflow-x:auto;"><div style="min-width:300px;">
+                <div style="display:grid;grid-template-columns:28px 48px 52px minmax(90px,1fr) 52px;gap:.35rem;font-size:.58rem;text-transform:uppercase;letter-spacing:.03em;color:var(--faint);font-weight:700;padding:0 .25rem .4rem;border-bottom:1px solid var(--border);">
+                  <span>#</span><span>Type</span><span>Velo</span><span>Result</span><span style="text-align:right;">Count</span>
                 </div>
                 ${pitchEmpty ? `<div style="padding:1rem .25rem;color:var(--faint);font-style:italic;font-size:.84rem;">Fresh at-bat — no pitches thrown yet.</div>` : pitchRows}
               </div></div>
@@ -502,6 +539,7 @@
                 <div><span style="color:var(--faint);">Pitches (PA)</span> <b style="font-weight:700;">${esc(g.pitchCountPa)}</b></div>
                 <div><span style="color:var(--faint);">AB pitches proj</span> <b style="${abProjStyle}">${esc(abProj)}</b></div>
               </div>
+              ${nextPitchBlock}
               <div style="margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border);">
                 <div style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.6rem;">At-bat result · model probability</div>
                 ${abOutcomes}
@@ -513,7 +551,7 @@
       }).join("");
 
       // filters bar
-      const chipStyle = (on, accent) => `border:1px solid ${on ? (accent || "var(--pill-active-bg)") : "var(--border-2)"};background:${on ? (accent || "var(--pill-active-bg)") : "var(--surface)"};color:${on ? "#fff" : "var(--text-2)"};font-family:inherit;font-weight:600;font-size:.76rem;padding:.32rem .7rem;border-radius:999px;cursor:pointer;transition:all .14s;`;
+      const chipStyle = (on, accent) => `border:1px solid ${on ? (accent || "var(--pill-active-bg)") : "var(--border-2)"};background:${on ? (accent || "var(--pill-active-bg)") : "var(--surface)"};color:${on ? (accent ? "#fff" : "var(--pill-active-fg)") : "var(--text-2)"};font-family:inherit;font-weight:600;font-size:.76rem;padding:.32rem .7rem;border-radius:999px;cursor:pointer;transition:all .14s;`;
       const allOn = NP.games.every((g) => this.liveGameOn(g.gamePk));
       const gameChips = NP.games.map((g) => `<button data-act="liveGame" data-arg="${g.gamePk}" style="${chipStyle(this.liveGameOn(g.gamePk))}">${esc(g.label)}</button>`).join("");
       const sourceChips = Object.keys(NP.SOURCES).map((k) => {
@@ -731,14 +769,22 @@
     }
 
     // ── data lifecycle ────────────────────────────────────────────────────
+    // /live can keep serving a finished game for up to ~30 min (its live_state
+    // row just goes stale) — the schedule knows "Final" much sooner, so drop
+    // any game the slate marks final from the live board and data feed.
+    _withoutFinals(games) {
+      const finals = new Set((SLATE || []).filter((g) => isFinalStatus(g.status)).map((g) => g.game_pk));
+      return games.filter((g) => !finals.has(g.gamePk));
+    }
     async poll() {
       try {
+        await fetchSlate().catch(() => {}); // throttled to 60s; needed for the finals filter
         const games = await NP.loadLive(API_BASE);
         if (Array.isArray(games)) {
           // [] is a real answer (no live games) — empty the board.
-          NP.games = games;
-          if (games.length && !games.some((g) => g.gamePk === this.state.feedGame)) {
-            this.state.feedGame = games[0].gamePk;
+          NP.games = this._withoutFinals(games);
+          if (NP.games.length && !NP.games.some((g) => g.gamePk === this.state.feedGame)) {
+            this.state.feedGame = NP.games[0].gamePk;
           }
           this.render();
         }
@@ -748,7 +794,10 @@
     async hydrate() {
       try {
         const changed = await fetchSlate();
-        if (changed && this.state.view === "home") this.render();
+        if (changed) {
+          NP.games = this._withoutFinals(NP.games); // a game may have just gone final
+          this.render();
+        }
       } catch (_e) { /* keep last-good schedule */ }
     }
     // ±20% jitter so 1000 clients don't stampede the origin in lockstep.

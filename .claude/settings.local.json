@@ -77,7 +77,16 @@
       "mcp__vercel__list_teams",
       "mcp__vercel__list_projects",
       "WebFetch(domain:mlb-next-pitch.vercel.app)",
-      "mcp__supabase__get_edge_function"
+      "mcp__supabase__get_edge_function",
+      "mcp__vercel__get_project",
+      "mcp__vercel__list_deployments",
+      "Bash(git fetch *)",
+      "mcp__vercel__get_deployment_build_logs",
+      "Bash(file scripts/*.sh)",
+      "Bash(node -e ' *)",
+      "Bash(node --check dist/nextpitch.js)",
+      "Bash(node --check dist/nextpitch-data.js)",
+      "Bash(node --check dist/config.js)"
     ]
   },
   "enabledMcpjsonServers": [

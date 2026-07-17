@@ -135,7 +135,7 @@ async function health(): Promise<Response> {
 async function games(): Promise<Response> {
   const today = new Date().toISOString().slice(0, 10);
   const { data } = await svc().from("games")
-    .select("game_pk,status,home_team,away_team,home_abbr,away_abbr,start_ts")
+    .select("game_pk,status,home_team,away_team,home_abbr,away_abbr,start_ts,home_score,away_score")
     .eq("official_date", today).order("start_ts");
   return json(data ?? []);
 }
