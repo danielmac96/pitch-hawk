@@ -7,6 +7,7 @@
 // already has an anon read policy; the only write is the click funnel.
 
 import { json, svc } from "../_shared/db.ts";
+import { mlbToday } from "../_shared/mlb.ts";
 
 const MARKET_LABELS: Record<string, string> = {
   ab_result: "At-Bat Result",
@@ -133,7 +134,7 @@ async function health(): Promise<Response> {
 }
 
 async function games(): Promise<Response> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = mlbToday();
   const { data } = await svc().from("games")
     .select("game_pk,status,home_team,away_team,home_abbr,away_abbr,start_ts,home_score,away_score")
     .eq("official_date", today).order("start_ts");
@@ -242,7 +243,7 @@ function pickOut(row: any): any {
 }
 
 async function picksToday(): Promise<Response> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = mlbToday();
   const { data } = await svc().from("picks").select("*")
     .eq("pick_date", today).order("edge", { ascending: false }).limit(50);
   return json((data ?? []).map(pickOut));
@@ -284,7 +285,7 @@ async function record(): Promise<Response> {
   ]);
   const a: any = agg ?? { overall: {}, last30: {}, byMarket: [] };
   return json({
-    updated: new Date().toISOString().slice(0, 10),
+    updated: mlbToday(),
     overall: a.overall ?? {},
     last30: a.last30 ?? {},
     byMarket: (a.byMarket ?? []).map((b: any) => ({ ...b, label: MARKET_LABELS[b.market] ?? b.market })),

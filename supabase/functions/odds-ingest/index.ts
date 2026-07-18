@@ -10,6 +10,7 @@
 // Requires x-cron-secret. Scheduled every 5 minutes via pg_cron.
 
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
+import { mlbToday } from "../_shared/mlb.ts";
 import { log5HomeProb } from "../_shared/model.ts";
 import { americanToProb, teamIdByAbbr, teamIdByText } from "../_shared/vocab.ts";
 import { fetchJson } from "../_shared/http.ts";
@@ -51,7 +52,7 @@ function espnTeamId(team: any): number | null {
 }
 
 async function todaysGames(): Promise<GameRef[]> {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = mlbToday();
   const { data } = await svc().from("games").select(
     "game_pk,official_date,status,home_team,away_team,home_abbr,away_abbr,home_team_id,away_team_id,venue_name,start_ts",
   ).eq("official_date", today);
@@ -333,7 +334,7 @@ Deno.serve(async (req) => {
         if (edge != null && edge >= PICK_EDGE) {
           const label = `${side === "home" ? g.home_team : g.away_team} ML`;
           const { error } = await svc().from("picks").upsert({
-            pick_date: g.official_date ?? new Date().toISOString().slice(0, 10),
+            pick_date: g.official_date ?? mlbToday(),
             game_pk: g.game_pk, at_bat_index: null,
             market: "game_moneyline", recommendation: side, label,
             price: best.price_american, confidence: round4(pSide), edge,

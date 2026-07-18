@@ -56,6 +56,14 @@ export function flattenScheduleGame(g: any): GameRow {
   };
 }
 
+// MLB keys its schedule by the US Eastern "official date", not UTC — using the
+// UTC date after 00:00 UTC (8 PM ET) asks for tomorrow's slate mid-game.
+export function mlbToday(offsetDays = 0): string {
+  const d = new Date(Date.now() + offsetDays * 864e5);
+  // en-CA formats as YYYY-MM-DD
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" }).format(d);
+}
+
 export async function getSchedule(dateISO: string): Promise<GameRow[]> {
   const data = await mlbGet("/schedule", {
     sportId: "1", date: dateISO, hydrate: "team,linescore",

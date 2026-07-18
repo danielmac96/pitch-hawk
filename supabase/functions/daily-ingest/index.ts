@@ -9,12 +9,10 @@
 
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
 import { ensurePlayers, ingestGame, upsertGames } from "../_shared/ingest.ts";
-import { getSchedule, isFinal } from "../_shared/mlb.ts";
+import { getSchedule, isFinal, mlbToday } from "../_shared/mlb.ts";
 
 function dayOffset(offset: number): string {
-  const d = new Date();
-  d.setUTCDate(d.getUTCDate() + offset);
-  return d.toISOString().slice(0, 10);
+  return mlbToday(offset);
 }
 
 Deno.serve(async (req) => {

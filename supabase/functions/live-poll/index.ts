@@ -11,7 +11,7 @@ import { json, logRun, requireCronSecret, svc, upsertChunked } from "../_shared/
 import { ensurePlayers, upsertGames } from "../_shared/ingest.ts";
 import {
   currentPaPitches, deriveLiveState, getPlayByPlay, getSchedule, isLive,
-  liveHomeWinProb,
+  liveHomeWinProb, mlbToday,
 } from "../_shared/mlb.ts";
 import {
   loadActiveModels, MarketPrediction, pitchesOverProb, predictAbPitches,
@@ -99,7 +99,7 @@ Deno.serve(async (req) => {
   const errors: string[] = [];
 
   try {
-    const today = new Date().toISOString().slice(0, 10);
+    const today = mlbToday();
     const sched = await getSchedule(today);
     await upsertGames(sched);
     const liveGames = sched.filter((g) => isLive(g.status));
@@ -321,7 +321,7 @@ async function publishPick(g: any, p: {
     ...(p.extraPayload ?? {}),
   };
   const { error } = await svc().from("picks").upsert({
-    pick_date: new Date().toISOString().slice(0, 10),
+    pick_date: mlbToday(),
     game_pk: g.game_pk, at_bat_index: p.at_bat_index,
     market: p.market, recommendation: p.recommendation, label: p.label,
     line: p.line ?? null,
