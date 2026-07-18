@@ -125,7 +125,11 @@ Deno.serve(async (req) => {
         // Skip DB writes when nothing new happened since the stored state.
         const { data: prevLs } = await db.from("live_state")
           .select("last_pitch_ts,pitch_count_pa").eq("game_pk", g.game_pk).maybeSingle();
-        const changed = !prevLs || prevLs.last_pitch_ts !== state.last_pitch_ts;
+        // Compare as epoch ms: Postgres returns "…11.04+00:00" while MLB sends
+        // "…11.040Z" — string equality never holds and every poll looks new.
+        const prevTs = prevLs?.last_pitch_ts ? Date.parse(prevLs.last_pitch_ts) : NaN;
+        const curTs = state.last_pitch_ts ? Date.parse(String(state.last_pitch_ts)) : NaN;
+        const changed = !prevLs || isNaN(prevTs) || isNaN(curTs) || prevTs !== curTs;
 
         const paPitches = currentPaPitches(pitches);
         const lsRow = {
@@ -221,7 +225,10 @@ Deno.serve(async (req) => {
 
         // Persist the prediction batch at this PA position.
         const abi = latestAbIndex(pitches);
-        const pn = Number(state.pitch_count_pa ?? 0) || null;
+        // Keep 0 (`|| null` would drop it): position 0 = the call on a PA's
+        // first pitch, which the board matches by exact pitch position.
+        const pnRaw = Number(state.pitch_count_pa);
+        const pn = Number.isFinite(pnRaw) ? pnRaw : null;
         const predRows = marketRows.map((m) => ({
           game_pk: g.game_pk, at_bat_index: abi, pitch_number: pn, ...m,
         }));

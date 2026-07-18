@@ -217,6 +217,25 @@ async function live(): Promise<Response> {
         result: p.result ?? null,
       });
     }
+    // The call that predicted THIS at-bat's first pitch was written when the
+    // PREVIOUS at-bat ended, keyed under that at-bat's index — surface the
+    // newest such row per market as position 0 so pitch #1 gets graded too.
+    for (const p of gamePreds) {
+      if (p.at_bat_index === curAbi) continue;
+      const k = `${p.market}:0`;
+      if (seenPos.has(k)) continue;
+      seenPos.add(k);
+      paPredictions.push({
+        market: p.market,
+        pitch_number: 0,
+        predicted_value: p.predicted_value != null ? Number(p.predicted_value) : null,
+        recommendation: p.recommendation,
+        line: p.line != null ? Number(p.line) : null,
+        confidence: p.confidence != null ? Number(p.confidence) : null,
+        probs: p.probs,
+        result: p.result ?? null,
+      });
+    }
     paPredictions.sort((a, b) => a.pitch_number - b.pitch_number);
     const edges = markets.map((m) => m.edge).filter((e) => e != null) as number[];
     const topEdge = edges.length ? Math.max(...edges) : 0;

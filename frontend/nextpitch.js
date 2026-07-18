@@ -44,6 +44,14 @@
   const isLiveStatus = (s) => /in progress|live|manager challenge/i.test(s || "");
   const isFinalStatus = (s) => /final|game over|completed/i.test(s || "");
 
+  // Live-game count for the header + glance tiles. The slate's MLB status is
+  // the source of truth — the per-game `stale` flag only means "no pitch in
+  // 30s" (inning breaks, mound visits) and must not zero this counter.
+  const liveNowCount = () =>
+    Array.isArray(SLATE)
+      ? SLATE.filter((g) => isLiveStatus(g.status)).length
+      : NP.games.length;
+
   // Upcoming games slate (GET /games). null = not loaded yet, [] = none scheduled.
   let SLATE = null;
   let SLATE_AT = 0;
@@ -142,6 +150,14 @@
       const mark = pred.resultOk === true ? " ✓" : pred.resultOk === false ? " ✗" : "";
       return `<span style="font-weight:600;color:${this.predColor(pred.resultOk, pending)};">${esc(label)}<span style="font-family:'IBM Plex Mono',monospace;font-size:.92em;">${esc(prob)}</span>${mark}</span>`;
     }
+    // True when the last pitch ended the at-bat (ball in play, strike three,
+    // ball four) — the pending model call is then for the NEXT batter's first
+    // pitch, so the feed labels it that way instead of implying pitch N+1.
+    abLikelyOver(pitches) {
+      const lp = pitches[pitches.length - 1];
+      if (!lp) return false;
+      return lp.cat === "in_play" || (lp.balls || 0) >= 4 || (lp.strikes || 0) >= 3;
+    }
     liveGameOn(pk) { return this.state.liveGames[pk] !== false; }
     selLiveSourceSet() { const s = this.state.liveSources; return new Set(Object.keys(s).filter((k) => s[k])); }
 
@@ -183,7 +199,7 @@
         return `<button data-act="view" data-arg="${k}" style="${style}">${label}</button>`;
       }).join("");
       const dark = this.dk();
-      const liveCount = NP.games.filter((g) => !g.stale).length;
+      const liveCount = liveNowCount();
       const liveText = liveCount
         ? `${liveCount} game${liveCount === 1 ? "" : "s"} live · auto-refreshing`
         : "No games live right now";
@@ -216,7 +232,7 @@
     // ══ HOME ═════════════════════════════════════════════════════════════
     homeHtml() {
       const slate = SLATE;
-      const liveNow = NP.games.filter((g) => !g.stale).length;
+      const liveNow = liveNowCount();
       const fmtTime = (ts) => {
         const d = new Date(ts);
         return isNaN(d) ? "TBD" : d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -250,10 +266,14 @@
       const firstPitch = nextUp
         ? (sameLocalDay(nextUp.start_ts, now) ? "" : fmtDow(nextUp.start_ts) + " ") + fmtTime(nextUp.start_ts)
         : null;
+      const doneToday = Array.isArray(sorted)
+        ? sorted.filter((g) => isFinalStatus(g.status)).length
+        : null;
       const glance = [
-        { big: leftToday == null ? "—" : String(leftToday), lbl: "games left today" },
-        { big: firstPitch || "—", lbl: "first pitch" },
         { big: String(liveNow), lbl: "live right now" },
+        { big: doneToday == null ? "—" : String(doneToday), lbl: "games completed" },
+        { big: leftToday == null ? "—" : String(leftToday), lbl: "games left today" },
+        { big: firstPitch || "—", lbl: "next game first pitch" },
       ].map((t) => `
             <div style="display:flex;flex-direction:column;"><span style="font-family:'IBM Plex Mono',monospace;font-size:1.7rem;font-weight:800;">${esc(t.big)}</span><span style="font-size:.76rem;color:#9fb2c9;margin-top:.15rem;">${esc(t.lbl)}</span></div>`).join("");
       const hero = `
@@ -423,17 +443,19 @@
             <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);text-align:right;">${esc(pt.balls)}-${esc(pt.strikes)}</span>
           </div>`;
         }).join("");
-        // The upcoming pitch's row: the model's call sits where the pitch data
-        // will land; it turns green/red above once the pitch is thrown.
+        // The upcoming pitch's row — pinned and accented, the board's answer
+        // to "what happens next": the model's call sits where the pitch data
+        // will land, and turns green/red above once the pitch is thrown.
+        const abOver = this.abLikelyOver(g.pitches);
         const nextRow = g.nextPred ? `
-          <div style="display:grid;grid-template-columns:${feedGrid};gap:.35rem;align-items:center;padding:.42rem .25rem;border-bottom:1px solid var(--row-border);font-size:.8rem;background:var(--surface-2);">
-            <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(g.pitches.length + 1)}</span>
-            <span style="color:var(--faint);font-style:italic;">next</span>
+          <div style="display:grid;grid-template-columns:${feedGrid};gap:.35rem;align-items:center;padding:.5rem .25rem;border-bottom:1px solid var(--row-border);font-size:.8rem;background:var(--surface-2);box-shadow:inset 3px 0 0 var(--accent);">
+            <span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOver ? 1 : g.pitches.length + 1)}</span>
+            <span style="font-size:.6rem;font-weight:800;letter-spacing:.05em;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:.12rem .28rem;white-space:nowrap;justify-self:start;">NEXT</span>
             <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span>
             ${this.predVeloHtml(g.nextPred, true)}
-            <span style="color:var(--faint);font-style:italic;">up next</span>
+            <span style="color:var(--text-2);font-weight:600;font-style:italic;">${abOver ? "new batter" : "up next"}</span>
             ${this.predResultHtml(g.nextPred, true)}
-            <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);text-align:right;">${esc(g.count)}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);text-align:right;">${esc(abOver ? "0-0" : g.count)}</span>
           </div>` : "";
 
         // Next-pitch model read: the model predicts the UPCOMING pitch (result
@@ -652,16 +674,17 @@
           <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);text-align:right;">${esc(p.balls)}-${esc(p.strikes)}</span>
         </div>`;
       }).join("");
+      const abOverSel = this.abLikelyOver(sel.pitches);
       const nextRow = sel.nextPred ? `
-        <div style="display:grid;grid-template-columns:${dataGrid};gap:.4rem;align-items:center;padding:.42rem .3rem;border-bottom:1px solid var(--row-border);font-size:.84rem;background:var(--surface-2);">
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(sel.pitches.length + 1)}</span>
-          <span style="color:var(--faint);font-style:italic;">next</span>
+        <div style="display:grid;grid-template-columns:${dataGrid};gap:.4rem;align-items:center;padding:.5rem .3rem;border-bottom:1px solid var(--row-border);font-size:.84rem;background:var(--surface-2);box-shadow:inset 3px 0 0 var(--accent);">
+          <span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOverSel ? 1 : sel.pitches.length + 1)}</span>
+          <span style="font-size:.62rem;font-weight:800;letter-spacing:.05em;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:.12rem .28rem;white-space:nowrap;justify-self:start;">NEXT</span>
           <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span>
           ${this.predVeloHtml(sel.nextPred, true)}
           <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span>
-          <span style="color:var(--faint);font-style:italic;">up next</span>
+          <span style="color:var(--text-2);font-weight:600;font-style:italic;">${abOverSel ? "new batter" : "up next"}</span>
           ${this.predResultHtml(sel.nextPred, true)}
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);text-align:right;">${esc(sel.count)}</span>
+          <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);text-align:right;">${esc(abOverSel ? "0-0" : sel.count)}</span>
         </div>` : "";
 
       const abr = sel.m.ab_result, abp = sel.m.ab_pitches_ou;
