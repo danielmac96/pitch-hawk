@@ -15,4 +15,19 @@
     window.PITCH_EDGE_API = window.PITCH_EDGE_API || base + "/api";
   }
   // else: leave window.PITCH_EDGE_API as-is (default sample-data mode).
+
+  // Feature flags. `wageringInsights` gates every odds/edge/picks surface:
+  // sportsbook source filters, edge highlighting and columns, settled-pick
+  // tables, betting-compliance copy, and the /edge API calls themselves.
+  // Off by default — the app positions as a live analytics board.
+  //
+  // To re-enable: set NEXTPITCH_FEATURE_WAGERING=true at build time
+  // (scripts/build_frontend.sh substitutes the placeholder below), or in any
+  // running browser set localStorage["np-feature-wagering"]="true" and reload.
+  var wagering = "{{FEATURE_WAGERING}}"; // substituted at deploy time
+  var lsWagering = null;
+  try { lsWagering = localStorage.getItem("np-feature-wagering"); } catch (_e) {}
+  window.NP_FEATURES = window.NP_FEATURES || {
+    wageringInsights: lsWagering != null ? lsWagering === "true" : wagering === "true",
+  };
 })();

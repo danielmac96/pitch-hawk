@@ -21,6 +21,10 @@
   const POLL_MS = 8000;   // backend polls MLB every ~8s (POLL_INTERVAL_SECONDS)
 
   const NP = window.NEXTPITCH;
+  const COPY = window.NP_COPY;
+  // Wagering surfaces (source filters, edge highlighting/columns, settled
+  // picks) render only when the flag is on — see config.js / copy.js.
+  const WAGER = !!(window.NP_FEATURES && window.NP_FEATURES.wageringInsights);
 
   const esc = (s) =>
     String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
@@ -194,7 +198,7 @@
     // ══ HEADER / FOOTER ══════════════════════════════════════════════════
     headerHtml() {
       const view = this.state.view;
-      const tabs = [["home", "Home"], ["live", "Live Markets"], ["data", "Data Feed"]].map(([k, label]) => {
+      const tabs = COPY.tabs.map(([k, label]) => {
         const on = view === k;
         const style = `border:0;cursor:pointer;font-family:inherit;font-weight:700;font-size:.84rem;padding:.4rem .85rem;border-radius:999px;transition:all .14s;background:${on ? "var(--seg-active-bg)" : "transparent"};color:${on ? "var(--seg-active-fg)" : "var(--muted)"};box-shadow:${on ? "0 1px 2px rgba(15,27,45,.14)" : "none"};`;
         return `<button data-act="view" data-arg="${k}" style="${style}">${label}</button>`;
@@ -225,7 +229,7 @@
       <footer style="background:#0f1b2d;color:#c4d1e0;padding:1.8rem 0;">
         <div style="width:min(1220px,95vw);margin:0 auto;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;align-items:center;">
           <div data-act="goHome" style="display:flex;align-items:center;gap:.5rem;font-weight:800;font-size:1.05rem;color:inherit;cursor:pointer;"><span style="color:#4ade80;">◆</span> Next<span style="color:#4ade80;">Pitch</span></div>
-          <p style="margin:0;font-size:.74rem;color:#8a9bb2;max-width:46rem;flex:1;min-width:240px;">Live MLB data with model-driven projections, for information and entertainment only — no odds or betting picks are shown, and nothing here is betting advice. 21+ where betting is legal. Gambling problem? Call 1-800-GAMBLER.</p>
+          <p style="margin:0;font-size:.74rem;color:#8a9bb2;max-width:46rem;flex:1;min-width:240px;">${esc(COPY.footerDisclaimer)}</p>
         </div>
       </footer>`;
     }
@@ -280,13 +284,13 @@
       const hero = `
       <div style="display:grid;grid-template-columns:1.25fr .9fr;gap:2rem;align-items:center;background:linear-gradient(180deg,var(--surface),var(--bg));border:1px solid var(--border);border-radius:18px;padding:clamp(1.6rem,4vw,2.6rem);margin-bottom:1.4rem;">
         <div>
-          <span style="display:inline-block;font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--good-strong);background:var(--good-bg);padding:.3rem .6rem;border-radius:999px;margin-bottom:1rem;">MLB · At-Bat Markets</span>
-          <h1 style="font-size:clamp(1.9rem,4vw,3rem);font-weight:800;letter-spacing:-.02em;margin:0;line-height:1.08;">The next pitch, called before it's thrown.</h1>
-          <p style="font-size:1.08rem;color:var(--text-2);max-width:34rem;margin:1rem 0 1.4rem;">Live pitch-by-pitch data with model-predicted probabilities for every at-bat. The board wakes at first pitch and follows every game — odds comparison and graded picks are on the way.</p>
+          <span style="display:inline-block;font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--good-strong);background:var(--good-bg);padding:.3rem .6rem;border-radius:999px;margin-bottom:1rem;">${esc(COPY.heroBadge)}</span>
+          <h1 style="font-size:clamp(1.9rem,4vw,3rem);font-weight:800;letter-spacing:-.02em;margin:0;line-height:1.08;">${esc(COPY.heroTitle)}</h1>
+          <p style="font-size:1.08rem;color:var(--text-2);max-width:34rem;margin:1rem 0 1.4rem;">${esc(COPY.heroSub)}</p>
           <div style="display:flex;gap:.7rem;flex-wrap:wrap;">
-            <button data-act="goLive" style="display:inline-flex;align-items:center;justify-content:center;gap:.4rem;font-weight:600;font-size:.92rem;padding:.62rem 1.05rem;border-radius:9px;border:1px solid transparent;background:var(--accent);color:#fff;cursor:pointer;font-family:inherit;">Open the live board →</button>
+            <button data-act="goLive" style="display:inline-flex;align-items:center;justify-content:center;gap:.4rem;font-weight:600;font-size:.92rem;padding:.62rem 1.05rem;border-radius:9px;border:1px solid transparent;background:var(--accent);color:#fff;cursor:pointer;font-family:inherit;">${esc(COPY.heroCta)}</button>
           </div>
-          <p style="margin-top:1rem;font-size:.8rem;color:var(--muted);letter-spacing:.02em;">21+ · For entertainment · 1-800-GAMBLER</p>
+          ${COPY.heroCompliance ? `<p style="margin-top:1rem;font-size:.8rem;color:var(--muted);letter-spacing:.02em;">${esc(COPY.heroCompliance)}</p>` : ""}
         </div>
         <div style="background:var(--bc-bg);color:#fff;border-radius:14px;padding:1.4rem 1.5rem;box-shadow:0 12px 40px rgba(15,27,45,.18);">
           <span style="font-size:.78rem;font-weight:600;color:#9fb2c9;letter-spacing:.04em;text-transform:uppercase;">Today at a glance</span>
@@ -343,8 +347,8 @@
       const slateBlock = `
       <div style="margin-bottom:1.6rem;">
         <div style="margin-bottom:1rem;">
-          <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">Today's games</h2>
-          <p style="margin:.35rem 0 0;color:var(--muted);font-size:.95rem;">Live now first, then up next, then finals — live model reads open with each game window.</p>
+          <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.slateTitle)}</h2>
+          <p style="margin:.35rem 0 0;color:var(--muted);font-size:.95rem;">${esc(COPY.slateSub)}</p>
         </div>
         ${slateCards}
       </div>`;
@@ -352,25 +356,18 @@
       const promo = `
       <div style="display:grid;grid-template-columns:1.05fr .95fr;gap:2rem;align-items:center;background:var(--bc-bg);border:1px solid var(--bc-inner);border-radius:18px;padding:clamp(1.6rem,4vw,2.6rem);margin-bottom:1.6rem;color:#fff;">
         <div>
-          <span style="display:inline-block;font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6ee7a0;background:rgba(74,222,128,.13);padding:.3rem .6rem;border-radius:999px;margin-bottom:.9rem;">The live board</span>
-          <h2 style="color:#fff;font-size:clamp(1.5rem,3vw,2.1rem);font-weight:800;letter-spacing:-.02em;margin:0;">Watch the game with the model open.</h2>
-          <p style="color:#b7c6da;font-size:1.02rem;line-height:1.6;margin:.9rem 0 1.5rem;max-width:34rem;">Real-time reads on every live at-bat — model probabilities, the pitch-by-pitch feed, and the broadcast situation at a glance.</p>
-          <button data-act="goLive" style="display:inline-flex;align-items:center;justify-content:center;gap:.4rem;font-weight:600;font-size:.92rem;padding:.62rem 1.05rem;border-radius:9px;border:1px solid transparent;background:var(--accent);color:#fff;cursor:pointer;font-family:inherit;">Open the live board →</button>
+          <span style="display:inline-block;font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6ee7a0;background:rgba(74,222,128,.13);padding:.3rem .6rem;border-radius:999px;margin-bottom:.9rem;">${esc(COPY.promoBadge)}</span>
+          <h2 style="color:#fff;font-size:clamp(1.5rem,3vw,2.1rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.promoTitle)}</h2>
+          <p style="color:#b7c6da;font-size:1.02rem;line-height:1.6;margin:.9rem 0 1.5rem;max-width:34rem;">${esc(COPY.promoSub)}</p>
+          <button data-act="goLive" style="display:inline-flex;align-items:center;justify-content:center;gap:.4rem;font-weight:600;font-size:.92rem;padding:.62rem 1.05rem;border-radius:9px;border:1px solid transparent;background:var(--accent);color:#fff;cursor:pointer;font-family:inherit;">${esc(COPY.heroCta)}</button>
         </div>
         <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.9rem;">
-          <li style="display:flex;flex-direction:column;gap:.2rem;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:9px;padding:.85rem 1rem;"><b style="color:#fff;font-size:.96rem;">Live at-bat panels</b><span style="color:#93a6bd;font-size:.86rem;line-height:1.5;">One panel per game — the count, bases, and the model's read on the next pitch.</span></li>
-          <li style="display:flex;flex-direction:column;gap:.2rem;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:9px;padding:.85rem 1rem;"><b style="color:#fff;font-size:.96rem;">Pitch-by-pitch feed</b><span style="color:#93a6bd;font-size:.86rem;line-height:1.5;">Type, velo and result next to predicted speed and strike / ball / in-play odds.</span></li>
-          <li style="display:flex;flex-direction:column;gap:.2rem;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:9px;padding:.85rem 1rem;"><b style="color:#fff;font-size:.96rem;">Broadcast situation</b><span style="color:#93a6bd;font-size:.86rem;line-height:1.5;">Bases, balls, strikes, outs, score and the model call in a single glance.</span></li>
+          ${COPY.promoBullets.map(([title, body]) => `<li style="display:flex;flex-direction:column;gap:.2rem;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:9px;padding:.85rem 1rem;"><b style="color:#fff;font-size:.96rem;">${esc(title)}</b><span style="color:#93a6bd;font-size:.86rem;line-height:1.5;">${esc(body)}</span></li>`).join("")}
         </ul>
       </div>`;
 
       // how it works
-      const steps = [
-        ["1", "Ingest", "Historical Statcast plus a live MLB feed give us pitch-by-pitch context for every matchup."],
-        ["2", "Model", "Per-market models project the next pitch and at-bat in real time, updating with every pitch."],
-        ["3", "Watch", "Every live at-bat gets a model read — probabilities and projections stream to the live board."],
-        ["4", "Next up", "Live odds comparison, +EV picks, and a public graded record are on the way."],
-      ].map(([n, title, body]) => `
+      const steps = COPY.steps.map(([n, title, body]) => `
         <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:1.3rem;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);">
           <span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:var(--bc-bg);color:#fff;font-weight:800;margin-bottom:.8rem;">${n}</span>
           <h3 style="font-size:1.05rem;font-weight:700;margin:0 0 .35rem;">${esc(title)}</h3>
@@ -378,7 +375,7 @@
         </div>`).join("");
       const how = `
       <div>
-        <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0 0 1rem;">How it works</h2>
+        <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0 0 1rem;">${esc(COPY.howTitle)}</h2>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.1rem;">${steps}</div>
       </div>`;
 
@@ -390,8 +387,8 @@
       if (!NP.games.length) {
         return `
       <div style="margin-bottom:1.1rem;">
-        <h1 style="font-size:clamp(1.5rem,3vw,2.05rem);font-weight:800;letter-spacing:-.02em;margin:0;">Live markets</h1>
-        <p style="margin:.3rem 0 0;color:var(--muted);font-size:.95rem;">One panel per live at-bat — game state on the left, the model's pitch-by-pitch read on the right.</p>
+        <h1 style="font-size:clamp(1.5rem,3vw,2.05rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.liveTitle)}</h1>
+        <p style="margin:.3rem 0 0;color:var(--muted);font-size:.95rem;">${esc(COPY.liveSub)}</p>
       </div>
       <div style="padding:3.5rem 1rem;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:14px;">
         <div style="font-size:1.05rem;font-weight:700;margin-bottom:.35rem;">No live games right now</div>
@@ -400,7 +397,10 @@
       }
       const thr = this.state.edgeThreshold;
       const sel = this.selLiveSourceSet();
-      const bestOfSources = (sources) => { let best = null; (sources || []).forEach((s) => { if (sel.has(s.source) && (best == null || s.edge > best)) best = s.edge; }); return best; };
+      // With wagering surfaces off, no read ever gets an edge highlight.
+      const bestOfSources = WAGER
+        ? (sources) => { let best = null; (sources || []).forEach((s) => { if (sel.has(s.source) && (best == null || s.edge > best)) best = s.edge; }); return best; }
+        : () => null;
       const hot = (best) => (best != null && best >= thr);
       const chip = (best) => hot(best)
         ? `font-family:'IBM Plex Mono',monospace;justify-self:end;padding:.08rem .4rem;border-radius:6px;background:var(--good-bg);color:var(--good-strong);font-weight:700;`
@@ -628,19 +628,21 @@
       }).join("");
       const thresholdText = (thr * 100).toFixed(1) + "%";
 
+      const sourcesRow = WAGER ? `
+        <div style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;">
+          <span style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);width:54px;">Sources</span>${sourceChips}
+        </div>` : "";
+      const legendRow = WAGER && COPY.edgeLegend ? `
+        <div style="display:flex;align-items:center;gap:.45rem;font-size:.72rem;color:var(--muted);flex-wrap:wrap;">
+          <span style="width:13px;height:13px;border-radius:4px;background:var(--good-bg);border:1px solid var(--good-strong);display:inline-block;flex:none;"></span>
+          ${esc(COPY.edgeLegend.replace("{threshold}", thresholdText))}
+        </div>` : "";
       const filters = `
       <div style="display:flex;flex-direction:column;gap:.55rem;margin-bottom:1.1rem;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.75rem .85rem;box-shadow:0 1px 2px rgba(15,27,45,.04);">
         <div style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;">
           <span style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);width:54px;">Games</span>
           <button data-act="liveAllGames" style="${chipStyle(allOn)}">All</button>${gameChips}
-        </div>
-        <div style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;">
-          <span style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);width:54px;">Sources</span>${sourceChips}
-        </div>
-        <div style="display:flex;align-items:center;gap:.45rem;font-size:.72rem;color:var(--muted);flex-wrap:wrap;">
-          <span style="width:13px;height:13px;border-radius:4px;background:var(--good-bg);border:1px solid var(--good-strong);display:inline-block;flex:none;"></span>
-          Model reads with an edge ≥ ${esc(thresholdText)} against your selected sources are highlighted.
-        </div>
+        </div>${sourcesRow}${legendRow}
       </div>`;
 
       const empty = panels.length === 0
@@ -648,8 +650,8 @@
 
       return `
       <div style="margin-bottom:1.1rem;">
-        <h1 style="font-size:clamp(1.5rem,3vw,2.05rem);font-weight:800;letter-spacing:-.02em;margin:0;">Live markets</h1>
-        <p style="margin:.3rem 0 0;color:var(--muted);font-size:.95rem;">One panel per live at-bat — game state on the left, the model's pitch-by-pitch read on the right.</p>
+        <h1 style="font-size:clamp(1.5rem,3vw,2.05rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.liveTitle)}</h1>
+        <p style="margin:.3rem 0 0;color:var(--muted);font-size:.95rem;">${esc(COPY.liveSub)}</p>
       </div>
       ${filters}
       ${empty}
@@ -709,17 +711,23 @@
       const basePos = { two: "left:50%;top:2px;transform:translateX(-50%) rotate(45deg);", three: "left:2px;top:50%;transform:translateY(-50%) rotate(45deg);", one: "right:2px;top:50%;transform:translateY(-50%) rotate(45deg);" };
       const baseStyle = (onBase, pos) => `position:absolute;${pos}width:22px;height:22px;border-radius:4px;background:${onBase ? "#4ade80" : "#16263d"};border:2px solid ${onBase ? "#4ade80" : "#3a4c66"};`;
 
+      // The Edge column belongs to the wagering surface — the analytics board
+      // shows the model call and probability only.
+      const abGrid = WAGER ? "1fr 1.2fr 1.2fr .6fr .5fr .9fr auto" : "1fr 1.2fr 1.2fr .6fr .5fr .9fr";
       const liveAtBats = NP.games.map((g) => {
         const m = g.m.ab_result;
+        const edgeCell = WAGER
+          ? `<span style="text-align:right;"><span style="${this.chipSm(m.edge)}">${esc(this.fmtEdge(m.edge))}</span></span>`
+          : "";
         return `<div style="opacity:${g.stale ? 0.6 : 1};">
-          <div style="display:grid;grid-template-columns:1fr 1.2fr 1.2fr .6fr .5fr .9fr auto;gap:.5rem;align-items:center;padding:.5rem .4rem;border-bottom:1px solid var(--row-border);font-size:.82rem;">
+          <div style="display:grid;grid-template-columns:${abGrid};gap:.5rem;align-items:center;padding:.5rem .4rem;border-bottom:1px solid var(--row-border);font-size:.82rem;">
             <span style="font-weight:700;">${esc(g.label)}</span>
             <span style="color:var(--text-2);">${esc(g.pitcher.name)}</span>
             <span style="color:var(--text-2);">${esc(g.batter.name)}</span>
             <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(g.count)}</span>
             <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(g.pitchCountPa)}</span>
             <span style="font-weight:600;">${esc(NP.OUTCOME_LABEL[m.recommendation] || m.recommendation || "—")} <span style="color:var(--faint);font-weight:500;font-family:'IBM Plex Mono',monospace;font-size:.74rem;">${esc(this.pct(m.modelProb))}</span></span>
-            <span style="text-align:right;"><span style="${this.chipSm(m.edge)}">${esc(this.fmtEdge(m.edge))}</span></span>
+            ${edgeCell}
           </div>
         </div>`;
       }).join("");
@@ -741,8 +749,8 @@
         </div>`;
       }).join("");
 
-      // settled-picks proof points return with the graded record
-      const recentBlock = NP.RECENT.length ? `
+      // settled-picks proof points return with the graded record (wagering only)
+      const recentBlock = WAGER && NP.RECENT.length ? `
       <div style="font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 .6rem;">Recently settled at-bats</div>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:.4rem .6rem;overflow-x:auto;">
         <div style="min-width:560px;">
@@ -755,8 +763,8 @@
 
       return `
       <div style="margin-bottom:.9rem;">
-        <h1 style="font-size:clamp(1.5rem,3vw,2.05rem);font-weight:800;letter-spacing:-.02em;margin:0;">Data feed</h1>
-        <p style="margin:.3rem 0 0;color:var(--muted);font-size:.95rem;">Pitch-by-pitch and at-bat data, straight from the live feed.</p>
+        <h1 style="font-size:clamp(1.5rem,3vw,2.05rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.dataTitle)}</h1>
+        <p style="margin:.3rem 0 0;color:var(--muted);font-size:.95rem;">${esc(COPY.dataSub)}</p>
       </div>
       <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.1rem;">${gameSel}</div>
 
@@ -828,8 +836,8 @@
       <div style="font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 .6rem;">Live at-bats · all games</div>
       <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:.4rem .6rem;overflow-x:auto;margin-bottom:1.6rem;">
         <div style="min-width:540px;">
-          <div style="display:grid;grid-template-columns:1fr 1.2fr 1.2fr .6fr .5fr .9fr auto;gap:.5rem;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:700;padding:.5rem .4rem;border-bottom:1px solid var(--border);">
-            <span>Game</span><span>Pitcher</span><span>Batter</span><span>Count</span><span>P</span><span>Model call</span><span style="text-align:right;">Edge</span>
+          <div style="display:grid;grid-template-columns:${abGrid};gap:.5rem;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:700;padding:.5rem .4rem;border-bottom:1px solid var(--border);">
+            <span>Game</span><span>Pitcher</span><span>Batter</span><span>Count</span><span>P</span><span>Model call</span>${WAGER ? `<span style="text-align:right;">Edge</span>` : ""}
           </div>
           ${liveAtBats}
         </div>
@@ -914,7 +922,7 @@
       const age = h && h.jobs && h.jobs["live-poll"] ? h.jobs["live-poll"].age_seconds : null;
       el.textContent = "⚠ Live data delayed" +
         (age != null ? ` (updated ~${Math.round(age / 60)}m ago)` : "") +
-        " — showing last known prices.";
+        " — showing the last data received.";
     }
     start() {
       this.render();

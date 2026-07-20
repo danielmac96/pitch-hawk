@@ -622,12 +622,15 @@ window.NEXTPITCH = (function () {
     if (!res.ok) throw new Error(`/live ${res.status}`);
     const live = await res.json();
     if (!Array.isArray(live) || !live.length) return [];
-    const edgeRows = await Promise.all(live.map(async (lg) => {
+    // Wagering surfaces off → no odds/edge data is fetched at all; markets
+    // normalize from /live alone (model probs, no source prices, edge null).
+    const wager = !!(window.NP_FEATURES && window.NP_FEATURES.wageringInsights);
+    const edgeRows = wager ? await Promise.all(live.map(async (lg) => {
       try {
         const r = await f(`${apiBase}/edge/${lg.game_pk}`);
         return r.ok ? await r.json() : [];
       } catch (_e) { return []; }
-    }));
+    })) : live.map(() => []);
     const games = live.map((lg, i) => normalizeGame(lg, edgeRows[i]));
     enrichUpcoming(games); // derive mNext + on-deck placeholder (see note above)
     return games;

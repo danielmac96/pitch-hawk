@@ -1,9 +1,19 @@
-# NextPitch — MLB live at-bat markets
+# NextPitch — live MLB at-bat analytics
 
 NextPitch ingests all MLB data daily, polls live games in real time, scores
 per-market prediction models, prices them against real odds, and tracks every
 published pick — **hosted entirely on Supabase** (Postgres + edge functions +
 pg_cron), with a static frontend on Vercel.
+
+> **Positioning note.** The public frontend ships as a live *analytics* board:
+> model probabilities, projections, and the pitch-by-pitch feed. All wagering
+> surfaces (sportsbook source filters, edge highlighting, settled-pick tables,
+> betting-compliance copy, and the `/edge` API calls) are gated behind a
+> single feature flag, **off by default**. The odds/edge/picks pipeline below
+> keeps running untouched; only its UI is hidden. To restore the wagering UI,
+> build with `NEXTPITCH_FEATURE_WAGERING=true` (or set
+> `localStorage["np-feature-wagering"]="true"` in a running browser). Details:
+> [`docs/rebrand-inventory.md`](docs/rebrand-inventory.md).
 
 - **Live site:** https://mlb-next-pitch.vercel.app
 - **Live API:** `https://gfxpchtyncgsczqdvohr.supabase.co/functions/v1/api`
@@ -172,8 +182,9 @@ erDiagram
 │   ├── index.html          #   shell: mounts #np-root, loads the scripts
 │   ├── nextpitch.js        #   renders Home / Live Markets / Data Feed tabs
 │   ├── nextpitch-data.js   #   sample data + edge engine + loadLive() adapter
-│   ├── picks-data.js       #   sample Home-tab picks/record
-│   ├── config.js           #   injects window.PITCH_EDGE_API at build time
+│   ├── picks-data.js       #   sample picks/record data (not loaded by index.html)
+│   ├── copy.js             #   all positioning-sensitive strings (analytics + wagering variants)
+│   ├── config.js           #   injects window.PITCH_EDGE_API + feature flags at build time
 │   └── nextpitch.css       #   theme tokens (light/dark), layout
 ├── supabase/
 │   ├── functions/          # PRODUCTION backend (Deno edge functions)
