@@ -200,8 +200,7 @@
       const view = this.state.view;
       const tabs = COPY.tabs.map(([k, label]) => {
         const on = view === k;
-        const style = `border:0;cursor:pointer;font-family:inherit;font-weight:700;font-size:.84rem;padding:.4rem .85rem;border-radius:999px;transition:all .14s;background:${on ? "var(--seg-active-bg)" : "transparent"};color:${on ? "var(--seg-active-fg)" : "var(--muted)"};box-shadow:${on ? "0 1px 2px rgba(15,27,45,.14)" : "none"};`;
-        return `<button data-act="view" data-arg="${k}" style="${style}">${label}</button>`;
+        return `<button data-act="view" data-arg="${k}" class="np-tab${on ? " np-tab-on" : ""}">${label}</button>`;
       }).join("");
       const dark = this.dk();
       const liveCount = liveNowCount();
@@ -210,7 +209,7 @@
         : "No games live right now";
       return `
       <header style="position:sticky;top:0;z-index:50;background:var(--header-bg);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);">
-        <div style="width:min(1220px,95vw);margin:0 auto;display:flex;align-items:center;gap:.7rem 1.1rem;flex-wrap:wrap;padding:.7rem 0;">
+        <div class="np-header-inner">
           <div data-act="goHome" style="display:flex;align-items:center;gap:.5rem;font-weight:800;font-size:1.16rem;letter-spacing:-.02em;color:inherit;cursor:pointer;">
             <span style="color:var(--accent);font-size:.85rem;">◆</span>
             <span>Next<span style="color:var(--accent);">Pitch</span></span>
@@ -219,14 +218,14 @@
             <span style="width:7px;height:7px;border-radius:50%;background:var(--accent);animation:np-pulse 1.8s ease-in-out infinite;"></span>
             ${esc(liveText)}
           </div>
-          <nav style="margin-left:auto;display:flex;gap:.22rem;background:var(--track);border:1px solid var(--border);border-radius:999px;padding:.25rem;">${tabs}</nav>
-          <button data-act="theme" title="Toggle light / dark" style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:999px;border:1px solid var(--border-2);background:var(--surface);color:var(--text-2);cursor:pointer;font-size:.95rem;line-height:1;">${dark ? "☀" : "☾"}</button>
+          <nav class="np-nav">${tabs}</nav>
+          <button data-act="theme" title="Toggle light / dark" aria-label="Toggle light / dark theme" class="np-icon-btn">${dark ? "☀" : "☾"}</button>
         </div>
       </header>`;
     }
     footerHtml() {
       return `
-      <footer style="background:#0f1b2d;color:#c4d1e0;padding:1.8rem 0;">
+      <footer class="np-footer">
         <div style="width:min(1220px,95vw);margin:0 auto;display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;align-items:center;">
           <div data-act="goHome" style="display:flex;align-items:center;gap:.5rem;font-weight:800;font-size:1.05rem;color:inherit;cursor:pointer;"><span style="color:#4ade80;">◆</span> Next<span style="color:#4ade80;">Pitch</span></div>
           <p style="margin:0;font-size:.74rem;color:#8a9bb2;max-width:46rem;flex:1;min-width:240px;">${esc(COPY.footerDisclaimer)}</p>
@@ -282,7 +281,7 @@
       ].map((t) => `
             <div style="display:flex;flex-direction:column;"><span style="font-family:'IBM Plex Mono',monospace;font-size:1.7rem;font-weight:800;">${esc(t.big)}</span><span style="font-size:.76rem;color:#9fb2c9;margin-top:.15rem;">${esc(t.lbl)}</span></div>`).join("");
       const hero = `
-      <div style="display:grid;grid-template-columns:1.25fr .9fr;gap:2rem;align-items:center;background:linear-gradient(180deg,var(--surface),var(--bg));border:1px solid var(--border);border-radius:18px;padding:clamp(1.6rem,4vw,2.6rem);margin-bottom:1.4rem;">
+      <div class="np-hero" style="background:linear-gradient(180deg,var(--surface),var(--bg));border:1px solid var(--border);border-radius:18px;padding:clamp(1.3rem,4vw,2.6rem);margin-bottom:1.4rem;">
         <div>
           <span style="display:inline-block;font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:var(--good-strong);background:var(--good-bg);padding:.3rem .6rem;border-radius:999px;margin-bottom:1rem;">${esc(COPY.heroBadge)}</span>
           <h1 style="font-size:clamp(1.9rem,4vw,3rem);font-weight:800;letter-spacing:-.02em;margin:0;line-height:1.08;">${esc(COPY.heroTitle)}</h1>
@@ -342,7 +341,7 @@
             ${foot}
           </div>`;
         }).join("");
-        slateCards = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(215px,1fr));gap:.8rem;">${cards}</div>`;
+        slateCards = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(215px,100%),1fr));gap:.8rem;">${cards}</div>`;
       }
       const slateBlock = `
       <div style="margin-bottom:1.6rem;">
@@ -354,7 +353,7 @@
       </div>`;
       // live board promo
       const promo = `
-      <div style="display:grid;grid-template-columns:1.05fr .95fr;gap:2rem;align-items:center;background:var(--bc-bg);border:1px solid var(--bc-inner);border-radius:18px;padding:clamp(1.6rem,4vw,2.6rem);margin-bottom:1.6rem;color:#fff;">
+      <div class="np-promo" style="background:var(--bc-bg);border:1px solid var(--bc-inner);border-radius:18px;padding:clamp(1.3rem,4vw,2.6rem);margin-bottom:1.6rem;color:#fff;">
         <div>
           <span style="display:inline-block;font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6ee7a0;background:rgba(74,222,128,.13);padding:.3rem .6rem;border-radius:999px;margin-bottom:.9rem;">${esc(COPY.promoBadge)}</span>
           <h2 style="color:#fff;font-size:clamp(1.5rem,3vw,2.1rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.promoTitle)}</h2>
@@ -376,7 +375,7 @@
       const how = `
       <div>
         <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0 0 1rem;">${esc(COPY.howTitle)}</h2>
-        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.1rem;">${steps}</div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(min(220px,100%),1fr));gap:1.1rem;">${steps}</div>
       </div>`;
 
       return hero + slateBlock + promo + how;
@@ -533,7 +532,7 @@
           <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-bottom:.9rem;padding-bottom:.8rem;border-bottom:1px solid var(--border);">
             <span style="font-weight:800;font-size:1.1rem;">${esc(g.label)}</span>${pausedTag}
           </div>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:1.2rem;">
+          <div class="np-panel-grid">
 
             <!-- LEFT: game state -->
             <div style="display:flex;flex-direction:column;gap:1rem;">
@@ -595,7 +594,7 @@
                 <span style="font-weight:800;font-size:1rem;">Pitch feed</span>
                 <span style="font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);">This at-bat</span>
               </div>
-              <div style="overflow-x:auto;"><div style="min-width:460px;">
+              <div class="np-scroll"><div style="min-width:460px;">
                 <div style="display:grid;grid-template-columns:${feedGrid};gap:.35rem;font-size:.58rem;text-transform:uppercase;letter-spacing:.03em;color:var(--faint);font-weight:700;padding:0 .25rem .4rem;border-bottom:1px solid var(--border);">
                   <span>#</span><span>Type</span><span>Velo</span><span>xVelo</span><span>Result</span><span>xResult</span><span style="text-align:right;">Count</span>
                 </div>
@@ -620,11 +619,11 @@
       // filters bar
       const chipStyle = (on, accent) => `border:1px solid ${on ? (accent || "var(--pill-active-bg)") : "var(--border-2)"};background:${on ? (accent || "var(--pill-active-bg)") : "var(--surface)"};color:${on ? (accent ? "#fff" : "var(--pill-active-fg)") : "var(--text-2)"};font-family:inherit;font-weight:600;font-size:.76rem;padding:.32rem .7rem;border-radius:999px;cursor:pointer;transition:all .14s;`;
       const allOn = NP.games.every((g) => this.liveGameOn(g.gamePk));
-      const gameChips = NP.games.map((g) => `<button data-act="liveGame" data-arg="${g.gamePk}" style="${chipStyle(this.liveGameOn(g.gamePk))}">${esc(g.label)}</button>`).join("");
+      const gameChips = NP.games.map((g) => `<button data-act="liveGame" data-arg="${g.gamePk}" class="np-chip" style="${chipStyle(this.liveGameOn(g.gamePk))}">${esc(g.label)}</button>`).join("");
       const sourceChips = Object.keys(NP.SOURCES).map((k) => {
         const s = NP.SOURCES[k]; const on = !!this.state.liveSources[k];
         const accent = s.type === "book" ? "var(--blue)" : "var(--purple)";
-        return `<button data-act="liveSource" data-arg="${k}" style="${chipStyle(on, on ? accent : null)}">${esc(s.short)}</button>`;
+        return `<button data-act="liveSource" data-arg="${k}" class="np-chip" style="${chipStyle(on, on ? accent : null)}">${esc(s.short)}</button>`;
       }).join("");
       const thresholdText = (thr * 100).toFixed(1) + "%";
 
@@ -641,7 +640,7 @@
       <div style="display:flex;flex-direction:column;gap:.55rem;margin-bottom:1.1rem;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.75rem .85rem;box-shadow:0 1px 2px rgba(15,27,45,.04);">
         <div style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;">
           <span style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);width:54px;">Games</span>
-          <button data-act="liveAllGames" style="${chipStyle(allOn)}">All</button>${gameChips}
+          <button data-act="liveAllGames" class="np-chip" style="${chipStyle(allOn)}">All</button>${gameChips}
         </div>${sourcesRow}${legendRow}
       </div>`;
 
@@ -666,7 +665,7 @@
         const on = g.gamePk === sel.gamePk;
         const style = `display:flex;align-items:center;gap:.4rem;border:1px solid ${on ? "var(--pill-active-bg)" : "var(--border-2)"};background:${on ? "var(--pill-active-bg)" : "var(--surface)"};color:${on ? "var(--pill-active-fg)" : "var(--text-2)"};font-family:inherit;font-weight:600;font-size:.8rem;padding:.4rem .72rem;border-radius:999px;cursor:pointer;transition:all .14s;`;
         const dot = `width:7px;height:7px;border-radius:50%;background:${g.stale ? "#c9a23a" : "var(--accent)"};`;
-        return `<button data-act="feedGame" data-arg="${g.gamePk}" style="${style}"><span style="${dot}"></span>${esc(g.label)}</button>`;
+        return `<button data-act="feedGame" data-arg="${g.gamePk}" class="np-chip" style="${style}"><span style="${dot}"></span>${esc(g.label)}</button>`;
       }).join("");
 
       const dataGrid = "38px 56px 64px 60px 46px 1fr minmax(112px,1fr) 56px";
@@ -752,7 +751,7 @@
       // settled-picks proof points return with the graded record (wagering only)
       const recentBlock = WAGER && NP.RECENT.length ? `
       <div style="font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 .6rem;">Recently settled at-bats</div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:.4rem .6rem;overflow-x:auto;">
+      <div class="np-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:.4rem .6rem;">
         <div style="min-width:560px;">
           <div style="display:grid;grid-template-columns:.6fr 1fr 1.2fr 1.6fr .5fr .7fr auto;gap:.5rem;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:700;padding:.5rem .4rem;border-bottom:1px solid var(--border);">
             <span>Date</span><span>Game</span><span>Batter</span><span>Pick</span><span>P</span><span>Price</span><span style="text-align:right;">Result</span>
@@ -769,7 +768,7 @@
       <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.1rem;">${gameSel}</div>
 
       <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:stretch;margin-bottom:1.4rem;">
-        <div style="flex:1;min-width:290px;background:var(--bc-bg);color:#eaf1f8;border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.06),0 8px 22px rgba(15,27,45,.14);padding:1.1rem 1.2rem;display:flex;flex-direction:column;">
+        <div style="flex:1;min-width:min(290px,100%);background:var(--bc-bg);color:#eaf1f8;border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.06),0 8px 22px rgba(15,27,45,.14);padding:1.1rem 1.2rem;display:flex;flex-direction:column;">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
             <div style="font-size:.66rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#7fa0c4;">Live situation</div>
             <div style="font-size:.72rem;color:#7fa0c4;font-family:'IBM Plex Mono',monospace;">${esc(sel.venue)}</div>
@@ -813,12 +812,12 @@
           </div>
         </div>
 
-        <div style="flex:1.5;min-width:340px;background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:1rem 1.1rem;">
+        <div style="flex:1.5;min-width:min(340px,100%);background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:1rem 1.1rem;">
           <div style="display:flex;align-items:center;justify-content:space-between;gap:.6rem;flex-wrap:wrap;margin-bottom:.7rem;">
             <div style="font-weight:800;font-size:1rem;">${esc(sel.label)}</div>
             <span style="font-size:.66rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);">This at-bat</span>
           </div>
-          <div style="overflow-x:auto;"><div style="min-width:560px;">
+          <div class="np-scroll"><div style="min-width:560px;">
             <div style="display:grid;grid-template-columns:${dataGrid};gap:.4rem;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:700;padding:0 .3rem .4rem;border-bottom:1px solid var(--border);">
               <span>#</span><span>Type</span><span>Velo</span><span>xVelo</span><span>Zone</span><span>Result</span><span>xResult</span><span style="text-align:right;">Count</span>
             </div>
@@ -834,7 +833,7 @@
       </div>
 
       <div style="font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 .6rem;">Live at-bats · all games</div>
-      <div style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:.4rem .6rem;overflow-x:auto;margin-bottom:1.6rem;">
+      <div class="np-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:.4rem .6rem;margin-bottom:1.6rem;">
         <div style="min-width:540px;">
           <div style="display:grid;grid-template-columns:${abGrid};gap:.5rem;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:700;padding:.5rem .4rem;border-bottom:1px solid var(--border);">
             <span>Game</span><span>Pitcher</span><span>Batter</span><span>Count</span><span>P</span><span>Model call</span>${WAGER ? `<span style="text-align:right;">Edge</span>` : ""}
@@ -855,7 +854,7 @@
       else main = this.dataHtml();
       this.root.innerHTML = `
         ${this.headerHtml()}
-        <main style="width:min(1220px,95vw);margin:0 auto;padding:1.4rem 0 3rem;flex:1;align-self:stretch;">${main}</main>
+        <main class="np-main">${main}</main>
         ${this.footerHtml()}`;
     }
 
