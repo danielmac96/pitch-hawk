@@ -29,3 +29,10 @@ if [ -n "$URL" ]; then
 else
   echo "built dist/ in sample-data mode (SUPABASE_FUNCTIONS_URL unset)"
 fi
+
+# Feature flag: odds/edge/picks surfaces. Off unless explicitly enabled —
+# NEXTPITCH_FEATURE_WAGERING=true restores the wagering positioning.
+WAGERING="${NEXTPITCH_FEATURE_WAGERING-false}"
+sed -i.bak "s#{{FEATURE_WAGERING}}#${WAGERING}#g" "$OUT/config.js"
+rm -f "$OUT/config.js.bak"
+echo "built dist/ with wagering surfaces: $WAGERING"
