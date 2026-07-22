@@ -30,11 +30,11 @@
     String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 
+  // The board is locked to dark mode (product decision) — no light theme, no
+  // toggle. The light CSS tokens and the dk()/light color forks below are kept
+  // dormant so the light path stays trivially revivable if that ever changes.
   function initialDark() {
-    const saved = localStorage.getItem("ph-theme");
-    if (saved === "dark") return true;
-    if (saved === "light") return false;
-    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    return true;
   }
 
   // ── Home data loaders ─────────────────────────────────────────────────
@@ -176,11 +176,6 @@
         case "view": return this.setState({ view: arg });
         case "goHome": return this.setState({ view: "home" });
         case "goLive": return this.setState({ view: "live" });
-        case "theme": {
-          const dark = !this.state.dark;
-          localStorage.setItem("ph-theme", dark ? "dark" : "light");
-          return this.setState({ dark });
-        }
         case "liveGame": {
           const pk = Number(arg);
           const o = Object.assign({}, this.state.liveGames); o[pk] = this.liveGameOn(pk) ? false : true;
@@ -202,7 +197,6 @@
         const on = view === k;
         return `<button data-act="view" data-arg="${k}" class="ph-tab${on ? " ph-tab-on" : ""}">${label}</button>`;
       }).join("");
-      const dark = this.dk();
       const liveCount = liveNowCount();
       const liveText = liveCount
         ? `${liveCount} game${liveCount === 1 ? "" : "s"} live · auto-refreshing`
@@ -219,7 +213,6 @@
             ${esc(liveText)}
           </div>
           <nav class="ph-nav">${tabs}</nav>
-          <button data-act="theme" title="Toggle light / dark" aria-label="Toggle light / dark theme" class="ph-icon-btn">${dark ? "☀" : "☾"}</button>
         </div>
       </header>`;
     }
@@ -433,14 +426,14 @@
             ? `font-family:'IBM Plex Mono',monospace;font-weight:600;color:${this.veloColor(pt.speed)};`
             : `font-family:'IBM Plex Mono',monospace;font-weight:600;color:var(--faint);`;
           return `
-          <div style="display:grid;grid-template-columns:${feedGrid};gap:.35rem;align-items:center;padding:.42rem .25rem;border-bottom:1px solid var(--row-border);font-size:.8rem;">
-            <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(pt.n)}</span>
-            <span style="font-weight:700;color:${this.pitchColor(pt.type)};">${esc(pt.type)}</span>
-            <span style="${veloStyle}">${esc(speedText)}</span>
-            ${this.predVeloHtml(pt.pred, false)}
-            <span style="color:${rm[1]};font-weight:600;">${esc(rm[0])}</span>
-            ${this.predResultHtml(pt.pred, false)}
-            <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);text-align:right;">${esc(pt.balls)}-${esc(pt.strikes)}</span>
+          <div class="ph-table-row">
+            <div class="ph-cell" data-label="#"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(pt.n)}</span></div>
+            <div class="ph-cell" data-label="Type"><span style="font-weight:700;color:${this.pitchColor(pt.type)};">${esc(pt.type)}</span></div>
+            <div class="ph-cell" data-label="Velo"><span style="${veloStyle}">${esc(speedText)}</span></div>
+            <div class="ph-cell" data-label="xVelo">${this.predVeloHtml(pt.pred, false)}</div>
+            <div class="ph-cell" data-label="Result"><span style="color:${rm[1]};font-weight:600;">${esc(rm[0])}</span></div>
+            <div class="ph-cell" data-label="xResult">${this.predResultHtml(pt.pred, false)}</div>
+            <div class="ph-cell ph-cell--end" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(pt.balls)}-${esc(pt.strikes)}</span></div>
           </div>`;
         }).join("");
         // The upcoming pitch's row — pinned and accented, the board's answer
@@ -448,14 +441,14 @@
         // will land, and turns green/red above once the pitch is thrown.
         const abOver = this.abLikelyOver(g.pitches);
         const nextRow = g.nextPred ? `
-          <div style="display:grid;grid-template-columns:${feedGrid};gap:.35rem;align-items:center;padding:.5rem .25rem;border-bottom:1px solid var(--row-border);font-size:.8rem;background:var(--surface-2);box-shadow:inset 3px 0 0 var(--accent);">
-            <span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOver ? 1 : g.pitches.length + 1)}</span>
-            <span style="font-size:.6rem;font-weight:800;letter-spacing:.05em;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:.12rem .28rem;white-space:nowrap;justify-self:start;">NEXT</span>
-            <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span>
-            ${this.predVeloHtml(g.nextPred, true)}
-            <span style="color:var(--text-2);font-weight:600;font-style:italic;">${abOver ? "new batter" : "up next"}</span>
-            ${this.predResultHtml(g.nextPred, true)}
-            <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);text-align:right;">${esc(abOver ? "0-0" : g.count)}</span>
+          <div class="ph-table-row ph-next">
+            <div class="ph-cell" data-label="#"><span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOver ? 1 : g.pitches.length + 1)}</span></div>
+            <div class="ph-cell" data-label="Type"><span style="font-size:.6rem;font-weight:800;letter-spacing:.05em;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:.12rem .28rem;white-space:nowrap;">NEXT</span></div>
+            <div class="ph-cell" data-label="Velo"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span></div>
+            <div class="ph-cell" data-label="xVelo">${this.predVeloHtml(g.nextPred, true)}</div>
+            <div class="ph-cell" data-label="Result"><span style="color:var(--text-2);font-weight:600;font-style:italic;">${abOver ? "new batter" : "up next"}</span></div>
+            <div class="ph-cell" data-label="xResult">${this.predResultHtml(g.nextPred, true)}</div>
+            <div class="ph-cell ph-cell--end" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(abOver ? "0-0" : g.count)}</span></div>
           </div>` : "";
 
         // Next-pitch model read: the model predicts the UPCOMING pitch (result
@@ -487,7 +480,7 @@
         const readPending = abOver && !g.nextPred;
         const nextPitchBlock = `
               <div style="margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border);">
-                <div style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.6rem;">Next pitch · model read <span style="color:var(--accent);">${esc(nextPitchTag)}</span></div>
+                <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.6rem;">Next pitch · model read <span style="color:var(--accent);">${esc(nextPitchTag)}</span></div>
                 ${readPending
                   ? `<div style="font-size:.8rem;color:var(--faint);font-style:italic;">At-bat over — the read on the next batter's first pitch arrives when they step in.</div>`
                   : (presRows || `<div style="font-size:.8rem;color:var(--faint);font-style:italic;">Model read pending…</div>`) + spdLine}
@@ -569,7 +562,7 @@
 
               <div style="display:flex;gap:1.1rem;align-items:flex-start;flex-wrap:wrap;">
                 <div style="flex:none;">
-                  <div style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.5rem;">Pitch locations</div>
+                  <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.5rem;">Pitch locations</div>
                   <div style="position:relative;width:150px;height:158px;">
                     <div style="position:absolute;left:25%;top:23%;width:50%;height:54%;border:1.5px solid var(--border-2);border-radius:3px;background:var(--surface-2);"></div>
                     <div style="position:absolute;left:41.67%;top:23%;width:1px;height:54%;background:var(--border);"></div>
@@ -580,7 +573,7 @@
                   </div>
                 </div>
                 <div style="flex:1;min-width:150px;padding-top:1.25rem;">
-                  <div style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.4rem;">Ballpark</div>
+                  <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.4rem;">Ballpark</div>
                   <div style="font-weight:700;font-size:.92rem;">${esc(g.venue)}</div>
                   <div style="font-size:.82rem;color:var(--text-2);margin-top:.3rem;line-height:1.5;">${esc(g.weather)}</div>
                   ${typesBlock}
@@ -594,16 +587,16 @@
                 <span style="font-weight:800;font-size:1rem;">Pitch feed</span>
                 <span style="font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);">This at-bat</span>
               </div>
-              <div class="ph-scroll"><div style="min-width:460px;">
-                <div style="display:grid;grid-template-columns:${feedGrid};gap:.35rem;font-size:.58rem;text-transform:uppercase;letter-spacing:.03em;color:var(--faint);font-weight:700;padding:0 .25rem .4rem;border-bottom:1px solid var(--border);">
+              <div class="ph-scroll"><div class="ph-table" style="--cols:${feedGrid};--minw:460px;">
+                <div class="ph-table-head ph-microlabel">
                   <span>#</span><span>Type</span><span>Velo</span><span>xVelo</span><span>Result</span><span>xResult</span><span style="text-align:right;">Count</span>
                 </div>
                 ${pitchEmpty && !nextRow ? `<div style="padding:1rem .25rem;color:var(--faint);font-style:italic;font-size:.84rem;">Fresh at-bat — no pitches thrown yet.</div>` : pitchRows + nextRow}
-                <div style="font-size:.66rem;color:var(--faint);padding:.4rem .25rem 0;">xVelo / xResult — the model's call before each pitch · <span style="color:var(--good-strong);font-weight:700;">✓ right</span> / <span style="color:var(--bad);font-weight:700;">✗ wrong</span></div>
+                <div style="font-size:.72rem;color:var(--faint);padding:.5rem .25rem 0;">xVelo / xResult — the model's call before each pitch · <span style="color:var(--good-strong);font-weight:700;">✓ right</span> / <span style="color:var(--bad);font-weight:700;">✗ wrong</span></div>
               </div></div>
               ${nextPitchBlock}
               <div style="margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border);">
-                <div style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.6rem;">At-bat · model predictions</div>
+                <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.6rem;">At-bat · model predictions</div>
                 ${abOutcomes}
                 <div style="display:flex;gap:1.4rem;flex-wrap:wrap;margin-top:.6rem;padding-top:.55rem;border-top:1px solid var(--track);font-size:.8rem;color:var(--text-2);">
                   <div><span style="color:var(--faint);">Total pitches · pre-AB call</span> <b style="${abProjStyle}">${esc(abProj)}</b></div>
@@ -629,7 +622,7 @@
 
       const sourcesRow = WAGER ? `
         <div style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;">
-          <span style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);width:54px;">Sources</span>${sourceChips}
+          <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);width:54px;">Sources</span>${sourceChips}
         </div>` : "";
       const legendRow = WAGER && COPY.edgeLegend ? `
         <div style="display:flex;align-items:center;gap:.45rem;font-size:.72rem;color:var(--muted);flex-wrap:wrap;">
@@ -639,7 +632,7 @@
       const filters = `
       <div style="display:flex;flex-direction:column;gap:.55rem;margin-bottom:1.1rem;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.75rem .85rem;box-shadow:0 1px 2px rgba(15,27,45,.04);">
         <div style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;">
-          <span style="font-size:.64rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);width:54px;">Games</span>
+          <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);width:54px;">Games</span>
           <button data-act="liveAllGames" class="ph-chip" style="${chipStyle(allOn)}">All</button>${gameChips}
         </div>${sourcesRow}${legendRow}
       </div>`;
@@ -673,28 +666,28 @@
       const pitchRows = sel.pitches.map((p) => {
         const [label, tone] = this.resultMeta(p.desc);
         const speedText = p.speed != null ? p.speed.toFixed(1) : "—";
-        return `<div style="display:grid;grid-template-columns:${dataGrid};gap:.4rem;align-items:center;padding:.42rem .3rem;border-bottom:1px solid var(--row-border);font-size:.84rem;">
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(p.n)}</span>
-          <span style="font-weight:600;">${esc(p.type)}</span>
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(speedText)}</span>
-          ${this.predVeloHtml(p.pred, false)}
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(p.zone)}</span>
-          <span style="color:${tone};font-weight:600;">${esc(label)}</span>
-          ${this.predResultHtml(p.pred, false)}
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);text-align:right;">${esc(p.balls)}-${esc(p.strikes)}</span>
+        return `<div class="ph-table-row">
+          <div class="ph-cell" data-label="#"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(p.n)}</span></div>
+          <div class="ph-cell" data-label="Type"><span style="font-weight:600;">${esc(p.type)}</span></div>
+          <div class="ph-cell" data-label="Velo"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(speedText)}</span></div>
+          <div class="ph-cell" data-label="xVelo">${this.predVeloHtml(p.pred, false)}</div>
+          <div class="ph-cell" data-label="Zone"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(p.zone)}</span></div>
+          <div class="ph-cell" data-label="Result"><span style="color:${tone};font-weight:600;">${esc(label)}</span></div>
+          <div class="ph-cell" data-label="xResult">${this.predResultHtml(p.pred, false)}</div>
+          <div class="ph-cell ph-cell--end" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(p.balls)}-${esc(p.strikes)}</span></div>
         </div>`;
       }).join("");
       const abOverSel = this.abLikelyOver(sel.pitches);
       const nextRow = sel.nextPred ? `
-        <div style="display:grid;grid-template-columns:${dataGrid};gap:.4rem;align-items:center;padding:.5rem .3rem;border-bottom:1px solid var(--row-border);font-size:.84rem;background:var(--surface-2);box-shadow:inset 3px 0 0 var(--accent);">
-          <span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOverSel ? 1 : sel.pitches.length + 1)}</span>
-          <span style="font-size:.62rem;font-weight:800;letter-spacing:.05em;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:.12rem .28rem;white-space:nowrap;justify-self:start;">NEXT</span>
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span>
-          ${this.predVeloHtml(sel.nextPred, true)}
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span>
-          <span style="color:var(--text-2);font-weight:600;font-style:italic;">${abOverSel ? "new batter" : "up next"}</span>
-          ${this.predResultHtml(sel.nextPred, true)}
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);text-align:right;">${esc(abOverSel ? "0-0" : sel.count)}</span>
+        <div class="ph-table-row ph-next">
+          <div class="ph-cell" data-label="#"><span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOverSel ? 1 : sel.pitches.length + 1)}</span></div>
+          <div class="ph-cell" data-label="Type"><span style="font-size:.62rem;font-weight:800;letter-spacing:.05em;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:.12rem .28rem;white-space:nowrap;">NEXT</span></div>
+          <div class="ph-cell" data-label="Velo"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span></div>
+          <div class="ph-cell" data-label="xVelo">${this.predVeloHtml(sel.nextPred, true)}</div>
+          <div class="ph-cell" data-label="Zone"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span></div>
+          <div class="ph-cell" data-label="Result"><span style="color:var(--text-2);font-weight:600;font-style:italic;">${abOverSel ? "new batter" : "up next"}</span></div>
+          <div class="ph-cell" data-label="xResult">${this.predResultHtml(sel.nextPred, true)}</div>
+          <div class="ph-cell ph-cell--end" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(abOverSel ? "0-0" : sel.count)}</span></div>
         </div>` : "";
 
       const abr = sel.m.ab_result, abp = sel.m.ab_pitches_ou;
@@ -716,18 +709,16 @@
       const liveAtBats = PH.games.map((g) => {
         const m = g.m.ab_result;
         const edgeCell = WAGER
-          ? `<span style="text-align:right;"><span style="${this.chipSm(m.edge)}">${esc(this.fmtEdge(m.edge))}</span></span>`
+          ? `<div class="ph-cell ph-cell--end" data-label="Edge"><span style="${this.chipSm(m.edge)}">${esc(this.fmtEdge(m.edge))}</span></div>`
           : "";
-        return `<div style="opacity:${g.stale ? 0.6 : 1};">
-          <div style="display:grid;grid-template-columns:${abGrid};gap:.5rem;align-items:center;padding:.5rem .4rem;border-bottom:1px solid var(--row-border);font-size:.82rem;">
-            <span style="font-weight:700;">${esc(g.label)}</span>
-            <span style="color:var(--text-2);">${esc(g.pitcher.name)}</span>
-            <span style="color:var(--text-2);">${esc(g.batter.name)}</span>
-            <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(g.count)}</span>
-            <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(g.pitchCountPa)}</span>
-            <span style="font-weight:600;">${esc(PH.OUTCOME_LABEL[m.recommendation] || m.recommendation || "—")} <span style="color:var(--faint);font-weight:500;font-family:'IBM Plex Mono',monospace;font-size:.74rem;">${esc(this.pct(m.modelProb))}</span></span>
+        return `<div class="ph-table-row" style="opacity:${g.stale ? 0.6 : 1};">
+            <div class="ph-cell" data-label="Game"><span style="font-weight:700;">${esc(g.label)}</span></div>
+            <div class="ph-cell" data-label="Pitcher"><span style="color:var(--text-2);">${esc(g.pitcher.name)}</span></div>
+            <div class="ph-cell" data-label="Batter"><span style="color:var(--text-2);">${esc(g.batter.name)}</span></div>
+            <div class="ph-cell" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(g.count)}</span></div>
+            <div class="ph-cell" data-label="P"><span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(g.pitchCountPa)}</span></div>
+            <div class="ph-cell" data-label="Model call"><span style="font-weight:600;">${esc(PH.OUTCOME_LABEL[m.recommendation] || m.recommendation || "—")} <span style="color:var(--faint);font-weight:500;font-family:'IBM Plex Mono',monospace;font-size:.74rem;">${esc(this.pct(m.modelProb))}</span></span></div>
             ${edgeCell}
-          </div>
         </div>`;
       }).join("");
 
@@ -737,23 +728,23 @@
           : r.result === "loss" ? (d ? ["#ff7b6b", "#3a1c1a"] : ["#c0392f", "#fbece9"])
             : (d ? ["#e0a83a", "#33280d"] : ["#b07d12", "#fbf2dc"]);
         const style = `color:${tone[0]};background:${tone[1]};font-weight:700;font-size:.68rem;padding:.16rem .45rem;border-radius:5px;letter-spacing:.03em;`;
-        return `<div style="display:grid;grid-template-columns:.6fr 1fr 1.2fr 1.6fr .5fr .7fr auto;gap:.5rem;align-items:center;padding:.5rem .4rem;border-bottom:1px solid var(--row-border);font-size:.82rem;">
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(r.date.slice(5))}</span>
-          <span style="font-weight:600;">${esc(r.matchup)}</span>
-          <span style="color:var(--text-2);">${esc(r.batter)}</span>
-          <span style="color:var(--text-2);">${esc(r.pick)}</span>
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(r.pitches)}</span>
-          <span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(this.am(r.price))}</span>
-          <span style="text-align:right;"><span style="${style}">${esc(r.result.toUpperCase())}</span></span>
+        return `<div class="ph-table-row">
+          <div class="ph-cell" data-label="Date"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(r.date.slice(5))}</span></div>
+          <div class="ph-cell" data-label="Game"><span style="font-weight:600;">${esc(r.matchup)}</span></div>
+          <div class="ph-cell" data-label="Batter"><span style="color:var(--text-2);">${esc(r.batter)}</span></div>
+          <div class="ph-cell" data-label="Pick"><span style="color:var(--text-2);">${esc(r.pick)}</span></div>
+          <div class="ph-cell" data-label="P"><span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(r.pitches)}</span></div>
+          <div class="ph-cell" data-label="Price"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(this.am(r.price))}</span></div>
+          <div class="ph-cell ph-cell--end" data-label="Result"><span style="${style}">${esc(r.result.toUpperCase())}</span></div>
         </div>`;
       }).join("");
 
       // settled-picks proof points return with the graded record (wagering only)
       const recentBlock = WAGER && PH.RECENT.length ? `
-      <div style="font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 .6rem;">Recently settled at-bats</div>
+      <div class="ph-microlabel" style="margin:0 0 .6rem;">Recently settled at-bats</div>
       <div class="ph-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:.4rem .6rem;">
-        <div style="min-width:560px;">
-          <div style="display:grid;grid-template-columns:.6fr 1fr 1.2fr 1.6fr .5fr .7fr auto;gap:.5rem;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:700;padding:.5rem .4rem;border-bottom:1px solid var(--border);">
+        <div class="ph-table" style="--cols:.6fr 1fr 1.2fr 1.6fr .5fr .7fr auto;--minw:560px;">
+          <div class="ph-table-head ph-microlabel" style="padding:.5rem .4rem;">
             <span>Date</span><span>Game</span><span>Batter</span><span>Pick</span><span>P</span><span>Price</span><span style="text-align:right;">Result</span>
           </div>
           ${recentRows}
@@ -817,12 +808,12 @@
             <div style="font-weight:800;font-size:1rem;">${esc(sel.label)}</div>
             <span style="font-size:.66rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);">This at-bat</span>
           </div>
-          <div class="ph-scroll"><div style="min-width:560px;">
-            <div style="display:grid;grid-template-columns:${dataGrid};gap:.4rem;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:700;padding:0 .3rem .4rem;border-bottom:1px solid var(--border);">
+          <div class="ph-scroll"><div class="ph-table" style="--cols:${dataGrid};--minw:560px;">
+            <div class="ph-table-head ph-microlabel">
               <span>#</span><span>Type</span><span>Velo</span><span>xVelo</span><span>Zone</span><span>Result</span><span>xResult</span><span style="text-align:right;">Count</span>
             </div>
             ${pitchEmpty && !nextRow ? `<div style="padding:1.1rem .3rem;color:var(--faint);font-style:italic;font-size:.84rem;">Fresh at-bat — no pitches thrown yet.</div>` : pitchRows + nextRow}
-            <div style="font-size:.66rem;color:var(--faint);padding:.4rem .3rem 0;">xVelo / xResult — the model's call before each pitch · <span style="color:var(--good-strong);font-weight:700;">✓ right</span> / <span style="color:var(--bad);font-weight:700;">✗ wrong</span></div>
+            <div style="font-size:.72rem;color:var(--faint);padding:.5rem .3rem 0;">xVelo / xResult — the model's call before each pitch · <span style="color:var(--good-strong);font-weight:700;">✓ right</span> / <span style="color:var(--bad);font-weight:700;">✗ wrong</span></div>
           </div></div>
           <div style="display:flex;gap:1.4rem;flex-wrap:wrap;margin-top:.9rem;padding-top:.7rem;border-top:1px solid var(--track);font-size:.78rem;color:var(--text-2);">
             <div><span style="color:var(--faint);">Pitches (PA)</span> <b style="font-weight:700;">${esc(sel.pitchCountPa)}</b></div>
@@ -832,10 +823,10 @@
         </div>
       </div>
 
-      <div style="font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 .6rem;">Live at-bats · all games</div>
+      <div class="ph-microlabel" style="color:var(--muted);margin:0 0 .6rem;">Live at-bats · all games</div>
       <div class="ph-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:.4rem .6rem;margin-bottom:1.6rem;">
-        <div style="min-width:540px;">
-          <div style="display:grid;grid-template-columns:${abGrid};gap:.5rem;font-size:.62rem;text-transform:uppercase;letter-spacing:.04em;color:var(--faint);font-weight:700;padding:.5rem .4rem;border-bottom:1px solid var(--border);">
+        <div class="ph-table" style="--cols:${abGrid};--minw:540px;">
+          <div class="ph-table-head ph-microlabel" style="padding:.5rem .4rem;">
             <span>Game</span><span>Pitcher</span><span>Batter</span><span>Count</span><span>P</span><span>Model call</span>${WAGER ? `<span style="text-align:right;">Edge</span>` : ""}
           </div>
           ${liveAtBats}

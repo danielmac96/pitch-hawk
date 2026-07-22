@@ -158,6 +158,108 @@ body { margin: 0; }
   -webkit-overflow-scrolling: touch;
 }
 
+/* ============================================================
+   Readability — the inline template uses very small font sizes
+   (~.58–.66rem ≈ 9–10.5px) for section labels. That's below the
+   mobile readability floor, so raise it on phones and return to
+   the compact desktop size at md+. Encodes the label's full
+   look so callers just swap the inline styles for this class.
+   ============================================================ */
+.ph-microlabel {
+  font-size: .72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--faint);
+}
+
+/* ============================================================
+   Responsive data tables. Desktop keeps the original CSS-grid
+   table — its columns come from the inline `--cols` custom
+   property, its horizontal-scroll min-width from `--minw`. On
+   phones every row reflows into a stacked, labeled card so all
+   columns stay visible with no sideways scroll; the header row
+   is hidden because each cell now carries its own label.
+
+   Markup contract (built in pitchhawk.js):
+     .ph-table       inner width holder inside a .ph-scroll
+     .ph-table-head  the column-label row  (hidden on mobile)
+     .ph-table-row   one data row          (grid md+, card mobile)
+     .ph-cell        one value; data-label="…" names it on mobile
+     .ph-cell--end   right-aligned value column (e.g. Count)
+     .ph-next        the pinned "next pitch" row accent
+   ============================================================ */
+
+/* — mobile-first: stacked labeled cards — */
+.ph-table { min-width: 0; }
+.ph-table-head { display: none; }
+.ph-table-row {
+  display: block;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  padding: .5rem .7rem;
+  margin-bottom: .5rem;
+  font-size: .86rem;
+}
+.ph-table-row.ph-next { box-shadow: inset 3px 0 0 var(--accent); }
+.ph-cell {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: .75rem;
+  padding: .2rem 0;
+  min-width: 0;
+}
+.ph-cell + .ph-cell { border-top: 1px solid var(--row-border); }
+.ph-cell::before {
+  content: attr(data-label);
+  flex: none;
+  color: var(--faint);
+  font-weight: 700;
+  font-size: .7rem;
+  text-transform: uppercase;
+  letter-spacing: .03em;
+}
+
+/* — md+: original horizontal grid table — */
+@media (min-width: 768px) {
+  .ph-microlabel { font-size: .64rem; }
+  .ph-table { min-width: var(--minw, 0); }
+  .ph-table-head {
+    display: grid;
+    grid-template-columns: var(--cols);
+    gap: .4rem;
+    padding: 0 .3rem .4rem;
+    border-bottom: 1px solid var(--border);
+  }
+  .ph-table-row {
+    display: grid;
+    grid-template-columns: var(--cols);
+    gap: .35rem;
+    align-items: center;
+    border: 0;
+    border-bottom: 1px solid var(--row-border);
+    border-radius: 0;
+    background: transparent;
+    padding: .42rem .25rem;
+    margin-bottom: 0;
+    font-size: .82rem;
+  }
+  .ph-table-row.ph-next { background: var(--surface-2); padding: .5rem .25rem; }
+  .ph-cell {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0;
+    padding: 0;
+    border: 0;
+  }
+  .ph-cell + .ph-cell { border-top: 0; }
+  .ph-cell--end { justify-content: flex-end; }
+  .ph-cell::before { display: none; }
+}
+
 .ph-footer {
   background: #0f1b2d;
   color: #c4d1e0;
