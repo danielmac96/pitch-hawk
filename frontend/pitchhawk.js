@@ -79,6 +79,10 @@
         dark: initialDark(), t: 0,
       };
       this._pollIv = null;
+      // Client-side plate-appearance history (see trackAtBats): /live only
+      // carries the current PA, so finished at-bats are archived here.
+      this.paHist = {};
+      this.paWatch = {};
       this.root.addEventListener("click", (e) => this._onClick(e));
     }
     setState(patch) { Object.assign(this.state, patch); this.render(); }
@@ -134,25 +138,65 @@
       const r = Math.round(245 + (220 - 245) * t), g = Math.round(158 + (38 - 158) * t), b = Math.round(11 + (38 - 11) * t);
       return `rgb(${r},${g},${b})`;
     }
-    // Model pre-pitch call cells: graded green/red once the pitch has landed,
-    // accent while the call is still pending (the upcoming pitch), faint when
-    // the model had no read at that position.
-    predColor(ok, pending) {
-      if (ok === true) return "var(--good-strong)";
-      if (ok === false) return "var(--bad)";
-      return pending ? "var(--accent)" : "var(--faint)";
+    // ── prediction grading → cell shading ────────────────────────────────
+    // The verdict rides on the cell background instead of a ✓/✗ mark, so a
+    // dense log reads at a glance and spends no width on notation.
+    //   velo  · |called − actual| ≤1.5 green · ≤3 amber · beyond red
+    //   class · right green · wrong red · ungraded (pending/unknowable) neutral
+    veloBand(delta) {
+      if (delta == null || !isFinite(delta)) return null;
+      const a = Math.abs(delta);
+      return a <= 1.5 ? "good" : a <= 3 ? "amber" : "bad";
     }
-    predVeloHtml(pred, pending) {
-      if (!pred || pred.speed == null) return `<span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span>`;
-      const mark = pred.speedOk === true ? " ✓" : pred.speedOk === false ? " ✗" : "";
-      return `<span style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:${this.predColor(pred.speedOk, pending)};">${esc(pred.speed.toFixed(1))}${mark}</span>`;
+    countBand(delta) {
+      if (delta == null || !isFinite(delta)) return null;
+      const a = Math.abs(delta);
+      return a <= 1 ? "good" : a <= 2 ? "amber" : "bad";
     }
-    predResultHtml(pred, pending) {
-      if (!pred || !pred.resultCat) return `<span style="color:var(--faint);">—</span>`;
-      const label = PH.OUTCOME_LABEL[pred.resultCat] || pred.resultCat;
-      const prob = pred.resultProb != null ? ` ${Math.round(pred.resultProb * 100)}%` : "";
-      const mark = pred.resultOk === true ? " ✓" : pred.resultOk === false ? " ✗" : "";
-      return `<span style="font-weight:600;color:${this.predColor(pred.resultOk, pending)};">${esc(label)}<span style="font-family:'IBM Plex Mono',monospace;font-size:.92em;">${esc(prob)}</span>${mark}</span>`;
+    gradeStyle(band) {
+      const map = {
+        good: ["var(--good-bg)", "var(--good-strong)"],
+        amber: ["var(--amber-bg)", "var(--amber)"],
+        bad: ["var(--bad-bg)", "var(--bad)"],
+      };
+      const t = map[band];
+      return `background:${t ? t[0] : "transparent"};color:${t ? t[1] : "var(--text-2)"};`;
+    }
+    // A shaded cell: the actual value, then the model's pre-pitch call.
+    gradedCell(band, main, sub) {
+      return `<span style="display:inline-flex;align-items:baseline;gap:.4rem;min-width:0;padding:.16rem .42rem;border-radius:7px;${this.gradeStyle(band)}"><b style="font-weight:700;white-space:nowrap;">${main}</b>${sub ? `<span style="font-size:.74rem;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${sub}</span>` : ""}</span>`;
+    }
+    pendingCell(main, sub) {
+      return `<span style="display:inline-flex;align-items:baseline;gap:.4rem;padding:.16rem .42rem;border-radius:7px;background:var(--good-bg);"><b style="font-weight:700;color:var(--accent);white-space:nowrap;">${main}</b>${sub ? `<span style="font-family:'IBM Plex Mono',monospace;font-size:.74rem;color:var(--muted);">${sub}</span>` : ""}</span>`;
+    }
+    chipCell(band, text) {
+      return `<span style="font-family:'IBM Plex Mono',monospace;font-weight:600;font-size:.78rem;padding:.16rem .42rem;border-radius:7px;${this.gradeStyle(band)}">${esc(text)}</span>`;
+    }
+    veloCellHtml(actual, pred, pending) {
+      const called = pred && pred.speed != null ? pred.speed : null;
+      if (pending) {
+        return called == null ? `<span style="color:var(--faint);">—</span>`
+          : this.pendingCell(`<span style="font-family:'IBM Plex Mono',monospace;">${esc(called.toFixed(1))}</span>`, "called");
+      }
+      if (actual == null) return `<span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span>`;
+      const d = called == null ? null : called - actual;
+      const sub = d == null ? ""
+        : `<span style="font-family:'IBM Plex Mono',monospace;">${esc(called.toFixed(1))} · ${d >= 0 ? "+" : "−"}${esc(Math.abs(d).toFixed(1))}</span>`;
+      return this.gradedCell(this.veloBand(d), `<span style="font-family:'IBM Plex Mono',monospace;">${esc(actual.toFixed(1))}</span>`, sub);
+    }
+    resultCellHtml(pitch, pred, pending) {
+      const cat = pred && pred.resultCat ? pred.resultCat : null;
+      const label = cat ? (PH.OUTCOME_LABEL[cat] || cat) : null;
+      const prob = pred && pred.resultProb != null ? `${Math.round(pred.resultProb * 100)}%` : "";
+      if (pending) {
+        return !label ? `<span style="color:var(--faint);">—</span>` : this.pendingCell(esc(label), esc(prob));
+      }
+      if (!pitch) return `<span style="color:var(--faint);">—</span>`;
+      const rm = this.resultMeta(pitch.desc);
+      const band = pred && pred.resultOk === true ? "good" : pred && pred.resultOk === false ? "bad" : null;
+      const main = band ? esc(rm[0]) : `<span style="color:${rm[1]};">${esc(rm[0])}</span>`;
+      const sub = label ? `${esc(label)} <span style="font-family:'IBM Plex Mono',monospace;">${esc(prob)}</span>` : "";
+      return this.gradedCell(band, main, sub);
     }
     // True when the last pitch ended the at-bat (ball in play, strike three,
     // ball four, HBP) — the pending model call is then for the NEXT batter's
@@ -162,6 +206,93 @@
       if (!lp) return false;
       return lp.cat === "in_play" || lp.desc === "hit_by_pitch" ||
         (lp.balls || 0) >= 4 || (lp.strikes || 0) >= 3;
+    }
+    // ── at-bat history (accumulated client-side) ─────────────────────────
+    // The backend exposes only the CURRENT plate appearance, so the "Earlier
+    // at-bats" strip is built by watching the live PA each poll and archiving a
+    // graded one-line summary when the batter changes. Rows therefore fill in
+    // while the tab is open (and reset on reload) until a per-game PA history
+    // endpoint exists — see notes in github.md.
+    trackAtBats(games) {
+      (games || []).forEach((g) => {
+        const w = this.paWatch[g.gamePk];
+        const sig = `${g.batter.name}|${g.inning}${g.half}`;
+        if (w && w.sig !== sig && w.pitches.length) {
+          const hist = this.paHist[g.gamePk] || (this.paHist[g.gamePk] = []);
+          hist.unshift(this.summarizePa(w));
+          if (hist.length > 8) hist.pop();
+        }
+        if (!w || w.sig !== sig) {
+          const abp = g.m.ab_pitches_ou || {}, abr = g.m.ab_result || {};
+          this.paWatch[g.gamePk] = {
+            sig, batter: g.batter.name, pitches: g.pitches.slice(),
+            projPitches: abp.predictedValue != null ? +abp.predictedValue : null,
+            call: abr.recommendation || null,
+            callProb: abr.modelProb != null ? abr.modelProb : null,
+          };
+        } else if (g.pitches.length >= w.pitches.length) {
+          w.pitches = g.pitches.slice();
+        }
+      });
+    }
+    // Only what a finished PA's pitches can honestly tell us: a ball in play is
+    // resolvable to hit vs out by the settle job, not here, so it stays ungraded.
+    summarizePa(w) {
+      const ps = w.pitches;
+      const last = ps[ps.length - 1] || {};
+      const outcome = last.desc === "hit_by_pitch" ? null
+        : last.cat === "in_play" ? "in_play"
+          : last.cat === "ball" && (last.balls || 0) >= 3 ? "walk"
+            : last.cat === "strike_foul" && last.desc !== "foul" && (last.strikes || 0) >= 2 ? "strikeout"
+              : null;
+      const graded = ps.filter((p) => p.pred && p.pred.resultOk != null);
+      const right = graded.filter((p) => p.pred.resultOk).length;
+      const errs = ps.filter((p) => p.pred && p.pred.speed != null && p.speed != null)
+        .map((p) => p.pred.speed - p.speed);
+      const avgErr = errs.length ? errs.reduce((a, b) => a + b, 0) / errs.length : null;
+      const ratio = graded.length ? right / graded.length : null;
+      return {
+        batter: w.batter, pitches: ps.length, projPitches: w.projPitches,
+        pitchBand: w.projPitches == null ? null : this.countBand(w.projPitches - ps.length),
+        outcomeLabel: outcome ? (PH.OUTCOME_LABEL[outcome] || outcome) : "Unresolved",
+        call: w.call, callProb: w.callProb,
+        callOk: outcome == null || outcome === "in_play" ? null : w.call === outcome,
+        avgErr, veloBand: this.veloBand(avgErr),
+        right, gradedN: graded.length,
+        pickBand: ratio == null ? null : ratio >= 0.6 ? "good" : ratio >= 0.4 ? "amber" : "bad",
+      };
+    }
+    atBatHistoryHtml(g) {
+      const hist = this.paHist[g.gamePk] || [];
+      if (!hist.length) return "";
+      const rows = hist.map((h) => {
+        const callSub = h.call
+          ? `${esc(PH.OUTCOME_LABEL[h.call] || h.call)}${h.callProb != null ? ` <span style="font-family:'IBM Plex Mono',monospace;">${Math.round(h.callProb * 100)}%</span>` : ""}`
+          : "";
+        const band = h.callOk === true ? "good" : h.callOk === false ? "bad" : null;
+        const pc = `${h.projPitches != null ? h.projPitches.toFixed(1) : "—"}/${h.pitches}`;
+        const ve = h.avgErr == null ? "—" : (h.avgErr >= 0 ? "+" : "−") + Math.abs(h.avgErr).toFixed(1);
+        return `<div class="ph-table-row">
+            <div class="ph-cell" data-label="Batter"><span style="font-weight:700;">${esc(h.batter)}</span></div>
+            <div class="ph-cell" data-label="Result">${this.gradedCell(band, esc(h.outcomeLabel), callSub)}</div>
+            <div class="ph-cell" data-label="P pred/act">${this.chipCell(h.pitchBand, pc)}</div>
+            <div class="ph-cell" data-label="Avg velo err">${this.chipCell(h.veloBand, ve)}</div>
+            <div class="ph-cell ph-cell--end" data-label="Picks">${this.chipCell(h.pickBand, h.gradedN ? `${h.right}/${h.gradedN}` : "—")}</div>
+          </div>`;
+      }).join("");
+      return `
+              <div style="margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border);">
+                <div style="display:flex;align-items:baseline;justify-content:space-between;gap:.6rem;margin-bottom:.5rem;">
+                  <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);">Earlier at-bats</span>
+                  <span style="font-size:.72rem;color:var(--faint);">seen since this tab opened</span>
+                </div>
+                <div class="ph-scroll"><div class="ph-table" style="--cols:1fr 1.7fr 72px 64px 54px;--minw:560px;">
+                  <div class="ph-table-head ph-microlabel">
+                    <span>Batter</span><span>Result · called</span><span>P pred/act</span><span>Avg velo err</span><span style="text-align:right;">Picks</span>
+                  </div>
+                  ${rows}
+                </div></div>
+              </div>`;
     }
     liveGameOn(pk) { return this.state.liveGames[pk] !== false; }
     selLiveSourceSet() { const s = this.state.liveSources; return new Set(Object.keys(s).filter((k) => s[k])); }
@@ -417,38 +548,25 @@
         }).join("");
         const typeLegend = typesSeen.map((t) => `<span style="display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--text-2);"><span style="width:9px;height:9px;border-radius:50%;background:${this.pitchColor(t)};flex:none;"></span>${esc(t)}</span>`).join("");
 
-        const feedGrid = "28px 44px 48px 56px minmax(80px,1fr) minmax(104px,1.15fr) 42px";
+        const feedGrid = "52px 46px minmax(132px,1fr) minmax(180px,1.35fr)";
         const pitchEmpty = g.pitches.length === 0;
-        const pitchRows = g.pitches.map((pt) => {
-          const rm = this.resultMeta(pt.desc);
-          const speedText = pt.speed != null ? pt.speed.toFixed(1) : "—";
-          const veloStyle = pt.speed != null
-            ? `font-family:'IBM Plex Mono',monospace;font-weight:600;color:${this.veloColor(pt.speed)};`
-            : `font-family:'IBM Plex Mono',monospace;font-weight:600;color:var(--faint);`;
-          return `
+        const pitchRows = g.pitches.map((pt) => `
           <div class="ph-table-row">
-            <div class="ph-cell" data-label="#"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(pt.n)}</span></div>
+            <div class="ph-cell" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(pt.balls)}-${esc(pt.strikes)}</span></div>
             <div class="ph-cell" data-label="Type"><span style="font-weight:700;color:${this.pitchColor(pt.type)};">${esc(pt.type)}</span></div>
-            <div class="ph-cell" data-label="Velo"><span style="${veloStyle}">${esc(speedText)}</span></div>
-            <div class="ph-cell" data-label="xVelo">${this.predVeloHtml(pt.pred, false)}</div>
-            <div class="ph-cell" data-label="Result"><span style="color:${rm[1]};font-weight:600;">${esc(rm[0])}</span></div>
-            <div class="ph-cell" data-label="xResult">${this.predResultHtml(pt.pred, false)}</div>
-            <div class="ph-cell ph-cell--end" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(pt.balls)}-${esc(pt.strikes)}</span></div>
-          </div>`;
-        }).join("");
+            <div class="ph-cell" data-label="Velo">${this.veloCellHtml(pt.speed, pt.pred, false)}</div>
+            <div class="ph-cell" data-label="Result">${this.resultCellHtml(pt, pt.pred, false)}</div>
+          </div>`).join("");
         // The upcoming pitch's row — pinned and accented, the board's answer
         // to "what happens next": the model's call sits where the pitch data
         // will land, and turns green/red above once the pitch is thrown.
         const abOver = this.abLikelyOver(g.pitches);
         const nextRow = g.nextPred ? `
           <div class="ph-table-row ph-next">
-            <div class="ph-cell" data-label="#"><span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOver ? 1 : g.pitches.length + 1)}</span></div>
+            <div class="ph-cell" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOver ? "0-0" : g.count)}</span></div>
             <div class="ph-cell" data-label="Type"><span style="font-size:.6rem;font-weight:800;letter-spacing:.05em;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:.12rem .28rem;white-space:nowrap;">NEXT</span></div>
-            <div class="ph-cell" data-label="Velo"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span></div>
-            <div class="ph-cell" data-label="xVelo">${this.predVeloHtml(g.nextPred, true)}</div>
-            <div class="ph-cell" data-label="Result"><span style="color:var(--text-2);font-weight:600;font-style:italic;">${abOver ? "new batter" : "up next"}</span></div>
-            <div class="ph-cell" data-label="xResult">${this.predResultHtml(g.nextPred, true)}</div>
-            <div class="ph-cell ph-cell--end" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(abOver ? "0-0" : g.count)}</span></div>
+            <div class="ph-cell" data-label="Velo">${this.veloCellHtml(null, g.nextPred, true)}</div>
+            <div class="ph-cell" data-label="Result">${this.resultCellHtml(null, g.nextPred, true)}</div>
           </div>` : "";
 
         // Next-pitch model read: the model predicts the UPCOMING pitch (result
@@ -478,13 +596,6 @@
         // latest model numbers still describe the FINISHED at-bat's next pitch
         // (which will never come) — say so instead of showing them.
         const readPending = abOver && !g.nextPred;
-        const nextPitchBlock = `
-              <div style="margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border);">
-                <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.6rem;">Next pitch · model read <span style="color:var(--accent);">${esc(nextPitchTag)}</span></div>
-                ${readPending
-                  ? `<div style="font-size:.8rem;color:var(--faint);font-style:italic;">At-bat over — the read on the next batter's first pitch arrives when they step in.</div>`
-                  : (presRows || `<div style="font-size:.8rem;color:var(--faint);font-style:italic;">Model read pending…</div>`) + spdLine}
-              </div>`;
 
         const abr = g.m.ab_result, abp = g.m.ab_pitches_ou;
         const order = ["out", "hit", "strikeout", "walk"];
@@ -513,6 +624,31 @@
         const abProjStyle = hot(abProjBest)
           ? `font-weight:700;padding:.06rem .4rem;border-radius:6px;background:var(--good-bg);color:var(--good-strong);`
           : `font-weight:700;color:var(--text-2);`;
+        const abCallLabel = PH.OUTCOME_LABEL[abr.recommendation] || abr.recommendation || "—";
+
+        // One highlighted panel carries every live prediction the app is making:
+        // the next pitch on top, the at-bat outcome underneath.
+        const predictionCard = `
+              <div style="margin-bottom:1rem;border:1px solid var(--accent);border-radius:12px;background:var(--good-bg);padding:.85rem .95rem;">
+                <div style="display:flex;align-items:center;gap:.45rem;margin-bottom:.6rem;">
+                  <span style="width:7px;height:7px;border-radius:50%;background:var(--good-strong);animation:ph-pulse 1.8s ease-in-out infinite;"></span>
+                  <span style="font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--good-strong);">Next pitch · ${esc(nextPitchTag)}</span>
+                </div>
+                ${readPending
+                  ? `<div style="font-size:.8rem;color:var(--good-sub);font-style:italic;">At-bat over — the read on the next batter's first pitch arrives when they step in.</div>`
+                  : (presRows || `<div style="font-size:.8rem;color:var(--good-sub);font-style:italic;">Model read pending…</div>`) + spdLine}
+                <div style="margin-top:.85rem;padding-top:.7rem;border-top:1px solid var(--good-border);">
+                  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:.6rem;margin-bottom:.45rem;">
+                    <span style="font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--good-sub);">At-bat outcome</span>
+                    <span style="font-weight:800;font-size:.94rem;">${esc(abCallLabel)} <span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--good-strong);">${esc(this.pct(abr.modelProb))}</span></span>
+                  </div>
+                  ${abOutcomes}
+                  <div style="display:flex;gap:1.3rem;flex-wrap:wrap;margin-top:.6rem;font-size:.8rem;color:var(--text-2);">
+                    <div><span style="color:var(--good-sub);">Total pitches · pre-AB call</span> <b style="${abProjStyle}">${esc(abProj)}</b></div>
+                    <div><span style="color:var(--good-sub);">Pitches so far (PA)</span> <b style="font-weight:700;">${esc(g.pitchCountPa)}</b></div>
+                  </div>
+                </div>
+              </div>`;
 
         const cardStyle = `background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:1.15rem 1.25rem;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);opacity:${g.stale ? 0.72 : 1};`;
         const pausedTag = g.stale ? `<span style="font-size:.6rem;font-weight:700;color:var(--amber);background:var(--amber-bg);padding:.14rem .44rem;border-radius:5px;">PAUSED</span>` : "";
@@ -583,26 +719,19 @@
 
             <!-- RIGHT: pitch feed + model read -->
             <div style="display:flex;flex-direction:column;">
+              ${predictionCard}
               <div style="display:flex;align-items:center;justify-content:space-between;gap:.6rem;flex-wrap:wrap;margin-bottom:.6rem;">
                 <span style="font-weight:800;font-size:1rem;">Pitch feed</span>
                 <span style="font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);">This at-bat</span>
               </div>
-              <div class="ph-scroll"><div class="ph-table" style="--cols:${feedGrid};--minw:460px;">
+              <div class="ph-scroll"><div class="ph-table" style="--cols:${feedGrid};--minw:520px;">
                 <div class="ph-table-head ph-microlabel">
-                  <span>#</span><span>Type</span><span>Velo</span><span>xVelo</span><span>Result</span><span>xResult</span><span style="text-align:right;">Count</span>
+                  <span>Count</span><span>Type</span><span>Velo · called</span><span>Result · called</span>
                 </div>
                 ${pitchEmpty && !nextRow ? `<div style="padding:1rem .25rem;color:var(--faint);font-style:italic;font-size:.84rem;">Fresh at-bat — no pitches thrown yet.</div>` : pitchRows + nextRow}
-                <div style="font-size:.72rem;color:var(--faint);padding:.5rem .25rem 0;">xVelo / xResult — the model's call before each pitch · <span style="color:var(--good-strong);font-weight:700;">✓ right</span> / <span style="color:var(--bad);font-weight:700;">✗ wrong</span></div>
               </div></div>
-              ${nextPitchBlock}
-              <div style="margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border);">
-                <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.6rem;">At-bat · model predictions</div>
-                ${abOutcomes}
-                <div style="display:flex;gap:1.4rem;flex-wrap:wrap;margin-top:.6rem;padding-top:.55rem;border-top:1px solid var(--track);font-size:.8rem;color:var(--text-2);">
-                  <div><span style="color:var(--faint);">Total pitches · pre-AB call</span> <b style="${abProjStyle}">${esc(abProj)}</b></div>
-                  <div><span style="color:var(--faint);">Pitches so far (PA)</span> <b style="font-weight:700;">${esc(g.pitchCountPa)}</b></div>
-                </div>
-              </div>
+              <div style="font-size:.72rem;color:var(--faint);padding:.5rem .25rem 0;">Each cell pairs the actual pitch with the model's call before it — <span style="color:var(--good-strong);font-weight:700;">green</span> within 1.5 mph, <span style="color:var(--amber);font-weight:700;">amber</span> within 3, <span style="color:var(--bad);font-weight:700;">red</span> beyond.</div>
+              ${this.atBatHistoryHtml(g)}
             </div>
 
           </div>
@@ -654,40 +783,50 @@
     dataHtml() {
       if (!PH.games.length) return `<div style="padding:3rem 0;text-align:center;color:var(--faint);">No live games right now.</div>`;
       const sel = PH.games.find((g) => g.gamePk === this.state.feedGame) || PH.games[0];
+      // Live game panels (same selective view as the Live Board): score, inning,
+      // batter + count, and the model's quick next-pitch read.
       const gameSel = PH.games.map((g) => {
         const on = g.gamePk === sel.gamePk;
-        const style = `display:flex;align-items:center;gap:.4rem;border:1px solid ${on ? "var(--pill-active-bg)" : "var(--border-2)"};background:${on ? "var(--pill-active-bg)" : "var(--surface)"};color:${on ? "var(--pill-active-fg)" : "var(--text-2)"};font-family:inherit;font-weight:600;font-size:.8rem;padding:.4rem .72rem;border-radius:999px;cursor:pointer;transition:all .14s;`;
-        const dot = `width:7px;height:7px;border-radius:50%;background:${g.stale ? "#c9a23a" : "var(--accent)"};`;
-        return `<button data-act="feedGame" data-arg="${g.gamePk}" class="ph-chip" style="${style}"><span style="${dot}"></span>${esc(g.label)}</button>`;
+        const pres = g.m.pitch_result || {}, spd = g.m.pitch_speed_ou || {};
+        const rec = pres.recommendation;
+        const call = rec ? (PH.OUTCOME_LABEL[rec] || rec) : "—";
+        const callPct = pres.probs && rec && pres.probs[rec] != null ? `${Math.round(pres.probs[rec] * 100)}%` : "";
+        const velo = spd.predictedValue != null ? `${Number(spd.predictedValue).toFixed(1)} mph` : "—";
+        const style = `display:flex;flex-direction:column;gap:.42rem;text-align:left;border:1px solid ${on ? "var(--accent)" : "var(--border)"};background:${on ? "var(--good-bg)" : "var(--surface)"};color:var(--text);font-family:inherit;padding:.6rem .7rem;border-radius:12px;cursor:pointer;transition:all .14s;opacity:${g.stale ? 0.7 : 1};`;
+        return `<button data-act="feedGame" data-arg="${g.gamePk}" style="${style}">
+          <span style="display:flex;align-items:center;gap:.4rem;">
+            <span style="width:7px;height:7px;border-radius:50%;background:${g.stale ? "var(--amber)" : "var(--accent)"};flex:none;"></span>
+            <span style="font-weight:800;font-size:.84rem;">${esc(g.label)}</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:.76rem;font-weight:600;color:var(--text-2);">${esc(g.score.away)}–${esc(g.score.home)} ${esc(g.half)}${esc(g.inning)}</span>
+          </span>
+          <span style="display:flex;align-items:center;gap:.4rem;font-size:.76rem;color:var(--muted);min-width:0;">
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(g.batter.name)}</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(g.count)}</span>
+          </span>
+          <span style="display:flex;align-items:center;gap:.4rem;">
+            <span style="font-size:.68rem;font-weight:800;letter-spacing:.03em;padding:.12rem .38rem;border-radius:5px;background:${on ? "rgba(74,222,128,.16)" : "var(--track)"};color:${on ? "var(--good-strong)" : "var(--text-2)"};white-space:nowrap;">${esc(call)} ${esc(callPct)}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:.7rem;color:var(--faint);">${esc(velo)}</span>
+          </span>
+        </button>`;
       }).join("");
 
-      const dataGrid = "38px 56px 64px 60px 46px 1fr minmax(112px,1fr) 56px";
+      const dataGrid = "52px 52px 46px minmax(132px,1fr) minmax(180px,1.3fr)";
       const pitchEmpty = sel.pitches.length === 0;
-      const pitchRows = sel.pitches.map((p) => {
-        const [label, tone] = this.resultMeta(p.desc);
-        const speedText = p.speed != null ? p.speed.toFixed(1) : "—";
-        return `<div class="ph-table-row">
-          <div class="ph-cell" data-label="#"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(p.n)}</span></div>
-          <div class="ph-cell" data-label="Type"><span style="font-weight:600;">${esc(p.type)}</span></div>
-          <div class="ph-cell" data-label="Velo"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(speedText)}</span></div>
-          <div class="ph-cell" data-label="xVelo">${this.predVeloHtml(p.pred, false)}</div>
+      const pitchRows = sel.pitches.map((p) => `<div class="ph-table-row">
+          <div class="ph-cell" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(p.balls)}-${esc(p.strikes)}</span></div>
+          <div class="ph-cell" data-label="Type"><span style="font-weight:700;color:${this.pitchColor(p.type)};">${esc(p.type)}</span></div>
           <div class="ph-cell" data-label="Zone"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(p.zone)}</span></div>
-          <div class="ph-cell" data-label="Result"><span style="color:${tone};font-weight:600;">${esc(label)}</span></div>
-          <div class="ph-cell" data-label="xResult">${this.predResultHtml(p.pred, false)}</div>
-          <div class="ph-cell ph-cell--end" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(p.balls)}-${esc(p.strikes)}</span></div>
-        </div>`;
-      }).join("");
+          <div class="ph-cell" data-label="Velo">${this.veloCellHtml(p.speed, p.pred, false)}</div>
+          <div class="ph-cell" data-label="Result">${this.resultCellHtml(p, p.pred, false)}</div>
+        </div>`).join("");
       const abOverSel = this.abLikelyOver(sel.pitches);
       const nextRow = sel.nextPred ? `
         <div class="ph-table-row ph-next">
-          <div class="ph-cell" data-label="#"><span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOverSel ? 1 : sel.pitches.length + 1)}</span></div>
+          <div class="ph-cell" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOverSel ? "0-0" : sel.count)}</span></div>
           <div class="ph-cell" data-label="Type"><span style="font-size:.62rem;font-weight:800;letter-spacing:.05em;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:.12rem .28rem;white-space:nowrap;">NEXT</span></div>
-          <div class="ph-cell" data-label="Velo"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span></div>
-          <div class="ph-cell" data-label="xVelo">${this.predVeloHtml(sel.nextPred, true)}</div>
           <div class="ph-cell" data-label="Zone"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span></div>
-          <div class="ph-cell" data-label="Result"><span style="color:var(--text-2);font-weight:600;font-style:italic;">${abOverSel ? "new batter" : "up next"}</span></div>
-          <div class="ph-cell" data-label="xResult">${this.predResultHtml(sel.nextPred, true)}</div>
-          <div class="ph-cell ph-cell--end" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(abOverSel ? "0-0" : sel.count)}</span></div>
+          <div class="ph-cell" data-label="Velo">${this.veloCellHtml(null, sel.nextPred, true)}</div>
+          <div class="ph-cell" data-label="Result">${this.resultCellHtml(null, sel.nextPred, true)}</div>
         </div>` : "";
 
       const abr = sel.m.ab_result, abp = sel.m.ab_pitches_ou;
@@ -756,7 +895,7 @@
         <h1 style="font-size:clamp(1.5rem,3vw,2.05rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.dataTitle)}</h1>
         <p style="margin:.3rem 0 0;color:var(--muted);font-size:.95rem;">${esc(COPY.dataSub)}</p>
       </div>
-      <div style="display:flex;gap:.4rem;flex-wrap:wrap;margin-bottom:1.1rem;">${gameSel}</div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:.5rem;margin-bottom:1.1rem;">${gameSel}</div>
 
       <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:stretch;margin-bottom:1.4rem;">
         <div style="flex:1;min-width:min(290px,100%);background:var(--bc-bg);color:#eaf1f8;border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.06),0 8px 22px rgba(15,27,45,.14);padding:1.1rem 1.2rem;display:flex;flex-direction:column;">
@@ -810,11 +949,12 @@
           </div>
           <div class="ph-scroll"><div class="ph-table" style="--cols:${dataGrid};--minw:560px;">
             <div class="ph-table-head ph-microlabel">
-              <span>#</span><span>Type</span><span>Velo</span><span>xVelo</span><span>Zone</span><span>Result</span><span>xResult</span><span style="text-align:right;">Count</span>
+              <span>Count</span><span>Type</span><span>Zone</span><span>Velo · called</span><span>Result · called</span>
             </div>
             ${pitchEmpty && !nextRow ? `<div style="padding:1.1rem .3rem;color:var(--faint);font-style:italic;font-size:.84rem;">Fresh at-bat — no pitches thrown yet.</div>` : pitchRows + nextRow}
-            <div style="font-size:.72rem;color:var(--faint);padding:.5rem .3rem 0;">xVelo / xResult — the model's call before each pitch · <span style="color:var(--good-strong);font-weight:700;">✓ right</span> / <span style="color:var(--bad);font-weight:700;">✗ wrong</span></div>
           </div></div>
+          <div style="font-size:.72rem;color:var(--faint);padding:.5rem .3rem 0;">Each cell pairs the actual pitch with the model's call before it — <span style="color:var(--good-strong);font-weight:700;">green</span> within 1.5 mph, <span style="color:var(--amber);font-weight:700;">amber</span> within 3, <span style="color:var(--bad);font-weight:700;">red</span> beyond.</div>
+          ${this.atBatHistoryHtml(sel)}
           <div style="display:flex;gap:1.4rem;flex-wrap:wrap;margin-top:.9rem;padding-top:.7rem;border-top:1px solid var(--track);font-size:.78rem;color:var(--text-2);">
             <div><span style="color:var(--faint);">Pitches (PA)</span> <b style="font-weight:700;">${esc(sel.pitchCountPa)}</b></div>
             <div><span style="color:var(--faint);">AB pitches proj</span> <b style="font-weight:700;color:var(--accent);">${esc(abProj)}</b></div>
@@ -864,6 +1004,7 @@
         if (Array.isArray(games)) {
           // [] is a real answer (no live games) — empty the board.
           PH.games = this._withoutFinals(games);
+          this.trackAtBats(PH.games);
           if (PH.games.length && !PH.games.some((g) => g.gamePk === this.state.feedGame)) {
             this.state.feedGame = PH.games[0].gamePk;
           }
