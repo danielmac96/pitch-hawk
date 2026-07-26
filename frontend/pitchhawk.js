@@ -74,6 +74,7 @@
       this.root = root;
       this.state = {
         view: "home", feedGame: null,
+        focusGame: null, dfGame: "all", mkt: "all", openLog: null,
         liveGames: {}, liveSources: { draftkings: true, fanduel: true, kalshi: true, polymarket: true },
         edgeThreshold: 0.03,
         dark: initialDark(), t: 0,
@@ -83,6 +84,9 @@
       // carries the current PA, so finished at-bats are archived here.
       this.paHist = {};
       this.paWatch = {};
+      // Session-graded prediction log powering the Data Feed (see trackGradedLog).
+      this.gradedLog = [];
+      this._seenPitch = {};
       this.root.addEventListener("click", (e) => this._onClick(e));
     }
     setState(patch) { Object.assign(this.state, patch); this.render(); }
@@ -262,38 +266,6 @@
         pickBand: ratio == null ? null : ratio >= 0.6 ? "good" : ratio >= 0.4 ? "amber" : "bad",
       };
     }
-    atBatHistoryHtml(g) {
-      const hist = this.paHist[g.gamePk] || [];
-      if (!hist.length) return "";
-      const rows = hist.map((h) => {
-        const callSub = h.call
-          ? `${esc(PH.OUTCOME_LABEL[h.call] || h.call)}${h.callProb != null ? ` <span style="font-family:'IBM Plex Mono',monospace;">${Math.round(h.callProb * 100)}%</span>` : ""}`
-          : "";
-        const band = h.callOk === true ? "good" : h.callOk === false ? "bad" : null;
-        const pc = `${h.projPitches != null ? h.projPitches.toFixed(1) : "—"}/${h.pitches}`;
-        const ve = h.avgErr == null ? "—" : (h.avgErr >= 0 ? "+" : "−") + Math.abs(h.avgErr).toFixed(1);
-        return `<div class="ph-table-row">
-            <div class="ph-cell" data-label="Batter"><span style="font-weight:700;">${esc(h.batter)}</span></div>
-            <div class="ph-cell" data-label="Result">${this.gradedCell(band, esc(h.outcomeLabel), callSub)}</div>
-            <div class="ph-cell" data-label="P pred/act">${this.chipCell(h.pitchBand, pc)}</div>
-            <div class="ph-cell" data-label="Avg velo err">${this.chipCell(h.veloBand, ve)}</div>
-            <div class="ph-cell ph-cell--end" data-label="Picks">${this.chipCell(h.pickBand, h.gradedN ? `${h.right}/${h.gradedN}` : "—")}</div>
-          </div>`;
-      }).join("");
-      return `
-              <div style="margin-top:.9rem;padding-top:.75rem;border-top:1px solid var(--border);">
-                <div style="display:flex;align-items:baseline;justify-content:space-between;gap:.6rem;margin-bottom:.5rem;">
-                  <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);">Earlier at-bats</span>
-                  <span style="font-size:.72rem;color:var(--faint);">seen since this tab opened</span>
-                </div>
-                <div class="ph-scroll"><div class="ph-table" style="--cols:1fr 1.7fr 72px 64px 54px;--minw:560px;">
-                  <div class="ph-table-head ph-microlabel">
-                    <span>Batter</span><span>Result · called</span><span>P pred/act</span><span>Avg velo err</span><span style="text-align:right;">Picks</span>
-                  </div>
-                  ${rows}
-                </div></div>
-              </div>`;
-    }
     liveGameOn(pk) { return this.state.liveGames[pk] !== false; }
     selLiveSourceSet() { const s = this.state.liveSources; return new Set(Object.keys(s).filter((k) => s[k])); }
 
@@ -318,6 +290,10 @@
           return this.setState({ liveSources: s });
         }
         case "feedGame": return this.setState({ feedGame: Number(arg) });
+        case "focusGame": return this.setState({ focusGame: Number(arg) });
+        case "dfGame": return this.setState({ dfGame: arg === "all" ? "all" : Number(arg) });
+        case "mkt": return this.setState({ mkt: arg });
+        case "logRow": return this.setState({ openLog: this.state.openLog === arg ? null : arg });
       }
     }
 
@@ -505,475 +481,844 @@
       return hero + slateBlock + promo + how;
     }
 
-    // ══ LIVE MARKETS ═════════════════════════════════════════════════════
-    liveHtml() {
-      if (!PH.games.length) {
-        return `
-      <div style="margin-bottom:1.1rem;">
-        <h1 style="font-size:clamp(1.5rem,3vw,2.05rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.liveTitle)}</h1>
-        <p style="margin:.3rem 0 0;color:var(--muted);font-size:.95rem;">${esc(COPY.liveSub)}</p>
-      </div>
-      <div style="padding:3.5rem 1rem;text-align:center;background:var(--surface);border:1px solid var(--border);border-radius:14px;">
-        <div style="font-size:1.05rem;font-weight:700;margin-bottom:.35rem;">No live games right now</div>
-        <div style="font-size:.9rem;color:var(--muted);">The board wakes up automatically at first pitch — <button data-act="goHome" style="border:0;background:transparent;color:var(--accent);font-family:inherit;font-weight:700;font-size:.9rem;cursor:pointer;padding:0;">see today's schedule</button>.</div>
-      </div>`;
-      }
-      const thr = this.state.edgeThreshold;
-      const sel = this.selLiveSourceSet();
-      // With wagering surfaces off, no read ever gets an edge highlight.
-      const bestOfSources = WAGER
-        ? (sources) => { let best = null; (sources || []).forEach((s) => { if (sel.has(s.source) && (best == null || s.edge > best)) best = s.edge; }); return best; }
-        : () => null;
-      const hot = (best) => (best != null && best >= thr);
-      const chip = (best) => hot(best)
-        ? `font-family:'IBM Plex Mono',monospace;justify-self:end;padding:.08rem .4rem;border-radius:6px;background:var(--good-bg);color:var(--good-strong);font-weight:700;`
-        : `font-family:'IBM Plex Mono',monospace;justify-self:end;color:var(--text-2);`;
-      const dot = (on, color) => `width:11px;height:11px;border-radius:50%;background:${on ? color : "var(--track)"};border:1px solid ${on ? color : "var(--border-2)"};`;
-      const bs = (on, pos) => `position:absolute;${pos}width:14px;height:14px;border-radius:3px;background:${on ? "var(--good-strong)" : "var(--track)"};border:1.5px solid ${on ? "var(--good-strong)" : "var(--border-2)"};`;
+    // ══ DARK PALETTE ═════════════════════════════════════════════════════
+    // The board is dark-only (product decision), so the ported views use the
+    // literal palette from the approved mocks 1b/1c/1d/1e rather than theme
+    // tokens — there is no light fork to keep in sync.
+    C = {
+      bg: "#0c1424", panel: "#141f33", panel2: "#101b2e", panel3: "#0d1729", rail: "#0a1322",
+      bd: "#253449", bd2: "#31435f", row: "#1a2740", chip: "#1b2942",
+      txt: "#eef3f9", dim: "#aebdd2", mut: "#8493aa", faint: "#6f7f96", blue: "#7fa0c4", vs: "#3a4a63",
+      acc: "#22a566", grn: "#4ade80", amb: "#e0a83a", red: "#ff7b6b",
+      gsub: "#82ae92", gbd: "#1f3d2b", gbg: "linear-gradient(180deg,#12301f,#0f1f18)",
+    };
+    GRD = {
+      good: { bg: "rgba(34,165,102,.22)", fg: "#5fe094" },
+      amber: { bg: "rgba(224,168,58,.20)", fg: "#f0c063" },
+      bad: { bg: "rgba(242,86,76,.20)", fg: "#ff9b8f" },
+    };
+    grd(band) { return this.GRD[band] || { bg: "transparent", fg: this.C.dim }; }
 
-      const games = PH.games.filter((g) => this.liveGameOn(g.gamePk));
-      const panels = games.map((g) => {
-        const cnt = (g.count || "0-0").split("-").map(Number);
-        const balls = cnt[0] || 0, strikes = cnt[1] || 0;
-        const ballDots = [0, 1, 2].map((i) => `<span style="${dot(i < balls, "var(--good-strong)")}"></span>`).join("");
-        const strikeDots = [0, 1].map((i) => `<span style="${dot(i < strikes, "var(--amber)")}"></span>`).join("");
-        const outDots = [0, 1].map((i) => `<span style="${dot(i < g.outs, "var(--bad)")}"></span>`).join("");
-
-        const typesSeen = [];
-        const zoneDots = g.pitches.map((pt) => {
-          const pos = this.zonePos(pt.zone);
-          const col = this.pitchColor(pt.type);
-          if (!typesSeen.includes(pt.type)) typesSeen.push(pt.type);
-          return `<span style="position:absolute;left:${pos[0]}%;top:${pos[1]}%;transform:translate(-50%,-50%);width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.6rem;font-weight:700;color:#fff;background:${col};box-shadow:0 1px 3px rgba(0,0,0,.28);">${esc(pt.n)}</span>`;
-        }).join("");
-        const typeLegend = typesSeen.map((t) => `<span style="display:inline-flex;align-items:center;gap:.3rem;font-size:.72rem;color:var(--text-2);"><span style="width:9px;height:9px;border-radius:50%;background:${this.pitchColor(t)};flex:none;"></span>${esc(t)}</span>`).join("");
-
-        const feedGrid = "52px 46px minmax(132px,1fr) minmax(180px,1.35fr)";
-        const pitchEmpty = g.pitches.length === 0;
-        const pitchRows = g.pitches.map((pt) => `
-          <div class="ph-table-row">
-            <div class="ph-cell" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(pt.balls)}-${esc(pt.strikes)}</span></div>
-            <div class="ph-cell" data-label="Type"><span style="font-weight:700;color:${this.pitchColor(pt.type)};">${esc(pt.type)}</span></div>
-            <div class="ph-cell" data-label="Velo">${this.veloCellHtml(pt.speed, pt.pred, false)}</div>
-            <div class="ph-cell" data-label="Result">${this.resultCellHtml(pt, pt.pred, false)}</div>
-          </div>`).join("");
-        // The upcoming pitch's row — pinned and accented, the board's answer
-        // to "what happens next": the model's call sits where the pitch data
-        // will land, and turns green/red above once the pitch is thrown.
-        const abOver = this.abLikelyOver(g.pitches);
-        const nextRow = g.nextPred ? `
-          <div class="ph-table-row ph-next">
-            <div class="ph-cell" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOver ? "0-0" : g.count)}</span></div>
-            <div class="ph-cell" data-label="Type"><span style="font-size:.6rem;font-weight:800;letter-spacing:.05em;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:.12rem .28rem;white-space:nowrap;">NEXT</span></div>
-            <div class="ph-cell" data-label="Velo">${this.veloCellHtml(null, g.nextPred, true)}</div>
-            <div class="ph-cell" data-label="Result">${this.resultCellHtml(null, g.nextPred, true)}</div>
-          </div>` : "";
-
-        // Next-pitch model read: the model predicts the UPCOMING pitch (result
-        // distribution + speed projection) — rendered per game, not per past
-        // pitch, because /live only carries the latest prediction per market.
-        const pres = g.m.pitch_result || {};
-        const spd = g.m.pitch_speed_ou || {};
-        const presRows = ["strike_foul", "ball", "in_play"]
-          .filter((name) => pres.probs && pres.probs[name] != null)
-          .map((name) => {
-            const pv = Math.round(pres.probs[name] * 100);
-            const isRec = name === pres.recommendation;
-            return `
-          <div style="display:grid;grid-template-columns:1.1fr 2fr auto;gap:.6rem;align-items:center;padding:.26rem 0;">
-            <div style="font-size:.84rem;font-weight:${isRec ? 700 : 500};color:${isRec ? "var(--good-strong)" : "var(--text-2)"};">${esc(PH.OUTCOME_LABEL[name] || name)}</div>
-            <div style="height:7px;background:var(--track);border-radius:999px;overflow:hidden;"><div style="height:100%;width:${pv}%;background:${isRec ? "var(--accent)" : "var(--vs)"};border-radius:999px;"></div></div>
-            <span style="font-family:'IBM Plex Mono',monospace;font-size:.82rem;font-weight:600;color:var(--text-2);min-width:34px;text-align:right;">${pv}%</span>
-          </div>`;
-          }).join("");
-        const spdLine = spd.predictedValue != null
-          ? `<div style="display:flex;justify-content:space-between;gap:.6rem;font-size:.8rem;margin-top:.45rem;"><span style="color:var(--faint);">Speed projection</span><b style="font-family:'IBM Plex Mono',monospace;font-weight:700;">${esc(Number(spd.predictedValue).toFixed(1))} mph${spd.line != null && spd.recommendation ? ` · ${esc(PH.OUTCOME_LABEL[spd.recommendation] || spd.recommendation)} ${esc(spd.line)}` : ""}</b></div>`
-          : "";
-        // Say WHICH pitch the read is for, in the feed's numbering — pitch
-        // N+1 of this at-bat, or pitch #1 of the next batter once it ends.
-        const nextPitchTag = abOver ? "for pitch #1 · next batter" : `for pitch #${g.pitches.length + 1} of this at-bat`;
-        // The at-bat just ended and no next-batter read has landed yet: the
-        // latest model numbers still describe the FINISHED at-bat's next pitch
-        // (which will never come) — say so instead of showing them.
-        const readPending = abOver && !g.nextPred;
-
-        const abr = g.m.ab_result, abp = g.m.ab_pitches_ou;
-        const order = ["out", "hit", "strikeout", "walk"];
-        const abOutcomes = order.map((name) => {
-          const oc = (abr.outcomes || []).find((x) => x.name === name) || { modelProb: 0, sources: [] };
-          const pctv = Math.round(oc.modelProb * 100);
-          const isRec = name === abr.recommendation;
-          const best = bestOfSources(oc.sources);
-          const nameStyle = `font-size:.84rem;font-weight:${isRec ? 700 : 500};color:${isRec ? "var(--good-strong)" : "var(--text-2)"};`;
-          const barW = `height:100%;width:${pctv}%;background:${isRec ? "var(--accent)" : "var(--vs)"};border-radius:999px;`;
-          const pctStyle = hot(best)
-            ? `font-family:'IBM Plex Mono',monospace;font-size:.82rem;font-weight:700;justify-self:end;padding:.08rem .4rem;border-radius:6px;background:var(--good-bg);color:var(--good-strong);`
-            : `font-family:'IBM Plex Mono',monospace;font-size:.82rem;font-weight:600;color:var(--text-2);min-width:34px;text-align:right;`;
-          return `
-          <div style="display:grid;grid-template-columns:1.1fr 2fr auto;gap:.6rem;align-items:center;padding:.26rem 0;">
-            <div style="${nameStyle}">${esc(PH.OUTCOME_LABEL[name] || name)}</div>
-            <div style="height:7px;background:var(--track);border-radius:999px;overflow:hidden;"><div style="${barW}"></div></div>
-            <span style="${pctStyle}">${pctv}%</span>
-          </div>`;
-        }).join("");
-
-        const abProjBest = bestOfSources(abp.sources);
-        const abProj = abp.line != null
-          ? `${abp.recommendation === "over" ? "Over" : "Under"} ${abp.line} · proj ${abp.predictedValue != null ? abp.predictedValue : "—"}`
-          : "—";
-        const abProjStyle = hot(abProjBest)
-          ? `font-weight:700;padding:.06rem .4rem;border-radius:6px;background:var(--good-bg);color:var(--good-strong);`
-          : `font-weight:700;color:var(--text-2);`;
-        const abCallLabel = PH.OUTCOME_LABEL[abr.recommendation] || abr.recommendation || "—";
-
-        // One highlighted panel carries every live prediction the app is making:
-        // the next pitch on top, the at-bat outcome underneath.
-        const predictionCard = `
-              <div style="margin-bottom:1rem;border:1px solid var(--accent);border-radius:12px;background:var(--good-bg);padding:.85rem .95rem;">
-                <div style="display:flex;align-items:center;gap:.45rem;margin-bottom:.6rem;">
-                  <span style="width:7px;height:7px;border-radius:50%;background:var(--good-strong);animation:ph-pulse 1.8s ease-in-out infinite;"></span>
-                  <span style="font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--good-strong);">Next pitch · ${esc(nextPitchTag)}</span>
-                </div>
-                ${readPending
-                  ? `<div style="font-size:.8rem;color:var(--good-sub);font-style:italic;">At-bat over — the read on the next batter's first pitch arrives when they step in.</div>`
-                  : (presRows || `<div style="font-size:.8rem;color:var(--good-sub);font-style:italic;">Model read pending…</div>`) + spdLine}
-                <div style="margin-top:.85rem;padding-top:.7rem;border-top:1px solid var(--good-border);">
-                  <div style="display:flex;align-items:baseline;justify-content:space-between;gap:.6rem;margin-bottom:.45rem;">
-                    <span style="font-size:.7rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--good-sub);">At-bat outcome</span>
-                    <span style="font-weight:800;font-size:.94rem;">${esc(abCallLabel)} <span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--good-strong);">${esc(this.pct(abr.modelProb))}</span></span>
-                  </div>
-                  ${abOutcomes}
-                  <div style="display:flex;gap:1.3rem;flex-wrap:wrap;margin-top:.6rem;font-size:.8rem;color:var(--text-2);">
-                    <div><span style="color:var(--good-sub);">Total pitches · pre-AB call</span> <b style="${abProjStyle}">${esc(abProj)}</b></div>
-                    <div><span style="color:var(--good-sub);">Pitches so far (PA)</span> <b style="font-weight:700;">${esc(g.pitchCountPa)}</b></div>
-                  </div>
-                </div>
-              </div>`;
-
-        const cardStyle = `background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:1.15rem 1.25rem;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);opacity:${g.stale ? 0.72 : 1};`;
-        const pausedTag = g.stale ? `<span style="font-size:.6rem;font-weight:700;color:var(--amber);background:var(--amber-bg);padding:.14rem .44rem;border-radius:5px;">PAUSED</span>` : "";
-        const typesBlock = typeLegend ? `
-          <div style="font-size:.6rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin:.75rem 0 .4rem;">Pitch types</div>
-          <div style="display:flex;flex-wrap:wrap;gap:.3rem .6rem;">${typeLegend}</div>` : "";
-
-        return `
-        <div style="${cardStyle}">
-          <div style="display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;margin-bottom:.9rem;padding-bottom:.8rem;border-bottom:1px solid var(--border);">
-            <span style="font-weight:800;font-size:1.1rem;">${esc(g.label)}</span>${pausedTag}
-          </div>
-          <div class="ph-panel-grid">
-
-            <!-- LEFT: game state -->
-            <div style="display:flex;flex-direction:column;gap:1rem;">
-              <div style="display:flex;align-items:center;gap:1rem;flex-wrap:wrap;background:var(--surface-2);border:1px solid var(--border);border-radius:11px;padding:.75rem .95rem;">
-                <div style="display:flex;flex-direction:column;gap:.15rem;">
-                  <div style="display:flex;align-items:baseline;gap:.4rem;font-family:'IBM Plex Mono',monospace;">
-                    <span style="font-size:1.7rem;font-weight:700;line-height:1;">${esc(g.score.away)}</span>
-                    <span style="font-size:1.2rem;color:var(--vs);font-weight:600;">–</span>
-                    <span style="font-size:1.7rem;font-weight:700;line-height:1;">${esc(g.score.home)}</span>
-                  </div>
-                  <span style="font-size:.68rem;color:var(--muted);font-weight:600;letter-spacing:.03em;">${esc(g.away)} vs ${esc(g.home)}</span>
-                </div>
-                <div style="display:flex;flex-direction:column;align-items:center;gap:.12rem;">
-                  <span style="font-size:1.05rem;line-height:1;color:var(--good-strong);">${esc(g.half)}</span>
-                  <span style="font-family:'IBM Plex Mono',monospace;font-size:.78rem;font-weight:600;color:var(--text-2);">Inn ${esc(g.inning)}</span>
-                </div>
-                <div style="position:relative;width:52px;height:52px;flex:none;">
-                  <div style="${bs(g.runners.second, "left:50%;top:2px;transform:translateX(-50%) rotate(45deg);")}"></div>
-                  <div style="${bs(g.runners.third, "left:2px;top:50%;transform:translateY(-50%) rotate(45deg);")}"></div>
-                  <div style="${bs(g.runners.first, "right:2px;top:50%;transform:translateY(-50%) rotate(45deg);")}"></div>
-                  <div style="position:absolute;bottom:0;left:50%;transform:translateX(-50%) rotate(45deg);width:10px;height:10px;border-radius:2px;background:var(--vs);"></div>
-                </div>
-                <div style="display:flex;flex-direction:column;gap:.32rem;margin-left:auto;">
-                  <div style="display:flex;align-items:center;gap:.5rem;"><span style="font-size:.64rem;font-weight:700;color:var(--faint);width:9px;">B</span><div style="display:flex;gap:.28rem;">${ballDots}</div></div>
-                  <div style="display:flex;align-items:center;gap:.5rem;"><span style="font-size:.64rem;font-weight:700;color:var(--faint);width:9px;">S</span><div style="display:flex;gap:.28rem;">${strikeDots}</div></div>
-                  <div style="display:flex;align-items:center;gap:.5rem;"><span style="font-size:.64rem;font-weight:700;color:var(--faint);width:9px;">O</span><div style="display:flex;gap:.28rem;">${outDots}</div></div>
-                </div>
-              </div>
-
-              <div style="display:flex;flex-direction:column;gap:.5rem;font-size:.86rem;">
-                <div style="display:flex;justify-content:space-between;gap:.6rem;"><span style="color:var(--muted);">Pitcher</span><span style="font-weight:700;">${esc(this.player(g.pitcher))}</span></div>
-                <div style="display:flex;justify-content:space-between;gap:.6rem;"><span style="color:var(--muted);">At bat</span><span style="font-weight:700;">${esc(this.player(g.batter))}</span></div>
-              </div>
-
-              <div style="display:flex;gap:1.1rem;align-items:flex-start;flex-wrap:wrap;">
-                <div style="flex:none;">
-                  <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.5rem;">Pitch locations</div>
-                  <div style="position:relative;width:150px;height:158px;">
-                    <div style="position:absolute;left:25%;top:23%;width:50%;height:54%;border:1.5px solid var(--border-2);border-radius:3px;background:var(--surface-2);"></div>
-                    <div style="position:absolute;left:41.67%;top:23%;width:1px;height:54%;background:var(--border);"></div>
-                    <div style="position:absolute;left:58.33%;top:23%;width:1px;height:54%;background:var(--border);"></div>
-                    <div style="position:absolute;left:25%;top:41%;width:50%;height:1px;background:var(--border);"></div>
-                    <div style="position:absolute;left:25%;top:59%;width:50%;height:1px;background:var(--border);"></div>
-                    ${pitchEmpty ? `<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:.72rem;color:var(--faint);font-style:italic;">no pitches yet</div>` : zoneDots}
-                  </div>
-                </div>
-                <div style="flex:1;min-width:150px;padding-top:1.25rem;">
-                  <div style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);margin-bottom:.4rem;">Ballpark</div>
-                  <div style="font-weight:700;font-size:.92rem;">${esc(g.venue)}</div>
-                  <div style="font-size:.82rem;color:var(--text-2);margin-top:.3rem;line-height:1.5;">${esc(g.weather)}</div>
-                  ${typesBlock}
-                </div>
-              </div>
-            </div>
-
-            <!-- RIGHT: pitch feed + model read -->
-            <div style="display:flex;flex-direction:column;">
-              ${predictionCard}
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:.6rem;flex-wrap:wrap;margin-bottom:.6rem;">
-                <span style="font-weight:800;font-size:1rem;">Pitch feed</span>
-                <span style="font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);">This at-bat</span>
-              </div>
-              <div class="ph-scroll"><div class="ph-table" style="--cols:${feedGrid};--minw:520px;">
-                <div class="ph-table-head ph-microlabel">
-                  <span>Count</span><span>Type</span><span>Velo · called</span><span>Result · called</span>
-                </div>
-                ${pitchEmpty && !nextRow ? `<div style="padding:1rem .25rem;color:var(--faint);font-style:italic;font-size:.84rem;">Fresh at-bat — no pitches thrown yet.</div>` : pitchRows + nextRow}
-              </div></div>
-              <div style="font-size:.72rem;color:var(--faint);padding:.5rem .25rem 0;">Each cell pairs the actual pitch with the model's call before it — <span style="color:var(--good-strong);font-weight:700;">green</span> within 1.5 mph, <span style="color:var(--amber);font-weight:700;">amber</span> within 3, <span style="color:var(--bad);font-weight:700;">red</span> beyond.</div>
-              ${this.atBatHistoryHtml(g)}
-            </div>
-
-          </div>
-        </div>`;
-      }).join("");
-
-      // filters bar
-      const chipStyle = (on, accent) => `border:1px solid ${on ? (accent || "var(--pill-active-bg)") : "var(--border-2)"};background:${on ? (accent || "var(--pill-active-bg)") : "var(--surface)"};color:${on ? (accent ? "#fff" : "var(--pill-active-fg)") : "var(--text-2)"};font-family:inherit;font-weight:600;font-size:.76rem;padding:.32rem .7rem;border-radius:999px;cursor:pointer;transition:all .14s;`;
-      const allOn = PH.games.every((g) => this.liveGameOn(g.gamePk));
-      const gameChips = PH.games.map((g) => `<button data-act="liveGame" data-arg="${g.gamePk}" class="ph-chip" style="${chipStyle(this.liveGameOn(g.gamePk))}">${esc(g.label)}</button>`).join("");
-      const sourceChips = Object.keys(PH.SOURCES).map((k) => {
-        const s = PH.SOURCES[k]; const on = !!this.state.liveSources[k];
-        const accent = s.type === "book" ? "var(--blue)" : "var(--purple)";
-        return `<button data-act="liveSource" data-arg="${k}" class="ph-chip" style="${chipStyle(on, on ? accent : null)}">${esc(s.short)}</button>`;
-      }).join("");
-      const thresholdText = (thr * 100).toFixed(1) + "%";
-
-      const sourcesRow = WAGER ? `
-        <div style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;">
-          <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);width:54px;">Sources</span>${sourceChips}
-        </div>` : "";
-      const legendRow = WAGER && COPY.edgeLegend ? `
-        <div style="display:flex;align-items:center;gap:.45rem;font-size:.72rem;color:var(--muted);flex-wrap:wrap;">
-          <span style="width:13px;height:13px;border-radius:4px;background:var(--good-bg);border:1px solid var(--good-strong);display:inline-block;flex:none;"></span>
-          ${esc(COPY.edgeLegend.replace("{threshold}", thresholdText))}
-        </div>` : "";
-      const filters = `
-      <div style="display:flex;flex-direction:column;gap:.55rem;margin-bottom:1.1rem;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.75rem .85rem;box-shadow:0 1px 2px rgba(15,27,45,.04);">
-        <div style="display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;">
-          <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--faint);width:54px;">Games</span>
-          <button data-act="liveAllGames" class="ph-chip" style="${chipStyle(allOn)}">All</button>${gameChips}
-        </div>${sourcesRow}${legendRow}
-      </div>`;
-
-      const empty = panels.length === 0
-        ? `<div style="padding:3rem 0;text-align:center;color:var(--faint);font-size:.95rem;">No games selected — pick a game above.</div>` : "";
-
-      return `
-      <div style="margin-bottom:1.1rem;">
-        <h1 style="font-size:clamp(1.5rem,3vw,2.05rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.liveTitle)}</h1>
-        <p style="margin:.3rem 0 0;color:var(--muted);font-size:.95rem;">${esc(COPY.liveSub)}</p>
-      </div>
-      ${filters}
-      ${empty}
-      <div style="display:flex;flex-direction:column;gap:1rem;">${panels}</div>`;
+    // Mobile (1b/1e) and desktop (1c/1d) are distinct layouts, so the board picks
+    // one and re-renders on the breakpoint crossing.
+    mob() { return window.innerWidth < 1024; }
+    // Between ~1024 and ~1240 the desktop layout has no room for a 380px side
+    // column, so the prediction panel stacks under the feed instead.
+    narrow() { return window.innerWidth < 1240; }
+    _bindMq() {
+      if (this._mqBound) return;
+      this._mqBound = true;
+      this._wasMob = this.mob(); this._wasNarrow = this.narrow();
+      window.addEventListener("resize", () => {
+        const m = this.mob(), n = this.narrow();
+        if (m !== this._wasMob || n !== this._wasNarrow) { this._wasMob = m; this._wasNarrow = n; this.render(); }
+      });
     }
 
-    // ══ DATA FEED ════════════════════════════════════════════════════════
+    // ── small shared pieces ──────────────────────────────────────────────
+    shortName(n) {
+      const parts = String(n || "").trim().split(/\s+/);
+      if (parts.length < 2) return n || "—";
+      return `${parts[0][0]}. ${parts.slice(1).join(" ")}`;
+    }
+    dotsHtml(n, filled, color, size) {
+      const s = size || 11;
+      return Array.from({ length: n }, (_, i) => `<span style="width:${s}px;height:${s}px;border-radius:50%;background:${i < filled ? color : this.C.chip};border:1px solid ${i < filled ? color : this.C.bd2};"></span>`).join("");
+    }
+    bsoHtml(g, size) {
+      const cnt = (g.count || "0-0").split("-").map(Number);
+      const lab = `font-size:${size > 9 ? 10.5 : 9.5}px;font-weight:700;color:${this.C.faint};width:9px;`;
+      const rowGap = size > 9 ? 7 : 5;
+      const line = (l, dots) => `<div style="display:flex;align-items:center;gap:${rowGap}px;"><span style="${lab}">${l}</span>${dots}</div>`;
+      return `<div style="display:flex;flex-direction:column;gap:${size > 9 ? 5 : 3}px;flex:none;">
+        ${line("B", this.dotsHtml(3, cnt[0] || 0, this.C.grn, size))}
+        ${line("S", this.dotsHtml(2, cnt[1] || 0, this.C.amb, size))}
+        ${line("O", this.dotsHtml(2, g.outs || 0, this.C.red, size))}
+      </div>`;
+    }
+    diamondHtml(g, box, sq) {
+      const on = (v) => (v ? this.C.grn : this.C.chip);
+      const ob = (v) => (v ? this.C.grn : this.C.bd2);
+      const b = (v, pos) => `<div style="position:absolute;${pos}width:${sq}px;height:${sq}px;border-radius:3px;background:${on(v)};border:${box > 40 ? 2 : 1.5}px solid ${ob(v)};"></div>`;
+      const home = box > 40 ? `<div style="position:absolute;bottom:1px;left:50%;transform:translateX(-50%) rotate(45deg);width:11px;height:11px;border-radius:2px;background:${this.C.vs};"></div>` : "";
+      return `<div style="position:relative;width:${box}px;height:${box}px;flex:none;">
+        ${b(g.runners.second, "left:50%;top:" + (box > 40 ? "2px" : "0") + ";transform:translateX(-50%) rotate(45deg);")}
+        ${b(g.runners.third, "left:" + (box > 40 ? "2px" : "0") + ";top:48%;transform:translateY(-50%) rotate(45deg);")}
+        ${b(g.runners.first, "right:" + (box > 40 ? "2px" : "0") + ";top:48%;transform:translateY(-50%) rotate(45deg);")}
+        ${home}
+      </div>`;
+    }
+    // The model's read on the upcoming pitch, flattened for rails and chips.
+    nextCall(g) {
+      const pres = (g.m && g.m.pitch_result) || {}, spd = (g.m && g.m.pitch_speed_ou) || {};
+      const rec = pres.recommendation;
+      const p = pres.probs && rec && pres.probs[rec] != null ? Math.round(pres.probs[rec] * 100) : null;
+      return {
+        label: rec ? (PH.OUTCOME_LABEL[rec] || rec) : "—",
+        pct: p == null ? "" : `${p}%`,
+        velo: spd.predictedValue != null ? `${Number(spd.predictedValue).toFixed(1)}` : "—",
+        rows: ["strike_foul", "ball", "in_play"]
+          .filter((n) => pres.probs && pres.probs[n] != null)
+          .map((n) => ({ name: n, label: PH.OUTCOME_LABEL[n] || n, pct: Math.round(pres.probs[n] * 100), rec: n === rec }))
+          .sort((a, b) => b.pct - a.pct),
+      };
+    }
+    OUT_COLOR = { out: "#6aa2ff", hit: "#e0a83a", strikeout: "#a37bff", walk: "#4fb877", in_play: "#6aa2ff", ball: "#8493aa", strike_foul: "#4ade80" };
+    abRows(g) {
+      const abr = (g.m && g.m.ab_result) || {};
+      return ["out", "hit", "strikeout", "walk"].map((n) => {
+        const oc = (abr.outcomes || []).find((x) => x.name === n) || { modelProb: 0 };
+        return { name: n, label: PH.OUTCOME_LABEL[n] || n, pct: Math.round((oc.modelProb || 0) * 100), rec: n === abr.recommendation, c: this.OUT_COLOR[n] };
+      }).sort((a, b) => b.pct - a.pct);
+    }
+    focused() {
+      if (!PH.games.length) return null;
+      return PH.games.find((g) => g.gamePk === this.state.focusGame) || PH.games[0];
+    }
+
+    // ── Live Board · game rail (1c) / focus strip (1b) ────────────────────
+    gameRailHtml(focusPk, mobile) {
+      const C = this.C;
+      const items = PH.games.map((g) => {
+        const on = g.gamePk === focusPk;
+        const nc = this.nextCall(g);
+        const mini = `${g.score.away}–${g.score.home} ${g.half}${g.inning}`;
+        if (mobile) {
+          return `<button data-act="focusGame" data-arg="${g.gamePk}" style="flex:none;display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:82px;border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${C.txt};font-family:inherit;padding:6px 9px;border-radius:10px;text-align:left;cursor:pointer;opacity:${g.stale ? 0.7 : 1};">
+            <span style="font-size:11px;font-weight:800;letter-spacing:.02em;color:${on ? C.grn : C.txt};">${esc(g.label)}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${on ? C.gsub : C.mut};">${esc(mini)}</span>
+          </button>`;
+        }
+        return `<button data-act="focusGame" data-arg="${g.gamePk}" style="display:flex;flex-direction:column;gap:6px;text-align:left;border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.panel};border-radius:11px;padding:10px 11px;font-family:inherit;color:${C.txt};cursor:pointer;opacity:${g.stale ? 0.7 : 1};">
+          <div style="display:flex;align-items:center;gap:7px;">
+            <span style="font-size:13px;font-weight:800;">${esc(g.label)}</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:${C.dim};">${esc(mini)}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:${C.mut};min-width:0;">
+            <span style="font-family:'IBM Plex Mono',monospace;">${esc(g.count)}</span>
+            <span style="width:1px;height:10px;background:${C.bd2};"></span>
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(this.shortName(g.batter.name))}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:10px;font-weight:800;letter-spacing:.04em;color:${on ? C.grn : C.dim};background:${on ? "rgba(74,222,128,.16)" : C.chip};padding:2px 6px;border-radius:5px;white-space:nowrap;">${esc(nc.label)} ${esc(nc.pct)}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:${C.faint};">${esc(nc.velo)}</span>
+          </div>
+        </button>`;
+      }).join("");
+      if (mobile) {
+        return `<div class="phv-sc" style="flex:none;display:flex;gap:6px;overflow-x:auto;padding:10px 14px;border-bottom:1px solid ${C.bd};background:${C.rail};">${items}</div>`;
+      }
+      return `<div class="phv-sc" style="border-right:1px solid ${C.bd};background:${C.rail};overflow-y:auto;padding:14px 12px;">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;padding:0 2px;">
+          <span style="font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">Live games</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};">${PH.games.length}</span>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;">${items}</div>
+      </div>`;
+    }
+
+    // ── Live Board · broadcast situation strip ────────────────────────────
+    situationHtml(g, mobile) {
+      const C = this.C;
+      if (mobile) {
+        return `<div style="flex:none;background:${C.rail};border-bottom:1px solid ${C.bd};padding:11px 14px 12px;">
+          <div style="display:flex;align-items:center;gap:10px;">
+            <div style="display:flex;align-items:baseline;gap:5px;font-family:'IBM Plex Mono',monospace;">
+              <span style="font-size:11px;font-weight:600;color:${C.blue};">${esc(g.away)}</span>
+              <span style="font-size:28px;font-weight:700;line-height:1;">${esc(g.score.away)}</span>
+              <span style="font-size:15px;color:${C.vs};">–</span>
+              <span style="font-size:28px;font-weight:700;line-height:1;">${esc(g.score.home)}</span>
+              <span style="font-size:11px;font-weight:600;color:${C.blue};">${esc(g.home)}</span>
+            </div>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:${C.grn};">${esc(g.half)} ${esc(g.inning)}</span>
+            <div style="margin-left:auto;">${this.diamondHtml(g, 36, 12)}</div>
+            ${this.bsoHtml(g, 8)}
+          </div>
+          <div style="display:flex;gap:14px;margin-top:9px;font-size:12.5px;">
+            <div><span style="color:${C.blue};font-size:10.5px;font-weight:700;">PITCHING</span> <b style="font-weight:700;">${esc(this.player(g.pitcher))}</b></div>
+            <div><span style="color:${C.blue};font-size:10.5px;font-weight:700;">AT BAT</span> <b style="font-weight:700;">${esc(this.player(g.batter))}</b></div>
+          </div>
+        </div>`;
+      }
+      return `<div style="display:flex;align-items:center;gap:26px;flex-wrap:wrap;background:${C.rail};border:1px solid ${C.bd};border-radius:14px;padding:14px 18px;margin-bottom:16px;">
+        <div style="display:flex;align-items:baseline;gap:8px;font-family:'IBM Plex Mono',monospace;">
+          <span style="font-size:12px;font-weight:600;color:${C.blue};">${esc(g.away)}</span>
+          <span style="font-size:34px;font-weight:700;line-height:1;">${esc(g.score.away)}</span>
+          <span style="font-size:18px;color:${C.vs};">–</span>
+          <span style="font-size:34px;font-weight:700;line-height:1;">${esc(g.score.home)}</span>
+          <span style="font-size:12px;font-weight:600;color:${C.blue};">${esc(g.home)}</span>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+          <span style="font-size:16px;line-height:1;color:${C.grn};">${esc(g.half)}</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:${C.dim};">Inn ${esc(g.inning)}</span>
+        </div>
+        ${this.diamondHtml(g, 52, 16)}
+        ${this.bsoHtml(g, 11)}
+        <div style="display:flex;flex-direction:column;gap:6px;margin-left:auto;font-size:13.5px;">
+          <div style="display:flex;gap:10px;"><span style="color:${C.blue};width:60px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">Pitching</span><b style="font-weight:700;">${esc(this.player(g.pitcher))}</b></div>
+          <div style="display:flex;gap:10px;"><span style="color:${C.blue};width:60px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">At bat</span><b style="font-weight:700;">${esc(this.player(g.batter))}</b><span style="color:${C.faint};font-family:'IBM Plex Mono',monospace;font-size:12px;">on deck ${esc(this.shortName(g.onDeckBatter && g.onDeckBatter.name))}</span></div>
+        </div>
+      </div>`;
+    }
+
+    // ── Live Board · the green prediction panel ───────────────────────────
+    predPanelHtml(g, mobile) {
+      const C = this.C;
+      const nc = this.nextCall(g);
+      const abr = (g.m && g.m.ab_result) || {};
+      const abp = (g.m && g.m.ab_pitches_ou) || {};
+      const abOver = this.abLikelyOver(g.pitches);
+      const tag = abOver ? "for pitch #1 · next batter" : `for pitch #${g.pitches.length + 1} of this at-bat`;
+      const pending = abOver && !g.nextPred;
+      const rows = this.abRows(g);
+      const abCall = PH.OUTCOME_LABEL[abr.recommendation] || abr.recommendation || "—";
+      const abProj = abp.predictedValue != null ? Number(abp.predictedValue).toFixed(1) : "—";
+      const head = `<div style="display:flex;align-items:center;gap:7px;margin-bottom:${mobile ? 8 : 10}px;">
+        <span style="width:7px;height:7px;border-radius:50%;background:${C.grn};animation:ph-pulse 1.8s ease-in-out infinite;"></span>
+        <span style="font-size:${mobile ? 10 : 10.5}px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.grn};">Next pitch · ${esc(tag)}</span>
+      </div>`;
+      // The predicted values carry the panel, so they are set at the headline
+      // weight and colour: call · probability · projected velocity on one line.
+      const bigVal = `font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 24 : 23}px;font-weight:700;color:${C.txt};line-height:1;letter-spacing:-.01em;`;
+      const bigCall = `<div style="display:flex;align-items:baseline;gap:${mobile ? 8 : 10}px;flex-wrap:wrap;${mobile ? "" : "margin-bottom:12px;"}">
+        <span style="font-size:${mobile ? 26 : 28}px;font-weight:800;letter-spacing:-.03em;line-height:1;">${esc(nc.label)}</span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 21 : 22}px;font-weight:600;color:${C.grn};line-height:1;">${esc(nc.pct)}</span>
+        <span style="font-size:${mobile ? 18 : 19}px;line-height:1;color:${C.gsub};">·</span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 21 : 22}px;font-weight:700;color:${C.txt};line-height:1;">${esc(nc.velo)} <span style="font-size:13px;font-weight:600;color:${C.gsub};">mph</span></span>
+      </div>`;
+      const dist = mobile
+        ? `<div style="display:flex;gap:6px;margin-top:11px;">${nc.rows.map((r) => `
+            <div style="flex:1;background:rgba(0,0,0,.28);border-radius:9px;padding:7px 8px;">
+              <div style="font-size:10.5px;font-weight:700;color:${r.rec ? C.grn : C.gsub};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.label)}</div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;margin-top:2px;">${r.pct}%</div>
+            </div>`).join("")}</div>`
+        : nc.rows.map((r) => `
+            <div style="display:grid;grid-template-columns:84px 1fr 52px;gap:10px;align-items:center;padding:4px 0;">
+              <span style="font-size:12.5px;font-weight:${r.rec ? 700 : 500};color:${r.rec ? C.grn : C.gsub};">${esc(r.label)}</span>
+              <span style="height:7px;background:#0b1c14;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;width:${r.pct}%;background:${r.rec ? C.grn : "#2f7a52"};"></span></span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;text-align:right;">${r.pct}%</span>
+            </div>`).join("");
+      const veloLine = mobile
+        ? `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:11px;padding-top:10px;border-top:1px solid ${C.gbd};font-size:12.5px;">
+            <span style="color:${C.gsub};">Pitch #</span><b style="${bigVal}">${abOver ? 1 : g.pitches.length + 1}</b>
+          </div>`
+        : "";
+      const abBlock = `<div style="margin-top:${mobile ? 13 : 14}px;padding-top:${mobile ? 12 : 13}px;border-top:1px solid ${C.gbd};">
+        <div style="font-size:${mobile ? 10 : 10.5}px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.gsub};margin-bottom:${mobile ? 7 : 8}px;">At-bat outcome</div>
+        <div style="display:flex;align-items:baseline;gap:${mobile ? 8 : 10}px;margin-bottom:${mobile ? 10 : 12}px;">
+          <span style="font-size:${mobile ? 26 : 28}px;font-weight:800;letter-spacing:-.03em;line-height:1;color:${C.txt};">${esc(abCall)}</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 21 : 22}px;font-weight:600;color:${C.grn};line-height:1;">${esc(this.pct(abr.modelProb))}</span>
+        </div>
+        ${mobile
+          ? `<div style="display:flex;height:9px;border-radius:999px;overflow:hidden;background:rgba(0,0,0,.35);">${rows.map((r) => `<span style="display:block;height:100%;width:${r.pct}%;background:${r.c};"></span>`).join("")}</div>
+             <div style="display:flex;flex-wrap:wrap;gap:7px 13px;margin-top:9px;">${rows.map((r) => `<span style="display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#a6c5b3;"><span style="width:8px;height:8px;border-radius:2px;background:${r.c};"></span>${esc(r.label)} <b style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:${C.txt};">${r.pct}%</b></span>`).join("")}</div>`
+          : rows.map((r) => `
+            <div style="display:grid;grid-template-columns:84px 1fr 52px;gap:10px;align-items:center;padding:4px 0;">
+              <span style="font-size:12.5px;font-weight:${r.rec ? 700 : 500};color:${r.rec ? C.grn : C.gsub};">${esc(r.label)}</span>
+              <span style="height:7px;background:#0b1c14;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;width:${r.pct}%;background:${r.rec ? C.grn : "#2f7a52"};"></span></span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;text-align:right;">${r.pct}%</span>
+            </div>`).join("")}
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:${mobile ? 11 : 12}px;font-size:12.5px;">
+          <span style="color:${C.gsub};">Total pitches</span><b style="${bigVal}">${esc(abProj)}</b>
+          <span style="color:${C.gsub};">Thrown</span><b style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:${C.dim};">${esc(g.pitchCountPa)}</b>
+        </div>
+      </div>`;
+      return `<div style="border:1px solid ${C.acc};border-radius:14px;background:${C.gbg};padding:${mobile ? "13px 14px" : "15px 16px"};${mobile ? "margin-bottom:12px;" : ""}">
+        ${head}
+        ${pending
+          ? `<div style="font-size:13px;color:${C.gsub};font-style:italic;">At-bat over — the read on the next batter's first pitch arrives when they step in.</div>`
+          : bigCall + dist + veloLine}
+        ${abBlock}
+      </div>`;
+    }
+
+    // ── Live Board · dense pitch log ─────────────────────────────────────
+    pitchLogHtml(g, mobile) {
+      const C = this.C;
+      const cols = mobile ? "30px 30px 1fr 1.3fr" : "46px 54px 1fr 1.5fr";
+      const pitches = g.pitches.slice().reverse();
+      const rows = pitches.map((p) => {
+        const called = p.pred && p.pred.speed != null ? p.pred.speed : null;
+        const d = called == null || p.speed == null ? null : called - p.speed;
+        const vg = this.grd(this.veloBand(d));
+        const rm = this.resultMeta(p.desc);
+        const rg = this.grd(p.pred && p.pred.resultOk === true ? "good" : p.pred && p.pred.resultOk === false ? "bad" : null);
+        const cat = p.pred && p.pred.resultCat ? p.pred.resultCat : null;
+        const xres = cat ? (PH.OUTCOME_LABEL[cat] || cat) : "—";
+        const xpct = p.pred && p.pred.resultProb != null ? `${Math.round(p.pred.resultProb * 100)}%` : "";
+        const delta = d == null ? "—" : (d >= 0 ? "+" : "−") + Math.abs(d).toFixed(1);
+        if (mobile) {
+          return `<div style="display:grid;grid-template-columns:${cols};gap:6px;align-items:stretch;padding:6px 10px;border-bottom:1px solid ${C.row};">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:${C.dim};align-self:center;">${esc(p.balls)}-${esc(p.strikes)}</span>
+            <span style="font-size:11px;font-weight:800;color:${this.pitchColor(p.type)};align-self:center;">${esc(p.type)}</span>
+            <span style="display:block;border-radius:7px;background:${vg.bg};padding:5px 7px;">
+              <span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:13.5px;font-weight:600;line-height:1.1;color:${vg.fg};">${p.speed == null ? "—" : esc(p.speed.toFixed(1))}</span>
+              <span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:${C.mut};">${called == null ? "—" : esc(called.toFixed(1))} · ${esc(delta)}</span>
+            </span>
+            <span style="display:block;border-radius:7px;background:${rg.bg};padding:5px 7px;min-width:0;">
+              <span style="display:block;font-size:12px;font-weight:700;line-height:1.15;color:${rg.fg === C.dim ? rm[1] : rg.fg};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(rm[0])}</span>
+              <span style="display:block;font-size:10px;color:${C.mut};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(xres)} ${esc(xpct)}</span>
+            </span>
+          </div>`;
+        }
+        return `<div style="display:grid;grid-template-columns:${cols};gap:10px;align-items:stretch;padding:8px 14px;border-bottom:1px solid ${C.row};">
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;color:${C.dim};align-self:center;">${esc(p.balls)}-${esc(p.strikes)}</span>
+          <span style="font-size:12px;font-weight:800;color:${this.pitchColor(p.type)};align-self:center;">${esc(p.type)}</span>
+          <span style="display:flex;align-items:baseline;gap:9px;border-radius:8px;background:${vg.bg};padding:6px 10px;">
+            <b style="font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:600;color:${vg.fg};">${p.speed == null ? "—" : esc(p.speed.toFixed(1))}</b>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:${C.mut};white-space:nowrap;">called ${called == null ? "—" : esc(called.toFixed(1))}</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${vg.fg};">${esc(delta)}</span>
+          </span>
+          <span style="display:flex;align-items:baseline;gap:9px;border-radius:8px;background:${rg.bg};padding:6px 10px;min-width:0;">
+            <b style="font-size:13.5px;font-weight:700;color:${rg.fg === C.dim ? rm[1] : rg.fg};white-space:nowrap;">${esc(rm[0])}</b>
+            <span style="font-size:12.5px;color:${C.mut};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">called ${esc(xres)} <span style="font-family:'IBM Plex Mono',monospace;">${esc(xpct)}</span></span>
+          </span>
+        </div>`;
+      }).join("");
+      const head = `<div style="display:grid;grid-template-columns:${cols};gap:${mobile ? 6 : 10}px;padding:${mobile ? "7px 10px" : "9px 14px"};border-bottom:1px solid ${C.bd};background:${C.panel2};font-size:${mobile ? 9.5 : 10.5}px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:${C.faint};">
+        <span>Cnt</span><span>Type</span><span>${mobile ? "Velo" : "Velo · called"}</span><span>${mobile ? "Result" : "Result · called"}</span>
+      </div>`;
+      const empty = `<div style="padding:${mobile ? "14px 10px" : "16px 14px"};font-size:13px;color:${C.faint};font-style:italic;">Fresh at-bat — no pitches thrown yet.</div>`;
+      return head + (rows || empty);
+    }
+
+    // ── Live Board · earlier at-bats (client-accumulated) ─────────────────
+    earlierRows(g, mobile) {
+      const C = this.C;
+      const hist = this.paHist[g.gamePk] || [];
+      return hist.map((h) => {
+        const rg = this.grd(h.callOk === true ? "good" : h.callOk === false ? "bad" : null);
+        const pg = this.grd(h.pitchBand), vg = this.grd(h.veloBand), kg = this.grd(h.pickBand);
+        const pc = `${h.projPitches != null ? h.projPitches.toFixed(1) : "—"}/${h.pitches}`;
+        const ve = h.avgErr == null ? "—" : (h.avgErr >= 0 ? "+" : "−") + Math.abs(h.avgErr).toFixed(1);
+        const rec = h.gradedN ? `${h.right}/${h.gradedN}` : "—";
+        const callTxt = h.call ? `${PH.OUTCOME_LABEL[h.call] || h.call}` : "—";
+        const callPct = h.callProb != null ? `${Math.round(h.callProb * 100)}%` : "";
+        if (mobile) {
+          return `<div style="display:grid;grid-template-columns:1fr 50px 42px 34px;gap:6px;align-items:center;padding:7px 10px;border-bottom:1px solid ${C.row};background:#0f1a2c;">
+            <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><b style="font-size:11.5px;font-weight:700;">${esc(this.shortName(h.batter))}</b> <span style="font-size:11px;font-weight:700;padding:2px 5px;border-radius:5px;background:${rg.bg};color:${rg.fg};">${esc(h.outcomeLabel)}</span></span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;text-align:center;padding:3px 0;border-radius:6px;background:${pg.bg};color:${pg.fg};">${esc(pc)}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;text-align:center;padding:3px 0;border-radius:6px;background:${vg.bg};color:${vg.fg};">${esc(ve)}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;text-align:center;padding:3px 0;border-radius:6px;background:${kg.bg};color:${kg.fg};">${esc(rec)}</span>
+          </div>`;
+        }
+        return `<div style="display:grid;grid-template-columns:92px 2fr 74px 62px 50px;gap:12px;align-items:center;padding:9px 14px;border-bottom:1px solid ${C.row};font-size:13px;">
+          <span style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(this.shortName(h.batter))}</span>
+          <span style="display:flex;align-items:baseline;gap:9px;border-radius:8px;background:${rg.bg};padding:5px 10px;min-width:0;">
+            <b style="font-weight:700;color:${rg.fg};white-space:nowrap;">${esc(h.outcomeLabel)}</b>
+            <span style="font-size:12.5px;color:${C.mut};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">called ${esc(callTxt)} <span style="font-family:'IBM Plex Mono',monospace;">${esc(callPct)}</span></span>
+          </span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;text-align:center;padding:5px 0;border-radius:7px;background:${pg.bg};color:${pg.fg};">${esc(pc)}</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;text-align:center;padding:5px 0;border-radius:7px;background:${vg.bg};color:${vg.fg};">${esc(ve)}</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;text-align:center;padding:5px 0;border-radius:7px;background:${kg.bg};color:${kg.fg};">${esc(rec)}</span>
+        </div>`;
+      }).join("");
+    }
+
+    // ── Live Board · locations (1c right column) ──────────────────────────
+    zonePanelHtml(g) {
+      const C = this.C;
+      const seen = [];
+      const dots = g.pitches.map((p) => {
+        const pos = this.zonePos(p.zone);
+        if (!seen.includes(p.type)) seen.push(p.type);
+        return `<span style="position:absolute;left:${pos[0]}%;top:${pos[1]}%;transform:translate(-50%,-50%);width:22px;height:22px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:${C.bg};background:${this.pitchColor(p.type)};">${esc(p.n)}</span>`;
+      }).join("");
+      const legend = seen.map((t) => `<span style="display:inline-flex;align-items:center;gap:7px;font-size:12px;color:${C.dim};"><span style="width:9px;height:9px;border-radius:50%;background:${this.pitchColor(t)};"></span>${esc(t)}</span>`).join("");
+      return `<div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};padding:15px 16px;">
+        <div style="font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};margin-bottom:11px;">Locations · this at-bat</div>
+        <div style="display:flex;gap:16px;align-items:flex-start;">
+          <div style="position:relative;width:150px;height:158px;flex:none;">
+            <div style="position:absolute;left:25%;top:23%;width:50%;height:54%;border:1.5px solid ${C.bd2};border-radius:3px;background:${C.panel2};"></div>
+            <div style="position:absolute;left:41.67%;top:23%;width:1px;height:54%;background:${C.bd};"></div>
+            <div style="position:absolute;left:58.33%;top:23%;width:1px;height:54%;background:${C.bd};"></div>
+            <div style="position:absolute;left:25%;top:41%;width:50%;height:1px;background:${C.bd};"></div>
+            <div style="position:absolute;left:25%;top:59%;width:50%;height:1px;background:${C.bd};"></div>
+            ${dots || `<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font-size:12px;color:${C.faint};font-style:italic;">no pitches yet</div>`}
+          </div>
+          <div style="flex:1;display:flex;flex-direction:column;gap:7px;">${legend}</div>
+        </div>
+      </div>`;
+    }
+
+    // ══ LIVE BOARD (1b mobile · 1c desktop) ══════════════════════════════
+    liveHtml() {
+      const C = this.C;
+      if (!PH.games.length) {
+        return `<div style="padding:0 14px;">
+          <div style="margin:18px 0 12px;">
+            <h1 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.liveTitle)}</h1>
+            <p style="margin:.3rem 0 0;color:${C.mut};font-size:.95rem;">${esc(COPY.liveSub)}</p>
+          </div>
+          <div style="padding:3.5rem 1rem;text-align:center;background:${C.panel};border:1px solid ${C.bd};border-radius:14px;">
+            <div style="font-size:1.05rem;font-weight:700;margin-bottom:.35rem;">No live games right now</div>
+            <div style="font-size:.9rem;color:${C.mut};">The board wakes up automatically at first pitch — <button data-act="goHome" style="border:0;background:transparent;color:${C.grn};font-family:inherit;font-weight:700;font-size:.9rem;cursor:pointer;padding:0;">see today's schedule</button>.</div>
+          </div>
+        </div>`;
+      }
+      const g = this.focused();
+      const mobile = this.mob();
+      const hist = this.paHist[g.gamePk] || [];
+
+      if (mobile) {
+        return `<div style="display:flex;flex-direction:column;min-height:0;">
+          ${this.gameRailHtml(g.gamePk, true)}
+          ${this.situationHtml(g, true)}
+          <div style="padding:12px 14px 20px;">
+            ${this.predPanelHtml(g, true)}
+            <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:7px;">
+              <span style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">Pitch log · newest first</span>
+              <span style="font-size:10.5px;color:${C.faint};">shading = call accuracy</span>
+            </div>
+            <div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;">
+              ${this.pitchLogHtml(g, true)}
+              ${hist.length ? `
+              <div style="display:grid;grid-template-columns:1fr 50px 42px 34px;gap:6px;padding:7px 10px;border-top:1px solid ${C.bd};border-bottom:1px solid ${C.bd};background:${C.panel2};font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:${C.faint};">
+                <span>Earlier at-bats</span><span style="text-align:center;">P·pred</span><span style="text-align:center;">Velo</span><span style="text-align:center;">Picks</span>
+              </div>
+              ${this.earlierRows(g, true)}` : ""}
+            </div>
+            <div style="font-size:10.5px;color:${C.faint};padding:8px 2px 0;line-height:1.5;">Velo shading — <span style="color:${this.GRD.good.fg};font-weight:700;">green</span> within 1.5 mph, <span style="color:${this.GRD.amber.fg};font-weight:700;">amber</span> within 3, <span style="color:${this.GRD.bad.fg};font-weight:700;">red</span> beyond. Class calls are green when right, red when wrong.</div>
+          </div>
+        </div>`;
+      }
+
+      const nar = this.narrow();
+      return `<div style="display:grid;grid-template-columns:${nar ? 216 : 268}px minmax(0,1fr);min-height:calc(100vh - 190px);">
+        ${this.gameRailHtml(g.gamePk, false)}
+        <div style="padding:18px 24px 28px;min-width:0;">
+          <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
+            <h1 style="margin:0;font-size:27px;font-weight:800;letter-spacing:-.02em;">${esc(g.label)}</h1>
+            <span style="font-size:13px;color:${C.mut};">${esc(g.venue)} · ${esc(g.weather)}</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:12px;color:${C.faint};">model ${esc(g.modelVersion || "—")} · ${g.stale ? "paused (no pitch 30s+)" : "live"}</span>
+          </div>
+          ${this.situationHtml(g, false)}
+          <div style="display:grid;grid-template-columns:${nar ? "minmax(0,1fr)" : "minmax(0,1fr) 380px"};gap:16px;align-items:start;">
+            <div style="display:flex;flex-direction:column;gap:12px;min-width:0;">
+              <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;">
+                <span style="font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">At-bat feed · newest first</span>
+                <span style="font-size:11.5px;color:${C.faint};">shading = call accuracy · green ≤1.5 mph · amber ≤3 · red beyond</span>
+              </div>
+              <div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};overflow:hidden;">${this.pitchLogHtml(g, false)}</div>
+              <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:4px;">
+                <span style="font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">Earlier at-bats</span>
+                <span style="font-size:11.5px;color:${C.faint};">${hist.length ? `${hist.length} seen since this tab opened` : "none yet this session"}</span>
+              </div>
+              <div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel2};overflow:hidden;">
+                <div style="display:grid;grid-template-columns:92px 2fr 74px 62px 50px;gap:12px;padding:9px 14px;border-bottom:1px solid ${C.bd};background:${C.panel3};font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:${C.faint};">
+                  <span>Batter</span><span>Result · called</span><span style="text-align:center;">P pred/act</span><span style="text-align:center;">Avg velo err</span><span style="text-align:center;">Picks</span>
+                </div>
+                ${hist.length ? this.earlierRows(g, false) : `<div style="padding:14px;font-size:12.5px;color:${C.faint};font-style:italic;">Finished at-bats land here as the game goes on — the feed only serves the current plate appearance, so this list starts empty on reload.</div>`}
+              </div>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:14px;">
+              ${this.predPanelHtml(g, false)}
+              ${this.zonePanelHtml(g)}
+            </div>
+          </div>
+        </div>
+      </div>`;
+    }
+
+    // ══ GRADED LOG (session-accumulated, feeds the Data Feed) ═════════════
+    // /live exposes only the current plate appearance and no prediction history,
+    // so the Data Feed's log and analytics are built by grading each pitch as
+    // it arrives and keeping the result for this tab's session. A per-game (or
+    // per-day) graded-prediction endpoint would make all of it durable.
+    trackGradedLog(games) {
+      if (!this.gradedLog) { this.gradedLog = []; this._seenPitch = {}; }
+      (games || []).forEach((g) => {
+        (g.pitches || []).forEach((p) => {
+          const key = `${g.gamePk}|${g.inning}${g.half}|${g.batter.name}|${p.n}`;
+          if (this._seenPitch[key]) return;
+          this._seenPitch[key] = 1;
+          const base = {
+            t: Date.now(), pk: g.gamePk, game: g.label, inning: g.inning,
+            pitcher: g.pitcher.name, batter: g.batter.name,
+            matchup: `${this.shortName(g.pitcher.name)} → ${this.shortName(g.batter.name)}`,
+            count: `${p.balls}-${p.strikes}`, outs: g.outs, type: p.type, speed: p.speed,
+            model: g.modelVersion || "—",
+          };
+          if (p.pred && p.pred.speed != null && p.speed != null) {
+            const err = p.pred.speed - p.speed;
+            this.gradedLog.unshift(Object.assign({}, base, {
+              id: key + "|v", mkt: "VELO",
+              pred: `${p.pred.speed.toFixed(1)} mph`, predRaw: p.pred.speed.toFixed(1),
+              actual: `${p.speed.toFixed(1)}`, actualRaw: p.speed.toFixed(1),
+              err: (err >= 0 ? "+" : "−") + Math.abs(err).toFixed(1), errAbs: Math.abs(err),
+              band: this.veloBand(err), hit: Math.abs(err) <= 1.5,
+            }));
+          }
+          if (p.pred && p.pred.resultCat && p.desc) {
+            const ok = p.pred.resultOk;
+            this.gradedLog.unshift(Object.assign({}, base, {
+              id: key + "|c", mkt: "CLASS",
+              pred: PH.OUTCOME_LABEL[p.pred.resultCat] || p.pred.resultCat,
+              predRaw: `${p.pred.resultCat} ${p.pred.resultProb != null ? Math.round(p.pred.resultProb * 100) + "%" : ""}`,
+              conf: p.pred.resultProb, actual: this.resultMeta(p.desc)[0], actualRaw: p.desc,
+              err: ok == null ? "ungraded" : ok ? "correct" : "miss",
+              band: ok == null ? null : ok ? "good" : "bad", hit: ok === true,
+            }));
+          }
+        });
+      });
+      if (this.gradedLog.length > 400) this.gradedLog.length = 400;
+    }
+    dfRows() {
+      const scope = this.state.dfGame;
+      let rows = (this.gradedLog || []);
+      if (scope !== "all") rows = rows.filter((r) => r.pk === scope);
+      return rows;
+    }
+    dfStats(rows) {
+      const velo = rows.filter((r) => r.mkt === "VELO");
+      const cls = rows.filter((r) => r.mkt === "CLASS" && r.band != null);
+      const mae = velo.length ? velo.reduce((a, r) => a + r.errAbs, 0) / velo.length : null;
+      const within = velo.length ? velo.filter((r) => r.hit).length / velo.length : null;
+      const clsHit = cls.length ? cls.filter((r) => r.hit).length / cls.length : null;
+      return { velo, cls, mae, within, clsHit, n: rows.length };
+    }
+    fmtTime(t) {
+      const d = new Date(t);
+      return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+    }
+
+    // ══ DATA FEED (1e mobile · 1d desktop) ═══════════════════════════════
     dataHtml() {
-      if (!PH.games.length) return `<div style="padding:3rem 0;text-align:center;color:var(--faint);">No live games right now.</div>`;
-      const sel = PH.games.find((g) => g.gamePk === this.state.feedGame) || PH.games[0];
-      // Live game panels (same selective view as the Live Board): score, inning,
-      // batter + count, and the model's quick next-pitch read.
-      const gameSel = PH.games.map((g) => {
-        const on = g.gamePk === sel.gamePk;
-        const pres = g.m.pitch_result || {}, spd = g.m.pitch_speed_ou || {};
-        const rec = pres.recommendation;
-        const call = rec ? (PH.OUTCOME_LABEL[rec] || rec) : "—";
-        const callPct = pres.probs && rec && pres.probs[rec] != null ? `${Math.round(pres.probs[rec] * 100)}%` : "";
-        const velo = spd.predictedValue != null ? `${Number(spd.predictedValue).toFixed(1)} mph` : "—";
-        const style = `display:flex;flex-direction:column;gap:.42rem;text-align:left;border:1px solid ${on ? "var(--accent)" : "var(--border)"};background:${on ? "var(--good-bg)" : "var(--surface)"};color:var(--text);font-family:inherit;padding:.6rem .7rem;border-radius:12px;cursor:pointer;transition:all .14s;opacity:${g.stale ? 0.7 : 1};`;
-        return `<button data-act="feedGame" data-arg="${g.gamePk}" style="${style}">
-          <span style="display:flex;align-items:center;gap:.4rem;">
-            <span style="width:7px;height:7px;border-radius:50%;background:${g.stale ? "var(--amber)" : "var(--accent)"};flex:none;"></span>
-            <span style="font-weight:800;font-size:.84rem;">${esc(g.label)}</span>
-            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:.76rem;font-weight:600;color:var(--text-2);">${esc(g.score.away)}–${esc(g.score.home)} ${esc(g.half)}${esc(g.inning)}</span>
-          </span>
-          <span style="display:flex;align-items:center;gap:.4rem;font-size:.76rem;color:var(--muted);min-width:0;">
-            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(g.batter.name)}</span>
-            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(g.count)}</span>
-          </span>
-          <span style="display:flex;align-items:center;gap:.4rem;">
-            <span style="font-size:.68rem;font-weight:800;letter-spacing:.03em;padding:.12rem .38rem;border-radius:5px;background:${on ? "rgba(74,222,128,.16)" : "var(--track)"};color:${on ? "var(--good-strong)" : "var(--text-2)"};white-space:nowrap;">${esc(call)} ${esc(callPct)}</span>
-            <span style="font-family:'IBM Plex Mono',monospace;font-size:.7rem;color:var(--faint);">${esc(velo)}</span>
-          </span>
+      const C = this.C;
+      const mobile = this.mob();
+      if (!PH.games.length) {
+        return `<div style="padding:2.5rem 14px;text-align:center;color:${C.faint};">No live games right now — the data feed fills as pitches are graded.</div>`;
+      }
+      const rows = this.dfRows();
+      const st = this.dfStats(rows);
+      const scopeLabel = this.state.dfGame === "all"
+        ? "all live games"
+        : (PH.games.find((x) => x.gamePk === this.state.dfGame) || {}).label || "all live games";
+
+      // ── game panels ────────────────────────────────────────────────────
+      const allOn = this.state.dfGame === "all";
+      const allChip = `<button data-act="dfGame" data-arg="all" style="border:1px solid ${allOn ? C.acc : C.bd};background:${allOn ? "#12301f" : C.chip};color:${allOn ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:${mobile ? 11.5 : 12}px;padding:${mobile ? "4px 11px" : "5px 12px"};border-radius:999px;cursor:pointer;">All${mobile ? "" : " games"}</button>`;
+      const panels = PH.games.map((g) => {
+        const on = g.gamePk === this.state.dfGame;
+        const nc = this.nextCall(g);
+        return `<button data-act="dfGame" data-arg="${g.gamePk}" style="${mobile ? "flex:none;width:158px;" : ""}display:flex;flex-direction:column;gap:6px;text-align:left;border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.panel};border-radius:12px;padding:${mobile ? "9px 10px" : "10px 11px"};font-family:inherit;color:${C.txt};cursor:pointer;opacity:${g.stale ? 0.7 : 1};">
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:${mobile ? 12 : 12.5}px;font-weight:800;color:${on ? C.grn : C.txt};">${esc(g.label)}</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 10.5 : 11}px;font-weight:600;color:${on ? C.gsub : C.dim};">${esc(g.score.away)}–${esc(g.score.home)} ${esc(g.half)}${esc(g.inning)}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:7px;font-size:${mobile ? 11 : 11.5}px;color:${C.mut};min-width:0;">
+            <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(this.shortName(g.batter.name))}</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;color:${C.dim};">${esc(g.count)}</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:6px;">
+            <span style="font-size:${mobile ? 9.5 : 10}px;font-weight:800;letter-spacing:.03em;color:${on ? C.grn : C.dim};background:${on ? "rgba(74,222,128,.16)" : C.chip};padding:2px ${mobile ? 5 : 6}px;border-radius:5px;white-space:nowrap;">${esc(nc.label)} ${esc(nc.pct)}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 10 : 10.5}px;color:${C.faint};">${esc(nc.velo)}</span>
+          </div>
         </button>`;
       }).join("");
 
-      const dataGrid = "52px 52px 46px minmax(132px,1fr) minmax(180px,1.3fr)";
-      const pitchEmpty = sel.pitches.length === 0;
-      const pitchRows = sel.pitches.map((p) => `<div class="ph-table-row">
-          <div class="ph-cell" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(p.balls)}-${esc(p.strikes)}</span></div>
-          <div class="ph-cell" data-label="Type"><span style="font-weight:700;color:${this.pitchColor(p.type)};">${esc(p.type)}</span></div>
-          <div class="ph-cell" data-label="Zone"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(p.zone)}</span></div>
-          <div class="ph-cell" data-label="Velo">${this.veloCellHtml(p.speed, p.pred, false)}</div>
-          <div class="ph-cell" data-label="Result">${this.resultCellHtml(p, p.pred, false)}</div>
-        </div>`).join("");
-      const abOverSel = this.abLikelyOver(sel.pitches);
-      const nextRow = sel.nextPred ? `
-        <div class="ph-table-row ph-next">
-          <div class="ph-cell" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;font-weight:700;color:var(--accent);">${esc(abOverSel ? "0-0" : sel.count)}</span></div>
-          <div class="ph-cell" data-label="Type"><span style="font-size:.62rem;font-weight:800;letter-spacing:.05em;color:var(--accent);border:1px solid var(--accent);border-radius:5px;padding:.12rem .28rem;white-space:nowrap;">NEXT</span></div>
-          <div class="ph-cell" data-label="Zone"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">—</span></div>
-          <div class="ph-cell" data-label="Velo">${this.veloCellHtml(null, sel.nextPred, true)}</div>
-          <div class="ph-cell" data-label="Result">${this.resultCellHtml(null, sel.nextPred, true)}</div>
-        </div>` : "";
+      // ── KPI tiles ──────────────────────────────────────────────────────
+      const kpiDefs = [
+        { label: "Velo MAE", value: st.mae == null ? "—" : st.mae.toFixed(2), unit: "mph", c: st.mae == null ? C.dim : this.grd(this.veloBand(st.mae)).fg, sub: `mean |called − actual| · n=${st.velo.length}` },
+        { label: "Velo within 1.5", value: st.within == null ? "—" : Math.round(st.within * 100) + "%", c: st.within == null ? C.dim : st.within >= 0.5 ? this.GRD.good.fg : this.GRD.amber.fg, sub: `green band share · n=${st.velo.length}` },
+        { label: "Class hit rate", value: st.clsHit == null ? "—" : Math.round(st.clsHit * 100) + "%", c: st.clsHit == null ? C.dim : st.clsHit >= 0.5 ? this.GRD.good.fg : this.GRD.amber.fg, sub: `strike/ball/in-play · n=${st.cls.length}` },
+        { label: "Graded this session", value: String(st.n), c: C.txt, sub: `${scopeLabel} · resets on reload` },
+      ];
+      const kpis = kpiDefs.map((k) => mobile
+        ? `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};padding:11px 12px;">
+            <div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:${C.faint};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(k.label)}</div>
+            <div style="font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:700;margin-top:5px;color:${k.c};">${esc(k.value)}</div>
+            <div style="font-size:10.5px;color:${C.faint};">${esc(k.sub)}</div>
+          </div>`
+        : `<div style="border:1px solid ${C.bd};border-radius:13px;background:${C.panel};padding:13px 15px;">
+            <div style="font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">${esc(k.label)}</div>
+            <div style="display:flex;align-items:baseline;gap:8px;margin-top:7px;">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:27px;font-weight:700;line-height:1;color:${k.c};">${esc(k.value)}</span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:${C.mut};">${esc(k.unit || "")}</span>
+            </div>
+            <div style="font-size:11.5px;color:${C.faint};margin-top:5px;">${esc(k.sub)}</div>
+          </div>`).join("");
 
-      const abr = sel.m.ab_result, abp = sel.m.ab_pitches_ou;
-      const abProj = abp.line != null
-        ? `${abp.recommendation === "over" ? "Over" : "Under"} ${abp.line} (proj ${abp.predictedValue != null ? abp.predictedValue : "—"})`
-        : "—";
-      const abCall = PH.OUTCOME_LABEL[abr.recommendation] || abr.recommendation || "—";
-      const abConf = abr.conf != null ? abr.conf : abr.modelProb;
+      // ── graded log ─────────────────────────────────────────────────────
+      const mkt = this.state.mkt;
+      const logRows = rows.filter((r) => mkt === "all" || r.mkt === mkt);
+      const mktChips = [["all", "All"], ["VELO", "Pitch velo"], ["CLASS", "Pitch result"]].map(([k, label]) => {
+        const on = mkt === k;
+        return `<button data-act="mkt" data-arg="${k}" style="border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${on ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;">${label}</button>`;
+      }).join("");
+      const mktTag = (m) => m === "VELO"
+        ? `background:rgba(106,162,255,.16);color:#6aa2ff;`
+        : `background:rgba(164,123,255,.16);color:#a37bff;`;
 
-      const cnt = (sel.count || "0-0").split("-").map(Number);
-      const balls = cnt[0] || 0, strikes = cnt[1] || 0;
-      const dots = (n, filled, color) => Array.from({ length: n }, (_, i) => `<span style="width:11px;height:11px;border-radius:50%;background:${i < filled ? color : "#22344d"};"></span>`).join("");
-      const basePos = { two: "left:50%;top:2px;transform:translateX(-50%) rotate(45deg);", three: "left:2px;top:50%;transform:translateY(-50%) rotate(45deg);", one: "right:2px;top:50%;transform:translateY(-50%) rotate(45deg);" };
-      const baseStyle = (onBase, pos) => `position:absolute;${pos}width:22px;height:22px;border-radius:4px;background:${onBase ? "#4ade80" : "#16263d"};border:2px solid ${onBase ? "#4ade80" : "#3a4c66"};`;
-
-      // The Edge column belongs to the wagering surface — the analytics board
-      // shows the model call and probability only.
-      const abGrid = WAGER ? "1fr 1.2fr 1.2fr .6fr .5fr .9fr auto" : "1fr 1.2fr 1.2fr .6fr .5fr .9fr";
-      const liveAtBats = PH.games.map((g) => {
-        const m = g.m.ab_result;
-        const edgeCell = WAGER
-          ? `<div class="ph-cell ph-cell--end" data-label="Edge"><span style="${this.chipSm(m.edge)}">${esc(this.fmtEdge(m.edge))}</span></div>`
-          : "";
-        return `<div class="ph-table-row" style="opacity:${g.stale ? 0.6 : 1};">
-            <div class="ph-cell" data-label="Game"><span style="font-weight:700;">${esc(g.label)}</span></div>
-            <div class="ph-cell" data-label="Pitcher"><span style="color:var(--text-2);">${esc(g.pitcher.name)}</span></div>
-            <div class="ph-cell" data-label="Batter"><span style="color:var(--text-2);">${esc(g.batter.name)}</span></div>
-            <div class="ph-cell" data-label="Count"><span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(g.count)}</span></div>
-            <div class="ph-cell" data-label="P"><span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(g.pitchCountPa)}</span></div>
-            <div class="ph-cell" data-label="Model call"><span style="font-weight:600;">${esc(PH.OUTCOME_LABEL[m.recommendation] || m.recommendation || "—")} <span style="color:var(--faint);font-weight:500;font-family:'IBM Plex Mono',monospace;font-size:.74rem;">${esc(this.pct(m.modelProb))}</span></span></div>
-            ${edgeCell}
+      const logCols = "66px 92px minmax(0,1.25fr) 44px minmax(0,1.15fr) minmax(0,1.35fr)";
+      const desktopLog = logRows.slice(0, 60).map((r) => {
+        const gr = this.grd(r.band);
+        return `<div style="display:grid;grid-template-columns:${logCols};gap:10px;align-items:center;padding:8px 14px;border-bottom:1px solid ${C.row};font-size:12.5px;">
+          <span style="font-family:'IBM Plex Mono',monospace;color:${C.faint};">${esc(this.fmtTime(r.t))}</span>
+          <span style="font-weight:700;font-size:12px;">${esc(r.game)}</span>
+          <span style="color:${C.dim};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.matchup)}</span>
+          <span style="font-family:'IBM Plex Mono',monospace;color:${C.mut};">${esc(r.count)}</span>
+          <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><span style="font-size:9.5px;font-weight:800;letter-spacing:.04em;${mktTag(r.mkt)}padding:2px 5px;border-radius:4px;margin-right:6px;">${r.mkt}</span><b style="font-family:'IBM Plex Mono',monospace;font-weight:600;">${esc(r.pred)}</b></span>
+          <span style="display:flex;align-items:baseline;gap:9px;border-radius:8px;background:${gr.bg};padding:5px 10px;min-width:0;">
+            <b style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:${gr.fg};white-space:nowrap;">${esc(r.actual)}</b>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.mut};white-space:nowrap;">${esc(r.err)}</span>
+          </span>
         </div>`;
       }).join("");
 
-      const d = this.dk();
-      const recentRows = PH.RECENT.map((r) => {
-        const tone = r.result === "win" ? (d ? ["#5fe093", "#123020"] : ["#0f7a44", "#e7f4ed"])
-          : r.result === "loss" ? (d ? ["#ff7b6b", "#3a1c1a"] : ["#c0392f", "#fbece9"])
-            : (d ? ["#e0a83a", "#33280d"] : ["#b07d12", "#fbf2dc"]);
-        const style = `color:${tone[0]};background:${tone[1]};font-weight:700;font-size:.68rem;padding:.16rem .45rem;border-radius:5px;letter-spacing:.03em;`;
-        return `<div class="ph-table-row">
-          <div class="ph-cell" data-label="Date"><span style="font-family:'IBM Plex Mono',monospace;color:var(--faint);">${esc(r.date.slice(5))}</span></div>
-          <div class="ph-cell" data-label="Game"><span style="font-weight:600;">${esc(r.matchup)}</span></div>
-          <div class="ph-cell" data-label="Batter"><span style="color:var(--text-2);">${esc(r.batter)}</span></div>
-          <div class="ph-cell" data-label="Pick"><span style="color:var(--text-2);">${esc(r.pick)}</span></div>
-          <div class="ph-cell" data-label="P"><span style="font-family:'IBM Plex Mono',monospace;color:var(--muted);">${esc(r.pitches)}</span></div>
-          <div class="ph-cell" data-label="Price"><span style="font-family:'IBM Plex Mono',monospace;color:var(--text-2);">${esc(this.am(r.price))}</span></div>
-          <div class="ph-cell ph-cell--end" data-label="Result"><span style="${style}">${esc(r.result.toUpperCase())}</span></div>
+      const mobileLog = logRows.slice(0, 40).map((r) => {
+        const gr = this.grd(r.band);
+        const open = this.state.openLog === r.id;
+        const kv = (k, v) => `<div style="display:flex;justify-content:space-between;gap:10px;"><span style="color:${C.faint};">${k}</span><span>${esc(v)}</span></div>`;
+        return `<div style="border-bottom:1px solid ${C.row};">
+          <div data-act="logRow" data-arg="${esc(r.id)}" style="display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:9px;align-items:center;padding:10px 12px;cursor:pointer;">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};">${esc(this.fmtTime(r.t))}</span>
+            <span style="min-width:0;">
+              <span style="display:block;font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.game)} · ${r.mkt}</span>
+              <span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.mut};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">called ${esc(r.pred)}</span>
+            </span>
+            <span style="display:block;border-radius:7px;background:${gr.bg};padding:4px 8px;text-align:right;">
+              <span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${gr.fg};white-space:nowrap;">${esc(r.actual)}</span>
+              <span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:10px;color:${C.mut};white-space:nowrap;">${esc(r.err)}</span>
+            </span>
+          </div>
+          ${open ? `<div style="padding:0 12px 12px;display:flex;flex-direction:column;gap:6px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.dim};">
+            ${kv("matchup", r.matchup)}${kv("count · outs", `${r.count} · ${r.outs}`)}${kv("predicted", r.predRaw)}${kv("actual", r.actualRaw)}${kv("error", r.err)}${kv("model", r.model)}${kv("graded", this.fmtTime(r.t))}
+          </div>` : ""}
         </div>`;
       }).join("");
 
-      // settled-picks proof points return with the graded record (wagering only)
-      const recentBlock = WAGER && PH.RECENT.length ? `
-      <div class="ph-microlabel" style="margin:0 0 .6rem;">Recently settled at-bats</div>
-      <div class="ph-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:.4rem .6rem;">
-        <div class="ph-table" style="--cols:.6fr 1fr 1.2fr 1.6fr .5fr .7fr auto;--minw:560px;">
-          <div class="ph-table-head ph-microlabel" style="padding:.5rem .4rem;">
-            <span>Date</span><span>Game</span><span>Batter</span><span>Pick</span><span>P</span><span>Price</span><span style="text-align:right;">Result</span>
-          </div>
-          ${recentRows}
+      const logEmpty = `<div style="padding:16px 14px;font-size:12.5px;color:${C.faint};font-style:italic;line-height:1.55;">Nothing graded yet this session. A row lands as soon as a pitch arrives with a prediction attached — the feed carries no prediction history, so the log starts empty on reload.</div>`;
+
+      // ── analytics modules (computed from the session log) ───────────────
+      const modCard = (title, body, note, right) => `<div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};padding:15px 16px;">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:12px;">
+          <span style="font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">${title}</span>
+          ${right || ""}
         </div>
-      </div>` : "";
+        ${body}
+        ${note ? `<div style="font-size:11.5px;color:${C.faint};margin-top:10px;padding-top:9px;border-top:1px solid ${C.row};line-height:1.5;">${note}</div>` : ""}
+      </div>`;
+      const thin = (msg) => `<div style="font-size:12.5px;color:${C.faint};font-style:italic;line-height:1.55;">${msg}</div>`;
 
-      return `
-      <div style="margin-bottom:.9rem;">
-        <h1 style="font-size:clamp(1.5rem,3vw,2.05rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.dataTitle)}</h1>
-        <p style="margin:.3rem 0 0;color:var(--muted);font-size:.95rem;">${esc(COPY.dataSub)}</p>
-      </div>
-      <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(196px,1fr));gap:.5rem;margin-bottom:1.1rem;">${gameSel}</div>
+      // calibration by market, with a naive baseline tick
+      const clsBase = (() => {
+        const counts = {};
+        st.cls.forEach((r) => { counts[r.actualRaw] = (counts[r.actualRaw] || 0) + 1; });
+        const top = Object.keys(counts).sort((a, b) => counts[b] - counts[a])[0];
+        return st.cls.length && top ? counts[top] / st.cls.length : null;
+      })();
+      const veloBase = (() => {
+        if (st.velo.length < 6) return null;
+        const mean = st.velo.reduce((a, r) => a + r.speed, 0) / st.velo.length;
+        return st.velo.filter((r) => Math.abs(mean - r.speed) <= 1.5).length / st.velo.length;
+      })();
+      const calibRows = [
+        { label: "Pitch velo · within 1.5 mph", hit: st.within, n: st.velo.length, base: veloBase, note: "vs always calling the session mean velo" },
+        { label: "Pitch result · class correct", hit: st.clsHit, n: st.cls.length, base: clsBase, note: "vs always calling the most common class" },
+      ].filter((r) => r.n > 0);
+      const calib = modCard("Calibration by market · this session",
+        calibRows.length ? calibRows.map((r) => {
+          const c = r.hit >= 0.6 ? this.GRD.good.fg : r.hit >= 0.45 ? this.GRD.amber.fg : this.GRD.bad.fg;
+          return `<div style="margin-bottom:11px;">
+            <div style="display:flex;align-items:baseline;justify-content:space-between;gap:8px;font-size:12.5px;">
+              <span style="color:${C.dim};">${esc(r.label)}</span>
+              <span><b style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:${c};">${Math.round(r.hit * 100)}%</b> <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};">n=${r.n}</span></span>
+            </div>
+            <div style="position:relative;height:7px;background:${C.chip};border-radius:999px;margin-top:6px;">
+              <span style="position:absolute;left:0;top:0;height:100%;border-radius:999px;width:${Math.round(r.hit * 100)}%;background:${c};display:block;"></span>
+              ${r.base == null ? "" : `<span style="position:absolute;top:-3px;left:${Math.round(r.base * 100)}%;width:2px;height:13px;background:${C.faint};display:block;"></span>`}
+            </div>
+            <div style="font-size:11px;color:${C.faint};margin-top:4px;">${esc(r.note)}</div>
+          </div>`;
+        }).join("") : thin("Fills in once graded pitches land."),
+        `Grey tick = naive baseline. Session-scoped: a per-day graded endpoint would let this cover the whole slate.`);
 
-      <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:stretch;margin-bottom:1.4rem;">
-        <div style="flex:1;min-width:min(290px,100%);background:var(--bc-bg);color:#eaf1f8;border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.06),0 8px 22px rgba(15,27,45,.14);padding:1.1rem 1.2rem;display:flex;flex-direction:column;">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-            <div style="font-size:.66rem;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#7fa0c4;">Live situation</div>
-            <div style="font-size:.72rem;color:#7fa0c4;font-family:'IBM Plex Mono',monospace;">${esc(sel.venue)}</div>
+      // velo trend by inning for the scoped pitcher(s)
+      const trend = (() => {
+        const src = st.velo.filter((r) => r.speed != null);
+        const byInn = {};
+        src.forEach((r) => { (byInn[r.inning] = byInn[r.inning] || []).push(r.speed); });
+        const innings = Object.keys(byInn).map(Number).sort((a, b) => a - b);
+        if (innings.length < 2) return null;
+        const bars = innings.map((i) => ({ inn: i, v: byInn[i].reduce((a, b) => a + b, 0) / byInn[i].length, n: byInn[i].length }));
+        const lo = Math.min.apply(null, bars.map((b) => b.v)), hi = Math.max.apply(null, bars.map((b) => b.v));
+        const drop = bars[bars.length - 1].v - bars[0].v;
+        return { bars, lo, hi, drop };
+      })();
+      const veloTrend = modCard("Velo trend by inning",
+        trend ? `<div style="display:flex;align-items:flex-end;gap:6px;">${trend.bars.map((b) => {
+          const h = trend.hi === trend.lo ? 40 : 16 + Math.round(((b.v - trend.lo) / (trend.hi - trend.lo)) * 46);
+          return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;">
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:${C.mut};">${b.v.toFixed(1)}</span>
+            <span style="width:100%;border-radius:4px 4px 0 0;background:${this.veloColor(b.v)};height:${h}px;display:block;"></span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:${C.faint};">${b.inn}</span>
+          </div>`;
+        }).join("")}</div>` : thin("Needs pitches from two or more innings this session."),
+        trend ? `Average actual velocity per inning across ${esc(scopeLabel)}.` : null,
+        trend ? `<span style="font-size:12px;font-weight:700;">${trend.drop >= 0 ? "+" : "−"}<span style="font-family:'IBM Plex Mono',monospace;color:${trend.drop < -1 ? C.red : C.dim};font-weight:600;">${Math.abs(trend.drop).toFixed(1)} mph</span></span>` : "");
+
+      // pitch mix by count bucket
+      const mix = (() => {
+        const src = rows.filter((r) => r.mkt === "VELO" && r.type);
+        if (src.length < 8) return null;
+        const bucket = (c) => {
+          const [b, s] = c.split("-").map(Number);
+          if (b === 0 && s === 0) return "0-0";
+          if (s > b) return "ahead";
+          if (b > s) return "behind";
+          return "even";
+        };
+        const cols = ["0-0", "ahead", "even", "behind"];
+        const tally = {}, totals = {};
+        src.forEach((r) => {
+          const bk = bucket(r.count);
+          tally[r.type] = tally[r.type] || {};
+          tally[r.type][bk] = (tally[r.type][bk] || 0) + 1;
+          totals[bk] = (totals[bk] || 0) + 1;
+        });
+        const types = Object.keys(tally).sort((a, b) => {
+          const sa = cols.reduce((x, c) => x + (tally[a][c] || 0), 0), sb = cols.reduce((x, c) => x + (tally[b][c] || 0), 0);
+          return sb - sa;
+        }).slice(0, 5);
+        return { cols, types, tally, totals, n: src.length };
+      })();
+      const mixCard = modCard("Pitch mix by count",
+        mix ? `<div style="display:grid;grid-template-columns:56px repeat(4,1fr);gap:5px;font-size:11px;">
+          <span></span>${mix.cols.map((c) => `<span style="font-family:'IBM Plex Mono',monospace;color:${C.faint};text-align:center;">${c}</span>`).join("")}
+          ${mix.types.map((t) => `<span style="font-weight:800;color:${this.pitchColor(t)};align-self:center;">${esc(t)}</span>${mix.cols.map((c) => {
+            const n = (mix.tally[t][c] || 0), tot = mix.totals[c] || 0;
+            const p = tot ? Math.round((n / tot) * 100) : null;
+            const a = p == null ? 0 : Math.min(0.34, (p / 100) * 0.42);
+            return `<span style="font-family:'IBM Plex Mono',monospace;text-align:center;padding:7px 0;border-radius:6px;background:rgba(34,165,102,${a.toFixed(2)});color:${p == null ? C.faint : C.txt};font-weight:600;">${p == null ? "—" : p + "%"}</span>`;
+          }).join("")}`).join("")}
+        </div>` : thin("Needs at least 8 graded pitches this session."),
+        mix ? `Share of pitches by type within each count state · n=${mix.n}.` : null);
+
+      // confidence vs accuracy
+      const conf = (() => {
+        const src = st.cls.filter((r) => r.conf != null);
+        if (src.length < 4) return null;
+        const buckets = [["<50%", 0, 0.5], ["50–60%", 0.5, 0.6], ["60–70%", 0.6, 0.7], ["70%+", 0.7, 1.01]];
+        return buckets.map(([label, lo, hi]) => {
+          const b = src.filter((r) => r.conf >= lo && r.conf < hi);
+          return { label, n: b.length, hit: b.length ? b.filter((r) => r.hit).length / b.length : null };
+        }).filter((b) => b.n > 0);
+      })();
+      const confCard = modCard("Confidence vs accuracy",
+        conf ? conf.map((b) => {
+          const c = b.hit >= 0.6 ? this.GRD.good.fg : b.hit >= 0.45 ? this.GRD.amber.fg : this.GRD.bad.fg;
+          return `<div style="display:grid;grid-template-columns:66px minmax(0,1fr) 92px;gap:10px;align-items:center;padding:4px 0;font-size:12.5px;">
+            <span style="font-family:'IBM Plex Mono',monospace;color:${C.dim};">${b.label}</span>
+            <span style="height:7px;background:${C.chip};border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;width:${Math.round(b.hit * 100)}%;background:${c};"></span></span>
+            <span style="font-family:'IBM Plex Mono',monospace;text-align:right;"><b style="font-weight:600;color:${c};">${Math.round(b.hit * 100)}%</b> <span style="font-size:11px;color:${C.faint};">n=${b.n}</span></span>
+          </div>`;
+        }).join("") : thin("Needs at least 4 graded class calls this session."),
+        "A calibrated model's hit rate should track its stated confidence.");
+
+      // mobile digest — only claims the session data actually supports
+      const digest = (() => {
+        const out = [];
+        if (st.velo.length >= 6) {
+          out.push({
+            c: st.mae <= 1.5 ? this.GRD.good.fg : st.mae <= 3 ? this.GRD.amber.fg : this.GRD.bad.fg,
+            kicker: "Velocity", head: `Calling velo to ${st.mae.toFixed(2)} mph on average`,
+            body: st.mae <= 1.5 ? "Inside the green band — the model is reading this pitcher's velocity well." : "Outside the green band; treat the velo line as soft here.",
+            stat1: `${Math.round(st.within * 100)}% within 1.5`, stat2: `n=${st.velo.length}`,
+          });
+        }
+        if (st.cls.length >= 6) {
+          out.push({
+            c: st.clsHit >= 0.5 ? this.GRD.good.fg : this.GRD.amber.fg,
+            kicker: "Pitch result", head: `${Math.round(st.clsHit * 100)}% of class calls landed`,
+            body: "Strike/foul, ball and in-play calls graded against what actually happened.",
+            stat1: `${st.cls.filter((r) => r.hit).length}/${st.cls.length} correct`, stat2: `${scopeLabel}`,
+          });
+        }
+        if (trend && Math.abs(trend.drop) >= 1) {
+          out.push({
+            c: trend.drop < 0 ? this.GRD.bad.fg : this.GRD.good.fg,
+            kicker: "Fatigue", head: `Velocity ${trend.drop < 0 ? "down" : "up"} ${Math.abs(trend.drop).toFixed(1)} mph since the first inning seen`,
+            body: "Averaged per inning across the pitches graded this session.",
+            stat1: `${trend.bars[0].v.toFixed(1)} → ${trend.bars[trend.bars.length - 1].v.toFixed(1)}`, stat2: `${trend.bars.length} innings`,
+          });
+        }
+        return out;
+      })();
+
+      // ── assemble ───────────────────────────────────────────────────────
+      if (mobile) {
+        return `<div style="padding:14px 14px 20px;">
+          <h1 style="margin:0;font-size:23px;font-weight:800;letter-spacing:-.02em;">${esc(COPY.dataTitle)}</h1>
+          <p style="margin:4px 0 14px;font-size:13px;color:${C.mut};">${esc(COPY.dataSub)}</p>
+
+          <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;">
+            <span style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">Live games</span>
+            ${allChip}
+            <span style="margin-left:auto;font-size:10.5px;color:${C.faint};">${esc(scopeLabel)}</span>
           </div>
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:.6rem;background:var(--bc-inner);border-radius:11px;padding:.7rem .9rem;">
-            <div style="display:flex;flex-direction:column;align-items:center;min-width:52px;">
-              <span style="font-size:.74rem;color:#9fb6d1;font-weight:700;letter-spacing:.03em;">${esc(sel.away)}</span>
-              <span style="font-family:'IBM Plex Mono',monospace;font-size:1.8rem;font-weight:600;line-height:1.1;">${esc(sel.score.away)}</span>
-            </div>
-            <div style="display:flex;flex-direction:column;align-items:center;gap:.15rem;">
-              <span style="font-size:1.1rem;line-height:1;color:#4ade80;">${esc(sel.half)}</span>
-              <span style="font-family:'IBM Plex Mono',monospace;font-size:.9rem;font-weight:600;color:#eaf1f8;">Inn ${esc(sel.inning)}</span>
-            </div>
-            <div style="display:flex;flex-direction:column;align-items:center;min-width:52px;">
-              <span style="font-size:.74rem;color:#9fb6d1;font-weight:700;letter-spacing:.03em;">${esc(sel.home)}</span>
-              <span style="font-family:'IBM Plex Mono',monospace;font-size:1.8rem;font-weight:600;line-height:1.1;">${esc(sel.score.home)}</span>
-            </div>
+          <div class="phv-sc" style="display:flex;gap:8px;overflow-x:auto;margin:0 -14px 14px;padding:0 14px 2px;">${panels}</div>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:9px;margin-bottom:14px;">${kpis}</div>
+
+          ${digest.length ? `
+          <div style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};margin-bottom:8px;">Today's read</div>
+          <div style="display:flex;flex-direction:column;gap:10px;margin-bottom:16px;">
+            ${digest.map((d) => `<div style="border:1px solid ${C.bd};border-left:3px solid ${d.c};border-radius:12px;background:${C.panel};padding:11px 13px;">
+              <div style="font-size:10px;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:${d.c};">${esc(d.kicker)}</div>
+              <div style="font-size:14.5px;font-weight:700;margin-top:4px;line-height:1.35;">${esc(d.head)}</div>
+              <div style="font-size:12.5px;color:${C.mut};margin-top:5px;line-height:1.45;">${esc(d.body)}</div>
+              <div style="display:flex;gap:12px;margin-top:8px;padding-top:8px;border-top:1px solid ${C.row};font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.dim};">
+                <span>${esc(d.stat1)}</span><span style="color:${C.vs};">·</span><span>${esc(d.stat2)}</span>
+              </div>
+            </div>`).join("")}
+          </div>` : ""}
+
+          <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:8px;">
+            <span style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">Graded log</span>
+            <span style="font-size:11px;color:${C.faint};">tap a row for raw values</span>
           </div>
-          <div style="display:flex;align-items:center;gap:1.2rem;margin-top:1rem;">
-            <div style="position:relative;width:96px;height:96px;flex:none;">
-              <div style="${baseStyle(sel.runners.second, basePos.two)}"></div>
-              <div style="${baseStyle(sel.runners.third, basePos.three)}"></div>
-              <div style="${baseStyle(sel.runners.first, basePos.one)}"></div>
-              <div style="position:absolute;bottom:2px;left:50%;transform:translateX(-50%) rotate(45deg);width:15px;height:15px;border-radius:2px;background:#eaf1f8;border:2px solid #eaf1f8;"></div>
-            </div>
-            <div style="display:flex;flex-direction:column;gap:.5rem;flex:1;">
-              <div style="display:flex;align-items:center;gap:.6rem;"><span style="font-size:.68rem;font-weight:700;color:#9fb6d1;width:14px;">B</span><div style="display:flex;gap:.32rem;">${dots(3, balls, "#4ade80")}</div></div>
-              <div style="display:flex;align-items:center;gap:.6rem;"><span style="font-size:.68rem;font-weight:700;color:#9fb6d1;width:14px;">S</span><div style="display:flex;gap:.32rem;">${dots(2, strikes, "#facc15")}</div></div>
-              <div style="display:flex;align-items:center;gap:.6rem;"><span style="font-size:.68rem;font-weight:700;color:#9fb6d1;width:14px;">O</span><div style="display:flex;gap:.32rem;">${dots(2, sel.outs, "#fb7185")}</div></div>
-            </div>
-          </div>
-          <div style="margin-top:1rem;padding-top:.85rem;border-top:1px solid #24354e;display:flex;flex-direction:column;gap:.5rem;">
-            <div style="display:flex;justify-content:space-between;gap:.6rem;font-size:.86rem;"><span style="color:#7fa0c4;">Pitcher</span><span style="font-weight:700;">${esc(this.player(sel.pitcher))}</span></div>
-            <div style="display:flex;justify-content:space-between;gap:.6rem;font-size:.86rem;"><span style="color:#7fa0c4;">At bat</span><span style="font-weight:700;">${esc(this.player(sel.batter))}</span></div>
-          </div>
-          <div style="margin-top:.85rem;background:var(--bc-inner);border-radius:11px;padding:.7rem .9rem;">
-            <div style="display:flex;justify-content:space-between;align-items:baseline;"><span style="font-size:.66rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#7fa0c4;">Model AB call</span><span style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:#4ade80;font-size:.9rem;">${esc(this.pct(abr.modelProb))}</span></div>
-            <div style="font-weight:800;font-size:1.2rem;margin-top:.15rem;">${esc(abCall)}</div>
-            <div style="height:6px;background:#0f1b2d;border-radius:999px;overflow:hidden;margin-top:.5rem;"><div style="height:100%;width:${Math.round((abConf || 0) * 100)}%;background:#4ade80;border-radius:999px;"></div></div>
-            <div style="font-size:.72rem;color:#7fa0c4;margin-top:.3rem;">${esc(this.pct(abConf))} model confidence · on deck ${esc(sel.onDeckBatter.name)}</div>
-          </div>
+          <div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;margin-bottom:16px;">${mobileLog || logEmpty}</div>
+
+          <div style="display:flex;flex-direction:column;gap:12px;">${calib}${veloTrend}${confCard}</div>
+        </div>`;
+      }
+
+      return `<div style="padding:20px 24px 28px;">
+        <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px;">
+          <h1 style="margin:0;font-size:27px;font-weight:800;letter-spacing:-.02em;">${esc(COPY.dataTitle)}</h1>
+          <p style="margin:0;font-size:13.5px;color:${C.mut};">${esc(COPY.dataSub)}</p>
+          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">graded live as pitches land · session-scoped</span>
         </div>
 
-        <div style="flex:1.5;min-width:min(340px,100%);background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:1rem 1.1rem;">
-          <div style="display:flex;align-items:center;justify-content:space-between;gap:.6rem;flex-wrap:wrap;margin-bottom:.7rem;">
-            <div style="font-weight:800;font-size:1rem;">${esc(sel.label)}</div>
-            <span style="font-size:.66rem;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--muted);">This at-bat</span>
-          </div>
-          <div class="ph-scroll"><div class="ph-table" style="--cols:${dataGrid};--minw:560px;">
-            <div class="ph-table-head ph-microlabel">
-              <span>Count</span><span>Type</span><span>Zone</span><span>Velo · called</span><span>Result · called</span>
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;">
+          <span style="font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">Live games</span>
+          ${allChip}
+          <span style="margin-left:auto;font-size:11.5px;color:${C.faint};">Showing <b style="color:${C.dim};font-weight:600;">${esc(scopeLabel)}</b> — pick a panel to scope the log and modules</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px;margin-bottom:16px;">${panels}</div>
+
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px;">${kpis}</div>
+
+        <div style="display:grid;grid-template-columns:${this.narrow() ? "minmax(0,1fr)" : "minmax(0,1fr) 400px"};gap:16px;align-items:start;">
+          <div style="min-width:0;">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+              <span style="font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};margin-right:2px;">Market</span>
+              ${mktChips}
+              <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">${logRows.length} rows</span>
             </div>
-            ${pitchEmpty && !nextRow ? `<div style="padding:1.1rem .3rem;color:var(--faint);font-style:italic;font-size:.84rem;">Fresh at-bat — no pitches thrown yet.</div>` : pitchRows + nextRow}
-          </div></div>
-          <div style="font-size:.72rem;color:var(--faint);padding:.5rem .3rem 0;">Each cell pairs the actual pitch with the model's call before it — <span style="color:var(--good-strong);font-weight:700;">green</span> within 1.5 mph, <span style="color:var(--amber);font-weight:700;">amber</span> within 3, <span style="color:var(--bad);font-weight:700;">red</span> beyond.</div>
-          ${this.atBatHistoryHtml(sel)}
-          <div style="display:flex;gap:1.4rem;flex-wrap:wrap;margin-top:.9rem;padding-top:.7rem;border-top:1px solid var(--track);font-size:.78rem;color:var(--text-2);">
-            <div><span style="color:var(--faint);">Pitches (PA)</span> <b style="font-weight:700;">${esc(sel.pitchCountPa)}</b></div>
-            <div><span style="color:var(--faint);">AB pitches proj</span> <b style="font-weight:700;color:var(--accent);">${esc(abProj)}</b></div>
-            <div><span style="color:var(--faint);">Model</span> <b style="font-weight:700;">${esc(sel.modelVersion || "—")}</b></div>
+            <div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};overflow:hidden;">
+              <div style="display:grid;grid-template-columns:${logCols};gap:10px;padding:10px 14px;border-bottom:1px solid ${C.bd};background:${C.panel2};font-size:10px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:${C.faint};">
+                <span>Time</span><span>Game</span><span>Matchup</span><span>Cnt</span><span>Prediction</span><span>Actual · error</span>
+              </div>
+              ${desktopLog || logEmpty}
+              ${desktopLog ? `<div style="padding:11px 14px;font-size:11.5px;color:${C.faint};line-height:1.5;">Streaming — a row lands the moment a pitch arrives with a prediction attached. Errors are signed: called minus actual. Shading grades the call — green within 1.5 mph, amber ≤3, red beyond; class calls green when right, red when wrong.</div>` : ""}
+            </div>
           </div>
+          <div style="display:flex;flex-direction:column;gap:14px;">${calib}${veloTrend}${mixCard}${confCard}</div>
         </div>
-      </div>
-
-      <div class="ph-microlabel" style="color:var(--muted);margin:0 0 .6rem;">Live at-bats · all games</div>
-      <div class="ph-scroll" style="background:var(--surface);border:1px solid var(--border);border-radius:14px;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);padding:.4rem .6rem;margin-bottom:1.6rem;">
-        <div class="ph-table" style="--cols:${abGrid};--minw:540px;">
-          <div class="ph-table-head ph-microlabel" style="padding:.5rem .4rem;">
-            <span>Game</span><span>Pitcher</span><span>Batter</span><span>Count</span><span>P</span><span>Model call</span>${WAGER ? `<span style="text-align:right;">Edge</span>` : ""}
-          </div>
-          ${liveAtBats}
-        </div>
-      </div>
-
-      ${recentBlock}`;
+      </div>`;
     }
 
     render() {
@@ -983,10 +1328,12 @@
       if (view === "home") main = this.homeHtml();
       else if (view === "live") main = this.liveHtml();
       else main = this.dataHtml();
+      this._bindMq();
+      const wide = view !== "home";
       this.root.innerHTML = `
         ${this.headerHtml()}
-        <main class="ph-main">${main}</main>
-        ${this.footerHtml()}`;
+        <main class="ph-main${wide ? " phv-wide" : ""}">${main}</main>
+        ${wide ? "" : this.footerHtml()}`;
     }
 
     // ── data lifecycle ────────────────────────────────────────────────────
@@ -1005,6 +1352,7 @@
           // [] is a real answer (no live games) — empty the board.
           PH.games = this._withoutFinals(games);
           this.trackAtBats(PH.games);
+          this.trackGradedLog(PH.games);
           if (PH.games.length && !PH.games.some((g) => g.gamePk === this.state.feedGame)) {
             this.state.feedGame = PH.games[0].gamePk;
           }

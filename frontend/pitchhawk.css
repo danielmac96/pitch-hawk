@@ -309,3 +309,25 @@ body { margin: 0; }
     transition: none !important;
   }
 }
+
+/* ============================================================
+   Ported board views (1b/1c mobile+desktop Live Board, 1d/1e Data
+   Feed). These views own their full width — the rail/situation
+   strip and the log grids are edge-to-edge, so the centred
+   .ph-main measure is dropped for them. Dark-only by design.
+   ============================================================ */
+.ph-main.phv-wide {
+  width: 100%;
+  max-width: none;
+  padding: 0 0 calc(4.8rem + env(safe-area-inset-bottom));
+}
+@media (min-width: 900px) {
+  .ph-main.phv-wide { padding-bottom: 0; }
+}
+
+/* Thin scrollbars for the game rail, feed and horizontal chip strips. */
+.phv-sc { scrollbar-width: thin; scrollbar-color: #31435f transparent; }
+.phv-sc::-webkit-scrollbar { width: 8px; height: 8px; }
+.phv-sc::-webkit-scrollbar-track { background: transparent; }
+.phv-sc::-webkit-scrollbar-thumb { background: #31435f; border-radius: 999px; }
+.phv-sc::-webkit-scrollbar-thumb:hover { background: #3f5673; }
