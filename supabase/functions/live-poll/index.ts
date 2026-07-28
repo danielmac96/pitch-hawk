@@ -109,7 +109,11 @@ Deno.serve(async (req) => {
       await db.from("live_state").update({ status: "final" })
         .eq("status", "live")
         .lt("updated_at", new Date(Date.now() - 20 * 60_000).toISOString());
-      await logRun("live-poll", startedAt, true, detail);
+      // Deliberately NOT logged to ingest_runs. This branch fires every 30s
+      // for the whole of every game window in which nothing is live, and it
+      // was producing ~90% of the table's rows — 46,972 rows on 2026-07-28,
+      // of which the last 200 were all `{"live_games": 0}`. The tick is still
+      // recorded in cron.job_run_details if it ever needs auditing.
       return json(detail);
     }
 

@@ -4,10 +4,13 @@ Builds on freq_v1's pitcher-vs-league blend + count-situation deltas, and
 layers in Phase 2 signals:
   * pitcher rolling stats (zone_rate, fastball velo, sample bump)
   * batter rolling stats (chase rate, hard-hit, k_rate)
-  * per-game pitcher workload (fatigue, days_rest)
-  * game context (weather; umpire branch wired but no data this phase)
   * static player_info (handedness for platoon)
   * matchup_history (pitcher x batter career rates)
+
+Workload (fatigue / days_rest), weather and umpire branches were removed in
+2026-07 along with the pitcher_game_log, game_context and umpire_stats tables
+they read — all three were created but never populated, so those branches never
+contributed to a single prediction. See migration 20260728000001.
 
 Every prediction returns features_used: list[str] enumerating which data
 sources actually contributed. The freq_v1 baseline must always succeed —
@@ -94,22 +97,6 @@ def _safe(fn, feature_name: str):
         return None
 
 
-def _lookup_umpire_zone_rate(umpire_id: int) -> float | None:
-    """Direct query into umpire_stats. Returns None if table is empty (the
-    expected state this phase) or the row is missing zone_rate."""
-    from backend.db.client import get_client
-    rows = (
-        get_client().table("umpire_stats")
-        .select("zone_rate").eq("umpire_id", int(umpire_id))
-        .limit(1).execute().data
-        or []
-    )
-    if not rows:
-        return None
-    zr = rows[0].get("zone_rate")
-    return float(zr) if zr is not None else None
-
-
 def _platoon_label(p_hand: str | None, b_side: str | None) -> str | None:
     """Return 'same' / 'opposite' / None. Switch hitters always bat opposite."""
     if not p_hand or not b_side:
@@ -130,7 +117,6 @@ class PitchPredictor:
     def predict_pitch_speed(self, context: dict) -> dict:
         cache = get_cache()
         pitcher_id = context.get("pitcher_id")
-        game_pk = context.get("game_pk")
 
         stats = cache.get_pitch_stats(pitcher_id)
         n = stats.sample_pitches if stats else 0
@@ -145,29 +131,12 @@ class PitchPredictor:
 
         blended = _blend(pitcher_speed, LEAGUE_AVG_SPEED, n)
 
-        log = _safe(lambda: cache.get_pitcher_game_log(game_pk, pitcher_id), "pitcher_game_log") if game_pk is not None else None
-        if log is not None:
-            pc = log.get("pitch_count_in_game") or 0
-            if pc > 100:
-                blended -= 1.2; features.append("fatigue")
-            elif pc > 80:
-                blended -= 0.7; features.append("fatigue")
-            elif pc > 60:
-                blended -= 0.3; features.append("fatigue")
-            dr = log.get("days_rest")
-            if dr == 0:
-                blended -= 0.5; features.append("days_rest")
-
-        ctx = _safe(lambda: cache.get_game_context(game_pk), "game_context") if game_pk is not None else None
-        if ctx is not None and not ctx.get("is_dome"):
-            temp = ctx.get("temperature_f")
-            if temp is not None:
-                t = float(temp)
-                if t < 40:
-                    blended -= 1.4; features.append("weather")
-                elif t < 50:
-                    blended -= 0.8; features.append("weather")
-
+        # Fatigue (pitch count in game / days rest) and weather adjustments used
+        # to live here, reading pitcher_game_log and game_context. Both tables
+        # were dropped in migration 20260728000001 — they were never populated,
+        # so these branches never fired. Velocity decay by pitch count remains a
+        # genuinely useful signal; when it returns it should be derived from a
+        # rollup over `pitches` rather than a separately ingested table.
         blended += _SPEED_DELTAS.get(_count_key(context), 0.0)
 
         return {
@@ -184,7 +153,6 @@ class PitchPredictor:
         cache = get_cache()
         pitcher_id = context.get("pitcher_id")
         batter_id = context.get("batter_id")
-        game_pk = context.get("game_pk")
 
         stats = cache.get_pitch_stats(pitcher_id)
         n = stats.sample_pitches if stats else 0
@@ -230,20 +198,10 @@ class PitchPredictor:
                 probs = _normalize(probs)
                 features.append("batter_rolling")
 
-        # Umpire branch: umpire_stats table is created but not populated this
-        # phase, so _lookup_umpire_zone_rate returns None and the branch
-        # never fires. Keeping the structure means we just need to populate
-        # the table to enable it.
-        if game_pk is not None:
-            ctx = _safe(lambda: cache.get_game_context(game_pk), "game_context")
-            ump_id = (ctx or {}).get("umpire_id") if ctx else None
-            if ump_id is not None:
-                ump_zone = _safe(lambda: _lookup_umpire_zone_rate(ump_id), "umpire_stats")
-                if ump_zone is not None and ump_zone > 0.92:
-                    probs["strike_foul"] = probs.get("strike_foul", 0.0) + 0.03
-                    probs = _normalize(probs)
-                    features.append("umpire")
-
+        # An umpire zone-rate adjustment used to live here, reading game_context
+        # for the umpire id and umpire_stats for the rate. Both tables were
+        # always empty, so the branch never fired once; dropped along with them
+        # in migration 20260728000001.
         delta = _PITCH_RESULT_DELTAS.get(_count_key(context))
         if delta:
             probs = _apply_delta(probs, delta)

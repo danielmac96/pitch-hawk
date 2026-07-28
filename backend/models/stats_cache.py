@@ -18,8 +18,6 @@ from typing import Optional
 
 from backend.config import (
     FALLBACK_TTL_SECONDS as _FALLBACK_TTL_SECONDS,
-    GAME_CTX_TTL_SECONDS as _GAME_CTX_TTL_SECONDS,
-    GAME_LOG_TTL_SECONDS as _GAME_LOG_TTL_SECONDS,
     MATCHUP_TTL_SECONDS as _MATCHUP_TTL_SECONDS,
     ROLLING_TTL_SECONDS as _ROLLING_TTL_SECONDS,
 )
@@ -120,8 +118,6 @@ class StatsCache:
         self._pitcher_rolling_fallback: dict[int, tuple[float, Optional[PitcherRollingStats]]] = {}
         self._batter_rolling_fallback: dict[int, tuple[float, Optional[BatterRollingStats]]] = {}
         self._matchup: dict[tuple[int, int], tuple[float, Optional[dict]]] = {}
-        self._game_ctx: dict[int, tuple[float, Optional[dict]]] = {}
-        self._pitcher_game_log_cache: dict[tuple[int, int], tuple[float, Optional[dict]]] = {}
         self._player_info: dict[int, Optional[dict]] = {}
 
     @property
@@ -237,8 +233,6 @@ class StatsCache:
             self._pitcher_rolling_fallback.clear()
             self._batter_rolling_fallback.clear()
             self._matchup.clear()
-            self._game_ctx.clear()
-            self._pitcher_game_log_cache.clear()
             self._loaded_at = datetime.now(timezone.utc)
 
         print(
@@ -413,53 +407,9 @@ class StatsCache:
         self._matchup[key] = (now, row)
         return row
 
-    def get_game_context(self, game_pk: Optional[int]) -> Optional[dict]:
-        if game_pk is None:
-            return None
-        gp = int(game_pk)
-        now = time.time()
-        cached = self._game_ctx.get(gp)
-        if cached is not None and now - cached[0] < _GAME_CTX_TTL_SECONDS:
-            return cached[1]
-        try:
-            rows = (
-                get_client().table("game_context")
-                .select("*").eq("game_pk", gp).limit(1).execute().data
-                or []
-            )
-        except Exception as exc:
-            print(f"[stats_cache] game_context failed game={gp}: {exc}")
-            self._game_ctx[gp] = (now, None)
-            return None
-        row = rows[0] if rows else None
-        self._game_ctx[gp] = (now, row)
-        return row
-
-    def get_pitcher_game_log(
-        self, game_pk: Optional[int], pitcher_id: Optional[int],
-    ) -> Optional[dict]:
-        if game_pk is None or pitcher_id is None:
-            return None
-        key = (int(game_pk), int(pitcher_id))
-        now = time.time()
-        cached = self._pitcher_game_log_cache.get(key)
-        if cached is not None and now - cached[0] < _GAME_LOG_TTL_SECONDS:
-            return cached[1]
-        try:
-            rows = (
-                get_client().table("pitcher_game_log")
-                .select("*")
-                .eq("game_pk", key[0]).eq("pitcher_id", key[1])
-                .limit(1).execute().data
-                or []
-            )
-        except Exception as exc:
-            print(f"[stats_cache] pitcher_game_log failed {key}: {exc}")
-            self._pitcher_game_log_cache[key] = (now, None)
-            return None
-        row = rows[0] if rows else None
-        self._pitcher_game_log_cache[key] = (now, row)
-        return row
+    # get_game_context() and get_pitcher_game_log() were removed here along with
+    # the game_context / pitcher_game_log tables (migration 20260728000001).
+    # Both tables were always empty, so both accessors only ever returned None.
 
     def get_player_info(self, player_id: Optional[int]) -> Optional[dict]:
         if player_id is None:

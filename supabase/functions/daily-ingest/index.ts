@@ -63,11 +63,23 @@ Deno.serve(async (req) => {
     for (const e of [e1, e2, e3]) if (e) errors.push(`rpc: ${e.message}`);
     detail.rolling = { pitchers: n1, batters: n2, matchups: n3 };
 
-    // Retention: bound the bookkeeping tables (ingest_runs 30d, odds 14d).
+    // Retention. Roll predictions up into prediction_accuracy_daily BEFORE
+    // pruning them — the rollup is the permanent accuracy record and the raw
+    // rows are the thing being deleted. Order matters here.
+    const { data: ra, error: e3b } = await svc().rpc("rollup_prediction_accuracy");
+    if (e3b) errors.push(`rollup: ${e3b.message}`);
+    detail.accuracy_rollup = ra;
+
+    // Bound the bookkeeping tables (ingest_runs 7d, odds 14d, predictions 21d).
     const { data: pr, error: e4 } = await svc().rpc("prune_ingest_runs");
     const { data: po, error: e5 } = await svc().rpc("prune_odds");
-    for (const e of [e4, e5]) if (e) errors.push(`prune: ${e.message}`);
-    detail.pruned = { ingest_runs: pr, odds: po };
+    // Skip the prune if the rollup failed, so a bad rollup can't silently
+    // destroy predictions we have no aggregate for.
+    const { data: pp, error: e6 } = e3b
+      ? { data: null, error: null }
+      : await svc().rpc("prune_predictions");
+    for (const e of [e4, e5, e6]) if (e) errors.push(`prune: ${e.message}`);
+    detail.pruned = { ingest_runs: pr, odds: po, predictions: pp };
 
     detail.errors = errors.slice(0, 10);
     await logRun("daily-ingest", startedAt, errors.length === 0, detail);

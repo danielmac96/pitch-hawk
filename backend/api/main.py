@@ -20,9 +20,7 @@ from backend.config import (
     STATS_REFRESH_SECONDS,
 )
 from backend.db.client import get_client, upsert_at_bats, upsert_live_state
-from backend.ingestion.game_context import upsert_game_context
 from backend.ingestion.mlb_api import get_live_games, get_play_by_play_with_at_bats
-from backend.ingestion.pitcher_game_log import update_pitcher_game_log
 from backend.ingestion.player_info import ensure_players
 from backend.jobs.settle_predictions import settle_pending
 from backend.models.predictor import PitchPredictor
@@ -141,23 +139,18 @@ def _upsert_pitches(pitches: list[dict]) -> int:
     return len(rows)
 
 
-async def _enrich_async(game_pk: int, pitches: list[dict], state: dict | None) -> None:
+async def _enrich_async(game_pk: int, pitches: list[dict]) -> None:
+    # game_context and pitcher_game_log enrichment used to run here. Both
+    # tables were dropped in migration 20260728000001 — neither ever held a
+    # row, because this FastAPI poller is a local-dev path and production
+    # ingestion runs through the Supabase edge functions, which never wrote
+    # them. player_info enrichment is the one step that mattered.
     all_pitchers = {p["pitcher_id"] for p in pitches if p.get("pitcher_id")}
     all_batters = {p["batter_id"] for p in pitches if p.get("batter_id")}
     try:
         await ensure_players(list(all_pitchers), list(all_batters))
     except Exception as exc:
         print(f"[POLLER] ensure_players failed game={game_pk}: {exc}")
-    try:
-        await upsert_game_context(game_pk)
-    except Exception as exc:
-        print(f"[POLLER] game_context failed game={game_pk}: {exc}")
-    pitcher_id = (state or {}).get("pitcher_id")
-    if pitcher_id is not None:
-        try:
-            await update_pitcher_game_log(game_pk, pitcher_id, pitches)
-        except Exception as exc:
-            print(f"[POLLER] pitcher_game_log failed game={game_pk}: {exc}")
 
 
 def _build_current_pa_pitches(pitches: list[dict]) -> list[dict]:
@@ -205,7 +198,7 @@ async def _process_game(game_pk: int) -> None:
     _spawn(_persist_game_async(game_pk, pitches, at_bats, state))
 
     # Phase 2 enrichments run detached so the next poll tick isn't blocked.
-    _spawn(_enrich_async(game_pk, pitches, state))
+    _spawn(_enrich_async(game_pk, pitches))
 
 
 def _persist_game(game_pk: int, pitches: list[dict], at_bats: list[dict], state: dict | None) -> int:

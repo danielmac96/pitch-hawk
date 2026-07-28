@@ -168,8 +168,6 @@ class _StubStatsCache:
     def get_pitcher_rolling(self, _pitcher_id): return None
     def get_batter_rolling(self, _batter_id): return None
     def get_matchup_history(self, _pitcher_id, _batter_id): return None
-    def get_game_context(self, _game_pk): return None
-    def get_pitcher_game_log(self, _game_pk, _pitcher_id): return None
     def get_player_info(self, _player_id): return None
 
 

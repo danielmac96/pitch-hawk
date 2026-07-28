@@ -206,7 +206,6 @@ def main(argv: list[str]) -> int:
     for t in (
         "pitcher_rolling_stats", "batter_rolling_stats",
         "matchup_history", "player_info",
-        "game_context", "pitcher_game_log",
     ):
         print(f"  {t:24s} = {_table_count(t)}")
     return 0

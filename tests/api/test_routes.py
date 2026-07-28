@@ -116,16 +116,13 @@ def test_sportsbooks_includes_disclaimer_and_books():
     assert len(body["books"]) == 5
 
 
-def test_track_click_never_fails_even_if_supabase_write_errors(monkeypatch):
+def test_track_click_route_is_gone(monkeypatch):
+    """POST /track/click was removed with the bet_clicks table in 2026-07
+    (migration 20260728000001). The funnel never recorded a row."""
     from backend.api.routes import bets as mod
 
-    def boom():
-        raise RuntimeError("supabase down")
-
-    monkeypatch.setattr(mod, "get_client", boom)
-    resp = _client_for(mod.router).post("/track/click", json={"game_pk": 1, "market": "ab_result"})
-    assert resp.status_code == 200
-    assert resp.json() == {"ok": True}
+    resp = _client_for(mod.router).post("/track/click", json={"game_pk": 1})
+    assert resp.status_code == 404
 
 
 # --- /admin/tables/preview ----------------------------------------------------

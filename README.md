@@ -138,7 +138,7 @@ There is no user auth. Two gates protect writes:
 ```mermaid
 flowchart LR
     subgraph Public
-        FE[Browser] -->|GET only + POST /track/click| API[api fn]
+        FE[Browser] -->|GET only| API[api fn]
     end
     subgraph Jobs
         CRON[pg_cron] -->|x-cron-secret header| FN[mutating edge functions]
@@ -364,13 +364,12 @@ supersede it.
 | `player_info` | player names, handedness, position |
 | `pitcher_rolling_stats` / `batter_rolling_stats` | 30-day aggregates the live scorer reads (refreshed daily via RPC) |
 | `matchup_history` | career pitcher×batter PA counts |
-| `game_context`, `pitcher_game_log`, `umpire_stats` | enrichment used by the local stack / future features |
 | `odds` | append-only odds snapshots per (game, market, source, outcome) with `implied_prob` and de-vigged `novig_prob`; pruned to 14d keeping the last snapshot |
-| `predictions` | append-only audit log of every scored market row; graded in place by `settle` |
+| `predictions` | append-only audit log of every scored market row; graded in place by `settle`; **21-day retention**, rolled up first into `prediction_accuracy_daily` |
+| `prediction_accuracy_daily` | permanent per-day/market/version accuracy aggregate; survives the `predictions` prune |
 | `picks` | curated published picks; unique `nulls not distinct (pick_date, game_pk, market, at_bat_index, recommendation)`; graded by `settle` |
-| `bet_clicks` | anonymous affiliate-click funnel (public INSERT, rate-limited in the api fn) |
 | `model_params` | model registry: one `is_active` row per market (partial unique index) |
-| `ingest_runs` | per-job run log (ok, detail JSON); 30-day retention |
+| `ingest_runs` | per-job run log (ok, detail JSON); 7-day retention; live-poll no-ops are not logged |
 | `backfill_progress` | single-row cursor for the self-draining backfill |
 | `app_secrets` | cron secret, functions URL, CORS allowlist, optional API keys — RLS with no policies |
 
@@ -423,7 +422,7 @@ project settings and Supabase `app_secrets`, not files.
 | `RATE_LIMIT_PER_MINUTE` | per-IP limit on the FastAPI app | `120` | optional |
 | `POLL_INTERVAL_SECONDS` | local live-poll cadence | `8` | optional |
 | `STATS_REFRESH_SECONDS` / `ROLLING_REFRESH_SECONDS` | local cache/aggregate refresh cadence | `3600` / `1800` | optional |
-| `FALLBACK_TTL_SECONDS`, `ROLLING_TTL_SECONDS`, `MATCHUP_TTL_SECONDS`, `GAME_CTX_TTL_SECONDS`, `GAME_LOG_TTL_SECONDS` | per-entity cache TTLs (`backend/config.py`) | see `.env.example` | optional |
+| `FALLBACK_TTL_SECONDS`, `ROLLING_TTL_SECONDS`, `MATCHUP_TTL_SECONDS` | per-entity cache TTLs (`backend/config.py`) | see `.env.example` | optional |
 | `ODDS_PROVIDER` | local odds provider selector | `stub` | optional |
 | `THE_ODDS_API_KEY` | local reference only — production reads `app_secrets.the_odds_api_key` | `…` | optional |
 
@@ -477,18 +476,24 @@ directory holds everything:
   paid feed; would need a worker outside pg_cron).
 - On-deck batter endpoint so the frontend's "Upcoming" projections stop being
   derived by perturbing the live book.
-- Umpire / weather features (`game_context`, `umpire_stats` are populated by
-  the local stack but unused by the hosted scorer).
+- Umpire / weather features. The `game_context` and `umpire_stats` tables were
+  dropped in 2026-07 (migration 20260728000001) after never holding a row; if
+  these features return they need real ingestion, not just the tables back.
+- Runners-on-base, times-through-order and cumulative in-game pitch count are
+  not captured on `pitches`. They are the main blockers for situational splits
+  and for pitcher velocity-decay trends on the Data Feed tab.
 - Reconcile migration version numbers between repo filenames and the live
   project's migration table (content matches; versions differ because early
   migrations were applied via MCP).
 
 **Nice-to-have**
-- Affiliate links per sportsbook (`SPORTSBOOK_AFF_*` secrets are reserved;
-  `bet_clicks` funnel already records `affiliate_configured`).
+- Affiliate links per sportsbook (`SPORTSBOOK_AFF_*` secrets are reserved). The
+  `bet_clicks` click funnel was removed in 2026-07 having recorded zero rows;
+  re-add it only alongside a real affiliate deal.
 - Frontend componentization if the SPA grows beyond three tabs.
 - Prior-season backfill (2022–2024) for bigger training sets — extend the
   backfill window.
 - Drop confirmed-unused indexes flagged by the performance advisor
-  (`pitches_pitcher_idx`, `bet_clicks_book_clicked_idx`) after a season of
-  traffic confirms.
+  (`pitches_batter_idx`, `at_bats_pitcher_idx`, `at_bats_batter_idx`) after a
+  season of traffic confirms — but note they are exactly what a pitcher/batter
+  history endpoint would need, so check that roadmap first.

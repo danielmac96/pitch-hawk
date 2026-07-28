@@ -1,10 +1,12 @@
 // Public read-only API for the Pitch Hawk frontend. Mirrors the FastAPI
-// contract (GET /live, /picks/today, /record, /sportsbooks, /games, /health,
-// POST /track/click) so the static frontend can point PITCH_EDGE_API at
+// contract (GET /live, /picks/today, /record, /sportsbooks, /games, /health)
+// so the static frontend can point PITCH_EDGE_API at
 // https://<ref>.functions.supabase.co/api and work unchanged.
 //
 // Deployed with verify_jwt=false: everything served here is public data that
-// already has an anon read policy; the only write is the click funnel.
+// already has an anon read policy. This function is now strictly read-only —
+// the POST /track/click click funnel was removed with the bet_clicks table
+// (migration 20260728000001), which never recorded a single row.
 
 import { json, svc } from "../_shared/db.ts";
 import { mlbToday } from "../_shared/mlb.ts";
@@ -86,19 +88,6 @@ async function cached(key: string, ttl: number, origin: string, fn: () => Promis
     if (status === 200 && ttl > 0) memo.set(key, { expires: now + ttl * 1000, text, status });
   }
   return new Response(text, { status, headers: { "Content-Type": "application/json", ...corsHeaders(origin, ttl) } });
-}
-
-// Per-IP in-memory rate limit for the public click funnel (10/min).
-const clickHits = new Map<string, { count: number; resetAt: number }>();
-function clickRateLimited(ip: string): boolean {
-  const now = Date.now();
-  if (clickHits.size > 5_000) {
-    for (const [k, v] of clickHits) if (v.resetAt < now) clickHits.delete(k);
-  }
-  const e = clickHits.get(ip);
-  if (!e || e.resetAt < now) { clickHits.set(ip, { count: 1, resetAt: now + 60_000 }); return false; }
-  e.count += 1;
-  return e.count > 10;
 }
 
 async function health(): Promise<Response> {
@@ -439,24 +428,6 @@ function jsonWith(body: unknown, origin: string, status = 200): Response {
   });
 }
 
-async function trackClick(req: Request, origin: string): Promise<Response> {
-  const ip = (req.headers.get("x-forwarded-for") ?? "").split(",")[0].trim() || "unknown";
-  if (clickRateLimited(ip)) return jsonWith({ ok: false, error: "rate_limited" }, origin, 429);
-  try {
-    const raw = await req.text();
-    if (raw.length > 1024) return jsonWith({ ok: false, error: "payload_too_large" }, origin, 413);
-    const body = JSON.parse(raw || "{}");
-    const num = (v: unknown) => (typeof v === "number" && isFinite(v) ? v : null);
-    const str = (v: unknown) => (typeof v === "string" ? v.slice(0, 64) : null);
-    await svc().from("bet_clicks").insert({
-      game_pk: num(body.game_pk), market: str(body.market),
-      side: str(body.side), book: str(body.book), edge: num(body.edge),
-      affiliate_configured: typeof body.affiliate_configured === "boolean" ? body.affiliate_configured : null,
-    });
-  } catch (_e) { /* fire-and-forget */ }
-  return jsonWith({ ok: true }, origin);
-}
-
 Deno.serve(async (req) => {
   const url = new URL(req.url);
   // Path arrives as /api/<route...>
@@ -464,7 +435,6 @@ Deno.serve(async (req) => {
   const origin = pickOrigin(await allowedOrigins(), req.headers.get("origin"));
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(origin) });
   try {
-    if (req.method === "POST" && route === "track/click") return await trackClick(req, origin);
     const em = route.match(/^edge\/(\d+)$/);
     if (em) return await cached(`edge/${em[1]}`, TTL["edge"], origin, () => edge(Number(em[1])));
     switch (route) {
