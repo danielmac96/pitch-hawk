@@ -440,6 +440,28 @@ Audience: a data scientist who knows MLB data and nothing about this app.
 10. **Known weaknesses** — the two sub-baseline markets and the two competing
     explanations
 
+### Findings added after tracing the scorer (2026-07-29)
+
+Four things surfaced while reading `_shared/model.ts` and `predictions` that the
+document must carry. All are verified; details in
+`docs/superpowers/plans/2026-07-29-models-onboarding-doc.md`.
+
+1. **`game_moneyline`'s trained model has never scored a live prediction.** All
+   48,964 moneyline rows are stamped `mlb_winprob_v1` — `live-poll` relays MLB's
+   own `/game/{pk}/winProbability` feed. The trained `log5` model is called only
+   by `odds-ingest`, which is deliberately unscheduled. **The 70.8% headline in
+   *Model performance* above is MLB's feed, not this app's model.**
+2. **`ab_pitches_ou`'s `heuristic_v0` fallback went 2–2,484** across 2,596 rows.
+   Not underperformance — a defect in the missing-table-cell branch of
+   `predictAbPitches`.
+3. **`ab_result` probabilities are knowingly miscalibrated and patched.**
+   `CALIB_SHRINK = 0.7` shrinks output toward the league prior because graded
+   picks showed model probability running ~1.4× the realized rate. Served
+   probabilities are not the model's raw output.
+4. **`pitcher_bb_delta` trains as a hardcoded 0.0** but is computed for real at
+   scoring time — training and serving disagree on one of six `ab_result`
+   features.
+
 ### The honest core of §6
 
 - **No holdout validation exists.** Every stored metric is in-sample, computed
