@@ -167,8 +167,18 @@ Parquet to R2.
 ```
 s3://pitch-hawk-warehouse/pitches/season=2026/month=07/day=2026-07-28.parquet
 s3://pitch-hawk-warehouse/at_bats/season=2026/month=07/day=2026-07-28.parquet
-s3://pitch-hawk-warehouse/predictions/day=2026-07-28.parquet
+s3://pitch-hawk-warehouse/predictions/season=2026/month=07/day=2026-07-28.parquet
+s3://pitch-hawk-warehouse/player_info/snapshot.parquet
+s3://pitch-hawk-warehouse/games/snapshot.parquet
 ```
+
+**Two snapshot datasets accompany the partitioned ones.** `player_info` (1,724
+rows) and `games` (4,120 rows) are overwritten in full each run. They are not
+pruned from Postgres and are not being offloaded — the warehouse copies exist
+only so DuckDB can join against them mid-query without a round trip to
+Supabase. `train_ab_result_cells` joins `player_info` twice for platoon splits,
+and the `at_bats` date partitioning resolves through `games.official_date`
+because `at_bats` has no index on `end_ts`.
 
 Only **final** games are exported. A suspended or in-progress game is skipped
 and retried the next night, so a partial game is never frozen into the
@@ -278,10 +288,15 @@ Pause `np-live-poll` for the duration and resume after.
 inserts ~3,800 rows and deletes ~3,800; autovacuum returns the space to the free
 space map and new inserts reuse it. The table stabilises at ~31 MB.
 
-**Drop the training RPCs in the same migration.** After the prune,
+**Drop the moved training RPCs in the same migration.** After the prune,
 `train_*_cells()` would silently return 35 days instead of two seasons and
-produce a quietly worse model. The five functions are dropped so that
-mistake is impossible.
+produce a quietly worse model. **Four** functions are dropped so that mistake is
+impossible: `train_pitch_result_cells`, `train_ab_result_cells`,
+`train_pitch_speed_cells`, `train_ab_pitches_cells`.
+
+**`train_home_advantage` stays.** It reads only `games`, which the prune never
+touches, so it remains a Postgres RPC and `game_moneyline` training is
+unaffected. (§6 previously implied all five moved; only four do.)
 
 ---
 
@@ -465,9 +480,10 @@ outage degrades a display, never live scoring.
 ### Dropped
 
 - `train_pitch_result_cells`, `train_ab_result_cells`,
-  `train_pitch_speed_cells`, `train_ab_pitches_cells`,
-  `train_home_advantage` — unsafe post-prune (§5.5)
+  `train_pitch_speed_cells`, `train_ab_pitches_cells` — unsafe post-prune (§5.5)
 - `refresh_matchup_history()` — moves to the warehouse
+
+**Kept:** `train_home_advantage` — reads only `games`, never pruned.
 
 ### Rebuilt
 
