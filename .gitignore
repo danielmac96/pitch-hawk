@@ -27,3 +27,8 @@ dist/
 CLAUDE.md
 .claude/settings.json
 graphify-out/
+
+# warehouse local dry-run output + backfill log
+.warehouse-local/
+.warehouse-smoke/
+warehouse-backfill.log
