@@ -81,6 +81,37 @@ Capacity has ~7 weeks of headroom, which this ordering comfortably fits.
 
 # Phase A — History in R2 (spec Phase 0)
 
+> ## ⚠ AS-BUILT, 2026-07-30 — Phase A is done, and differs from the tasks below
+>
+> Phase A was executed against a revised design (see spec §4a). **Tasks 1–7 as
+> written below are superseded.** They describe exporting Supabase → R2, which
+> would have captured 2 seasons of 17 columns; Supabase never held anything
+> older. The shipped implementation ingests from the **MLB Stats API**, giving
+> 11 seasons and 51 columns for the same work.
+>
+> **What actually shipped** (commit `adda1d7`):
+>
+> | File | Purpose |
+> |---|---|
+> | `warehouse/config.py` | R2 credentials, `FIRST_SEASON = 2015`, four Parquet schemas |
+> | `warehouse/store.py` | `R2Store` / `LocalStore` (as Task 2) |
+> | `warehouse/manifest.py` | index + integrity record (as Task 3) |
+> | `warehouse/mlb.py` | Stats API client, flatteners, `men_on_base()` |
+> | `warehouse/ingest.py` | day/range ingest, Parquet, checksums, manifest |
+> | `scripts/warehouse_backfill.py` | resumable season-by-season runner |
+> | `tests/warehouse/test_mlb_flatten.py` | 13 tests, all passing |
+>
+> **Still to do from this phase:** a `verify` path that re-fetches a day and
+> reconciles it against the manifest (Task 5's idea, applied to the API source
+> rather than Supabase). The ingest writes checksums already; nothing re-checks
+> them independently yet. **Phase D must not run until that exists.**
+>
+> **Do not treat Tasks 1–7 as work to do.** They are retained as the design
+> record. Phases B, C and D below are unaffected and still apply — the DuckDB
+> cell translations in Task 9 work unchanged, because the warehouse's column
+> names are a superset of the Postgres originals.
+
+
 ## Task 1: Package skeleton, config, and schemas
 
 **Files:**

@@ -152,6 +152,58 @@ so relocating them cannot break the website.
 
 ---
 
+## 4a. Revision, 2026-07-30 — history comes from the MLB API, not Supabase
+
+**What changed.** This spec assumed the warehouse would be filled by exporting
+`pitches`/`at_bats` from Supabase to R2. That was wrong in a way worth
+recording: **Supabase only ever held 2025–2026.** A Supabase-sourced export
+captures two seasons of six measured fields — everything older was never
+ingested in the first place.
+
+Ingesting from the MLB Stats API instead costs the same engineering work and
+yields far more. Verified against the live API on 2026-07-30:
+
+| | Supabase-sourced (as specced) | MLB-API-sourced (as built) |
+|---|---|---|
+| Seasons | 2 | **11 (2015–2026)** |
+| Games | ~4,100 | **~26,000** |
+| Pitches | 1.19M | **~7.2M** |
+| Columns per pitch | 17 | **51** |
+| Base state, score, TTO | absent | **captured** |
+| Measured size | — | **37 bytes/pitch** (vs 239 in Postgres) |
+
+**Era boundaries, measured not assumed.** Pitch velocity, zone, plate
+coordinates, spin and break appear from **2008** (PITCHf/x) and are entirely
+absent in 2007 and earlier. Launch speed and launch angle appear from **2015**
+(Statcast). The warehouse starts at 2015 so every season carries an identical
+field set and no model has to reason about a mixed schema. 2008–2014 remains
+available and is purely additive — the layout is partitioned by season.
+
+**Three of the five "cannot build" items in §2 are now unblocked**, and were
+never data gaps — the fields were in a response the ingest already fetched and
+discarded: base state (gap 1, *"the single biggest gap"*), in-game pitch count
+(gap 2), and score at pitch time (gap 4). Boxscore context (umpire, weather,
+wind, attendance) is one extra call per game and is captured too.
+
+**Target-leakage hazard, recorded so it is never reintroduced.** The API
+exposes `matchup.splits.menOnBase` returning `Empty`/`Men_On`/`RISP`/`Loaded` —
+apparently the RISP field, free. **It is the state AFTER the play.** Verified
+on game 776652: at-bat 5 is a single off empty bases and `splits` reports
+`Men_On`. Used as a pre-pitch feature it encodes the at-bat's own outcome, and
+a model trained on it would validate beautifully and be useless live — the same
+failure mode as the `r2_cells` problem in §8. The ingest derives base state
+from carried-forward occupancy instead and ignores the API field, with a
+regression test that sets it to a deliberately wrong value on every play.
+
+**Consequence for §5.5.** The reclaim is now *safer* than when specced: R2
+holds a strict superset of what Postgres ever held, so the export can no longer
+lose anything. The verify-before-prune gate stays regardless.
+
+Ongoing daily exports still read Supabase — it is the live ingest path and the
+warehouse only needs yesterday's finalised games, which Supabase has.
+
+---
+
 ## 5. The nightly warehouse job
 
 New workflow `.github/workflows/warehouse.yml`, scheduled after
