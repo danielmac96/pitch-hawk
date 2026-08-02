@@ -539,7 +539,9 @@ reintroduce the leak. Replace with:
 
 - [x] `manifest.is_verified()` requires an independently written `verified_by`
 - [x] `python -m warehouse status|verify|backfill|ingest` all work
-- [ ] Every day in 2025-03-27..2026-06-28 independently verified and recorded
+- [x] Every day in 2025-03-26..2026-06-29 independently verified and recorded —
+      **461 checked, 461 ok, 0 failed, 279 recorded, 182 legitimately empty,
+      13.6 min, exit 0**
 - [x] `R2_BUCKET` correct; a wrong bucket now raises
 - [x] `config.py` docstring matches the code
 
@@ -1021,7 +1023,7 @@ leadership, not silence.
 | Phase | Status | Owner | Done |
 |---|---|---|---|
 | 0 — Capacity incident | **complete** | Claude | 2026-08-02 |
-| 1 — Arm the gate | not started | | |
+| 1 — Arm the gate | **complete** | Claude | 2026-08-02 |
 | 2 — Close the drift | not started | | |
 | 3 — The prune | not started | | |
 | 4 — Read layer + aggregates | not started | | |
