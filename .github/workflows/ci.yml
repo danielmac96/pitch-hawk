@@ -52,13 +52,53 @@ jobs:
           PGPASSWORD: postgres
         run: |
           psql -h localhost -U postgres -c "create role anon; create role authenticated;"
-          # Apply every migration except those that need Supabase-only
-          # extensions/functions (pg_cron/pg_net). live_windows reschedules
-          # np-daily-ingest/np-live-poll and reads cron.job directly, so it
-          # fails on a stock Postgres exactly as cron.sql does.
+          # pg_cron is a Supabase-managed extension and is not installable on a
+          # stock Postgres image. Several migrations do real schema work AND
+          # (re)schedule a job in the same file -- 20260717000001 defines
+          # prune_cron_history, 20260716000001 and 20260728000003 reschedule
+          # jobs. Skipping those files to dodge the cron calls would silently
+          # drop their schema changes from CI coverage, which is how every
+          # migration after 2026-07-16 came to be untested.
+          #
+          # So: stub the surface those migrations actually touch. Bodies of
+          # plpgsql functions are not resolved at CREATE time, so only the
+          # objects called at top level need to exist.
+          psql -h localhost -U postgres -v ON_ERROR_STOP=1 <<'SQL'
+          create schema if not exists cron;
+          create table if not exists cron.job (
+              jobid bigserial primary key,
+              jobname text unique,
+              schedule text,
+              command text,
+              active boolean not null default true
+          );
+          create table if not exists cron.job_run_details (
+              runid bigserial primary key,
+              jobid bigint,
+              end_time timestamptz
+          );
+          create or replace function cron.schedule(text, text, text)
+          returns bigint language sql as $$
+              insert into cron.job (jobname, schedule, command)
+              values ($1, $2, $3)
+              on conflict (jobname) do update
+                  set schedule = excluded.schedule, command = excluded.command
+              returning jobid;
+          $$;
+          create or replace function cron.unschedule(bigint)
+          returns boolean language sql as $$
+              delete from cron.job where jobid = $1; select true;
+          $$;
+          create or replace function cron.unschedule(text)
+          returns boolean language sql as $$
+              delete from cron.job where jobname = $1; select true;
+          $$;
+          SQL
+          # cron.sql and harden_functions additionally need pg_net (net.http_post
+          # at top level), which has no equivalent stub worth maintaining.
           for f in supabase/migrations/*.sql; do
             case "$f" in
-              *_cron.sql|*_harden_functions.sql|*_live_windows.sql) echo "skip $f (needs pg_cron/pg_net)";;
+              *_cron.sql|*_harden_functions.sql) echo "skip $f (needs pg_net)";;
               *) echo "== $f"
                  psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f "$f";;
             esac
