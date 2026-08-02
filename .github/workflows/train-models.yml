@@ -9,10 +9,18 @@ name: Train models
 #
 # Run manually after the backfill has data, or on the weekly schedule below.
 
+# DISABLED 2026-08-02 (Phase 3). The schedule is removed, not commented out
+# inside an active `on:`, so there is no chance of it firing. scripts/
+# train_models.py now exits 2 with an explanation: the train_*_cells() RPCs it
+# reads were dropped in 20260802000002 because the hot-window swap cut pitches
+# and at_bats to 35 days. workflow_dispatch is kept so the job can still be
+# invoked deliberately once the deferred model layer re-points it at DuckDB
+# over R2 -- until then it will exit 2 by design.
+#
+#  schedule:
+#    - cron: "0 12 * * 1"   # Mondays 12:00 UTC
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "0 12 * * 1"   # Mondays 12:00 UTC
 
 concurrency:
   group: train-models
