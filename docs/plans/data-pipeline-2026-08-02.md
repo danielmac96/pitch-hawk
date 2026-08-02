@@ -537,11 +537,40 @@ reintroduce the leak. Replace with:
 
 ### Phase 1 exit criteria
 
-- [ ] `manifest.is_verified()` requires an independently written `verified_by`
-- [ ] `python -m warehouse status|verify|backfill|ingest` all work
+- [x] `manifest.is_verified()` requires an independently written `verified_by`
+- [x] `python -m warehouse status|verify|backfill|ingest` all work
 - [ ] Every day in 2025-03-27..2026-06-28 independently verified and recorded
-- [ ] `R2_BUCKET` correct; a wrong bucket now raises
-- [ ] `config.py` docstring matches the code
+- [x] `R2_BUCKET` correct; a wrong bucket now raises
+- [x] `config.py` docstring matches the code
+
+### Phase 1 — notes from execution (2026-08-02)
+
+**The delete-set range was widened to `2025-03-26..2026-06-29`.** Postgres
+deletes on `pitch_ts` (UTC); the warehouse partitions on `game_date`
+(`officialDate`). Those keys disagree by up to a day for every night game — a
+7pm ET first pitch lands on the next UTC day. Verifying only the nominal
+2025-03-27..2026-06-28 would leave the two boundary days unverified while
+Postgres rows attributable to them are inside the delete set. 461 calendar
+days, ~340 with games; the rest are off-days and the All-Star break, which the
+CLI reports as `empty` and does not count as verified coverage.
+
+**The manifest migration reported the honest state and it is worse than the
+docs claimed.** 6,033 entries (2,011 days × 3 datasets) went from
+"all verified" to **0 verified / 2,011 ingested-only**. Nothing was lost — the
+ingest timestamps were relabelled to `ingested_at`, and the v1 object is kept
+at `_manifest.v1.json`. Phase 3 was never going to have a real gate before
+this.
+
+**Deferred to Phase 2 for a real reason, not an oversight.** The two
+regression tests this phase most needs —
+`test_is_verified_requires_independent_write` and
+`test_reingest_clears_verification` — are in Task 2.3 because
+`warehouse.manifest` imports `warehouse.config`, which imports `pyarrow`, and
+CI's `backend` job installs only `requirements.txt`, which has no `pyarrow`.
+Adding them before `requirements-warehouse.txt` (Task 2.1) exists would turn
+CI red again the day after it was fixed. **Task 2.1 and 2.3 should be the
+first things done in Phase 2**, before the nightly workflow, so this fix is
+locked in.
 
 ---
 

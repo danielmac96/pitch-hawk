@@ -328,8 +328,14 @@ and in a gitignored local `.env`.
 | `players` | — | 4,195 | 90 KB | snapshot |
 | **Total** | | | **620 MB** | of 10 GB free |
 
-**All 2,011 days in all three datasets carry a verified manifest entry.** Zero
-unverified. Manifest last written 2026-07-31 02:25 UTC.
+**All 2,011 days in all three datasets carry an *ingest* manifest entry.**
+
+> **Corrected 2026-08-02.** This section previously read "carry a **verified**
+> manifest entry. Zero unverified." That was wrong, and it was wrong in the
+> most dangerous direction. `verified_at` was written by the *ingest*, from the
+> same in-memory rows that produced the Parquet, so it attested to nothing. Real
+> independent coverage was five days. The manifest is now version 2 and
+> separates `ingested_at` from `verified_at`/`verified_by`; see §5.5.
 
 Per season:
 
@@ -403,17 +409,39 @@ season.
 `_manifest.json` at the bucket root does two jobs:
 
 ```json
-{ "version": 1,
+{ "version": 2,
   "datasets": { "pitches": { "2026-07-28": {
       "rows": 4586, "bytes": 313850, "games": 15,
-      "checksum": "…", "verified_at": "2026-07-31T02:25:17+00:00" } } } }
+      "checksum": "…",
+      "ingested_at": "2026-07-31T02:25:17+00:00",
+      "verified_at": "2026-08-02T21:14:03+00:00",
+      "verified_by": "verify_day/v2" } } } }
 ```
 
 1. **Index.** Readers resolve which files exist through it — `manifest.days()`,
    `manifest.entry()`. **Never `list_objects`.**
-2. **Gate.** Once Phase D ships, the prune refuses to delete a day without a
-   verified manifest entry. `is_verified()` is deliberately strict: a falsy
-   checksum *or* timestamp is not verified.
+2. **Gate.** The prune refuses to delete a day without a verified manifest
+   entry.
+
+**`ingested_at` and `verified_at` are different claims. This is the whole
+point of the v2 layout.**
+
+| Field | Written by | Means |
+|---|---|---|
+| `ingested_at` | `warehouse.ingest` | The ingest ran and wrote these rows. Derived from the same in-memory rows as the Parquet, so it attests to **nothing** an independent re-derivation would catch. |
+| `verified_at` / `verified_by` | `warehouse.verify` **only** | The day was re-fetched from the MLB API and re-derived from scratch, and matched. |
+
+`is_verified()` requires a checksum, a timestamp **and** a `verified_by` — the
+last of which only `verify.py` can produce, so an ingest-only entry cannot
+satisfy it however complete it looks. `record()` clears both verification
+fields, because a re-ingest rewrites the bytes and any prior verification no
+longer describes what is stored.
+
+`load()` **refuses a v1 manifest** rather than coercing it: in v1 the ingest
+wrote `verified_at`, so reading a v1 entry with v2 semantics would report
+independent verification that never happened. Migrate with
+`py scripts/migrate_manifest_v2.py` (`--dry-run` first). The v1 object is kept
+at `_manifest.v1.json`.
 
 The checksum is SHA-256 over the **sorted natural keys**
 (`game_pk|at_bat_index|pitch_number`), so it is order-independent and catches
@@ -439,12 +467,24 @@ and makes three comparisons per dataset:
 | key checksum vs manifest | substituted / renumbered rows at equal count |
 | Parquet read back from the store | bytes the manifest claims but the object never got; an unreadable file |
 
-**It has no CLI entry point.** There is no `python -m warehouse verify`. Today
-you call `verify_day` / `verify_sample` from a Python REPL (§7.2).
+**It has a CLI** *(added 2026-08-02)*. `verify_day` / `verify_sample` are still
+importable, but the supported entry point is:
 
-> **Phase D must not run until a scripted verify path exists.** The plan file
-> states this at line 106. Deletion gated on an integrity check nobody can
-> invoke is deletion gated on nothing.
+```bash
+python -m warehouse verify --day 2026-07-28 --record
+python -m warehouse verify --range 2025-03-26..2026-06-29 --record
+python -m warehouse verify --sample 20                # spot check, no write
+```
+
+`--record` is what earns the prune's delete gate; without it a run reports and
+writes nothing. Exit codes are load-bearing and the nightly workflow and the
+prune gate both branch on them:
+
+| Code | Means | Prune |
+|---|---|---|
+| `0` | every day passed | may proceed |
+| `1` | a day failed verification — the warehouse disagrees with the MLB API | **must not run** |
+| `2` | operational error (credentials, network, unreadable manifest) | **must not run** — we could not tell, which is not a pass |
 
 ### 5.7 Invariants — do not break these
 
@@ -473,11 +513,13 @@ The warehouse needs `boto3`, `pyarrow`, `duckdb` and `python-dotenv`.
 > as `py`). Use `py` for warehouse work, or install
 > `requirements-warehouse.txt` into `.venv`.
 
-> **Gotcha:** the local `.env` has `R2_BUCKET=pitch-hawk-wa3rehouse` — a typo.
-> The correct bucket is **`pitch-hawk-warehouse`**. The failure mode is
-> deceptive: every `head_object` returns 403, and `manifest.load()` returns an
-> *empty* manifest instead of raising, so the warehouse looks empty rather than
-> inaccessible. If a manifest summary prints nothing, check the bucket name first.
+> **Fixed 2026-08-02.** The local `.env` had `R2_BUCKET=pitch-hawk-wa3rehouse`
+> — a typo — and the failure mode was deceptive: every `head_object` returned
+> 403, `exists()` swallowed it, and `manifest.load()` returned an *empty*
+> manifest instead of raising, so the warehouse looked empty rather than
+> inaccessible. `R2Store.__init__` now probes the bucket and raises with the
+> bucket name in the message. Pass `probe=False` only in tests that never
+> touch the network.
 
 ### 6.2 Read the manifest
 
@@ -584,7 +626,7 @@ select jobname, schedule, active from cron.job;
 |---|---|
 | `.github/workflows/warehouse.yml` | **R2 is frozen at 2026-07-30.** Every day the gap between warehouse and live widens. Highest-priority gap. |
 | `warehouse/duck.py`, `cells.py`, `aggregates.py`, `publish.py` | Nothing can read R2 in production. The whole asset is inert. |
-| `warehouse/cli.py` (`python -m warehouse …`) | Verify and backfill are REPL-only. Phase D is blocked on this. |
+| ~~`warehouse/cli.py`~~ | **Shipped 2026-08-02.** `python -m warehouse status\|verify\|ingest\|backfill`. |
 | Migrations `20260730000001_warehouse_tables`, `20260731000001_hot_window_swap` | No aggregate tables; no capacity reclaim. |
 | Row-level `predictions` export to R2 | No out-of-sample evaluation set is accumulating. Every day without it is a day of holdout data lost. |
 
