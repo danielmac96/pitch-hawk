@@ -51,8 +51,16 @@ _TS = pa.timestamp("us", tz="UTC")
 #                  stores post-pitch counts.
 #   home_score/away_score are PRE-plate-appearance (the score the pitcher
 #                  faced), carried forward from the previous play's result.
-#   men_on_base    is the pre-plate-appearance situation from
-#                  matchup.splits.menOnBase: Empty | Men_On | RISP | Loaded.
+#   men_on_base    is DERIVED from base occupancy carried forward from the
+#                  previous play, reset at each half-inning:
+#                  Empty | Men_On | RISP | Loaded. The API's
+#                  matchup.splits.menOnBase is deliberately NOT used: it is the
+#                  state AFTER the play and leaks the at-bat's own outcome. A
+#                  batter who reaches base always shows a runner on, so a model
+#                  trained on it validates beautifully and is worthless live.
+#                  See warehouse/mlb.py:men_on_base(), and the test in
+#                  tests/warehouse/test_mlb_flatten.py that sets splits to a
+#                  deliberately wrong value to prove nothing reads it.
 #   pitch_of_game  is that pitcher's cumulative pitch count in the game, which
 #                  is what a fatigue/velocity-decay model needs.
 PITCH_SCHEMA = pa.schema([
