@@ -666,10 +666,82 @@ The last two are the regression tests for the Phase 1 defect. Do not skip them.
 
 ### Phase 2 exit criteria
 
-- [ ] `requirements-warehouse.txt` exists and CI installs it
-- [ ] R2 `max(day)` == yesterday, verified
-- [ ] Two consecutive green nightly runs
-- [ ] Warehouse round-trip tests green in CI
+- [x] `requirements-warehouse.txt` exists and CI installs it — CI green on
+      `data/phase-2-close-drift`, **138 tests**, all three jobs
+- [x] R2 `max(day)` == yesterday, verified — **2026-08-01, zero lag**;
+      2026-07-31 and 08-01 ingested and independently verified
+- [ ] **Two consecutive green nightly runs — BLOCKED ON MERGE, not on work.**
+      GitHub runs `schedule:` and `workflow_dispatch:` only from the default
+      branch; `gh workflow run warehouse.yml --ref data/phase-2-close-drift`
+      returns `HTTP 404: workflow not found on the default branch`. The first
+      run can only happen after this merges to `master`, and the second a
+      calendar day later.
+- [x] Warehouse round-trip tests green in CI — 9 round-trip + 6 `pending`
+      tests, no credentials, no network
+
+### Phase 2 — notes from execution (2026-08-02)
+
+**Tasks 2.1 and 2.3 went first**, as Phase 1 required, and the two regression
+tests were confirmed to actually regress: reintroducing the v1 behaviour
+(`record()` writing `verified_at` itself) turns
+`test_is_verified_requires_independent_write` and
+`test_reingest_clears_verification` red, and only those two. A regression test
+never seen to fail is a comment.
+
+**Catch-up is `python -m warehouse pending`, not date arithmetic in YAML**, and
+it deliberately does not reason from `max(manifest day)` the way Task 2.2's
+step 4 describes. An off-day writes no manifest entry, so the high-water mark
+is the last day that *had games* — and from October to March that is months
+behind **by design**. A gap check against it would fail the nightly every night
+for the entire off-season, which is precisely the unread-signal failure this
+job exists to prevent. `pending` instead walks the trailing 14 days and asks
+the schedule whether a day without an entry actually had final games. Off-days,
+the All-Star break and the whole winter all answer no and cost one cheap call
+each. A fully missing window still exits 2 and refuses to guess, which is the
+loud failure step 4 asked for — and is also what opening day looks like, where
+a seasonal backfill should be a human decision.
+
+**The manual gap-close did not use `backfill --seasons 2026`.** That script's
+season window ends at `today`, and today's games are not all final. It would
+have written a partial 2026-08-02 into the manifest, and since `ingest` skips
+days already indexed, that partial day would then be skipped forever. Used the
+nightly's own `ingest` + `verify --record` path for the two pending days
+instead. `pending` never looks past yesterday for the same reason.
+
+Measured outcomes not predicted by this plan:
+
+- **A day can be legitimately short, and the gate will catch it loudly.**
+  `mlb.schedule` returns only final games, so a day ingested while one game is
+  suspended records the rest and indexes the day. If that game goes final
+  later, `verify` fails it — `manifest rows != re-derived` — and the nightly
+  goes red. That is the gate working, not a defect, but it means **a red
+  nightly is not always an outage**; the fix is
+  `python -m warehouse ingest --day D --force` then re-verify. At 14:00 UTC
+  against the previous ET evening's games this should be rare.
+- **The nightly does not refresh the players snapshot.** `refresh_players` is
+  reachable only from `scripts/warehouse_backfill.py`, so every callup since
+  2026-07-30 will be present in `pitches`/`at_bats` by id and absent from
+  `players/snapshot.parquet`. Nothing consumes that file yet, so it costs
+  nothing today — but **Task 4.2 must refresh it**, or `pitcher_profiles` and
+  `batter_profiles` will render unnamed players.
+- **`status` still reports 1,732 pitch-days as ingested-only, and that is
+  correct.** Phase 1 verified the Phase 3 delete set (2025-03-26..2026-06-29),
+  not all 2,013 days. Pre-2025 history is not in the delete set and does not
+  need to be verified for the prune to run. Do not read that line as a
+  regression.
+- **`R2_BUCKET`'s value as a repository secret could not be read** — GitHub
+  exposes only secret names — so the plan's "confirm it does not carry the same
+  typo" could not be done directly. Mitigated rather than assumed: the
+  workflow's first step is `python -m warehouse status`, and `R2Store` probes
+  the bucket at construction, so a wrong name fails the run loudly at the top
+  instead of yielding an empty manifest. The first post-merge run settles it.
+- The workflow's shell was verified against Actions' actual invocation
+  (`bash --noprofile --norc -e -o pipefail`), not by inspection: a failing
+  ingest aborts the step and never reaches the next day, `pending` exiting 2
+  fails the resolve step, and an empty `days.txt` exits 0 cleanly. An inline
+  `( set -e; ... )` subshell does *not* honour errexit under this repo's local
+  Git Bash, so the first attempt at this check silently passed a broken case —
+  worth knowing before trusting any future local workflow simulation.
 
 ---
 
@@ -680,8 +752,11 @@ The last two are the regression tests for the Phase 1 defect. Do not skip them.
 
 ### Preconditions — all must be true
 
-- [ ] Phase 1 complete: every day in 2025-03-27..2026-06-28 independently verified
-- [ ] Phase 2 complete: R2 current and nightly running
+- [x] Phase 1 complete: every day in 2025-03-27..2026-06-28 independently verified
+      (widened to 2025-03-26..2026-06-29 — see Phase 1 notes)
+- [ ] Phase 2 complete: R2 current **(done)** and nightly running **(not yet —
+      the workflow cannot fire until `data/phase-2-close-drift` is merged to
+      `master`; do not start Phase 3 on the strength of the branch alone)**
 - [ ] Database ≤ 455 MB (Phase 0)
 - [ ] `py -m warehouse verify --range 2025-03-27..2026-06-28` exits 0 **on the day of the prune**
 
@@ -1024,7 +1099,7 @@ leadership, not silence.
 |---|---|---|---|
 | 0 — Capacity incident | **complete** | Claude | 2026-08-02 |
 | 1 — Arm the gate | **complete** | Claude | 2026-08-02 |
-| 2 — Close the drift | not started | | |
+| 2 — Close the drift | **work complete; nightly unproven until merged** | Claude | 2026-08-02 |
 | 3 — The prune | not started | | |
 | 4 — Read layer + aggregates | not started | | |
 | 5 — Frontend wiring | not started | | |
