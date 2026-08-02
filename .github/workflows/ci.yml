@@ -16,7 +16,12 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pytest
+          # requirements-warehouse.txt is what makes tests/warehouse/ more than
+          # the flattener: config.py, ingest.py, manifest.py and verify.py all
+          # import pyarrow, so without it they are unimportable and silently
+          # uncovered. That is how the manifest self-certification defect
+          # survived to 2026-08-02.
+          pip install -r requirements.txt -r requirements-warehouse.txt pytest
       - name: Run tests
         run: pytest tests/ -q
 
