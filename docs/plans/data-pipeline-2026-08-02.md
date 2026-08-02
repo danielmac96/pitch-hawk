@@ -250,7 +250,7 @@ ever ran against production will fail here if it is not idempotent.
 - [x] `ingest_runs.detail.pruned.predictions` is a number — **60,824**
 - [x] `predictions` spans ≤ 21 days — **exactly 21** (2026-07-12 → 2026-08-02, 204,682 rows)
 - [x] `holdout/predictions/` readable in R2 — **265,126 rows, 24 files, 5.6 MB**
-- [x] `git status` clean; CI green
+- [x] `git status` clean; CI green — **required fixing CI first, see below**
 
 ### Phase 0 — what actually happened (2026-08-02)
 
@@ -281,6 +281,30 @@ Measured outcomes not predicted by this plan:
   `now() - 21 days`, not a date boundary. The R2 export ran first and holds all
   24,845 rows for that day, so nothing was lost.
 - `pitches` dead tuples went 114,239 → 814; `at_bats` 5,464 → 206.
+- **CI had been red on every run since 2026-07-22** — eight consecutive
+  failures on master, on two defects unrelated to this plan. Task 0.5's exit
+  criterion could not be met without fixing them first:
+  - `edge-functions`: the `sportsbooks` route passes `() => json(...)` to
+    `cached()`, typed `() => Promise<Response>`. `json()` returns a `Response`
+    synchronously. Widened the parameter to `() => Response | Promise<Response>`
+    — type-level only, no runtime change, no redeploy.
+  - `migrations`: the job died at the first `cron.` reference and never
+    reached anything later. **No migration after 2026-07-16 had ever been
+    applied by CI**, including all three committed here and
+    `20260802000001`. Fixed by stubbing the pg_cron surface those migrations
+    touch (schema, `cron.job`, `cron.job_run_details`, `schedule`/`unschedule`)
+    rather than extending the skip-list, which would have dropped their schema
+    work from coverage too.
+
+  This matters beyond Phase 0: **Phase 2 adds warehouse jobs to this pipeline.**
+  A nightly job added to a workflow nobody reads a signal from is how R2 came
+  to be frozen for three days without anyone noticing.
+
+- `graphify update .` exits 1 with no output; `graphify-out/graph.json` has
+  been stale since 2026-07-19. Pre-existing, gitignored, does not affect any
+  deliverable — but the CLAUDE.md instruction to run it after Python changes
+  is currently a no-op.
+
 - Supabase MCP was unauthorized throughout (it is configured with a
   `sb_secret_` project key where an `sbp_` personal access token is required).
   All SQL and DDL ran through the Management API, which is the same backend
