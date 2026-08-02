@@ -28,7 +28,11 @@ CLAUDE.md
 .claude/settings.json
 graphify-out/
 
-# warehouse local dry-run output + backfill log
+# warehouse local dry-run output + backfill logs
 .warehouse-local/
 .warehouse-smoke/
 warehouse-backfill.log
+warehouse-backfill.out
+
+# supabase CLI scratch (written by `supabase functions deploy`)
+supabase/.temp/
