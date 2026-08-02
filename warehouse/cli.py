@@ -8,6 +8,7 @@ on an integrity check nobody can invoke is deletion gated on nothing.
     python -m warehouse verify --range 2025-03-27..2026-06-28 --record
     python -m warehouse ingest --day 2026-08-01
     python -m warehouse backfill --seasons 2026
+    python -m warehouse pending --max-gap 14
 
 Exit codes are load-bearing - the nightly workflow and the prune gate both
 branch on them:
@@ -31,7 +32,7 @@ from datetime import date, timedelta
 from warehouse import manifest
 from warehouse.config import HOT_WINDOW_DAYS, r2_config
 from warehouse.ingest import daterange, ingest_day
-from warehouse.mlb import MlbApiError
+from warehouse.mlb import MlbApiError, schedule
 from warehouse.store import LocalStore, R2Store
 
 EXIT_OK, EXIT_FAILED, EXIT_ERROR = 0, 1, 2
@@ -101,6 +102,60 @@ def cmd_status(args) -> int:
     if stale:
         print("  NOTE: warehouse is behind yesterday. Run "
               "`python -m warehouse ingest --day <D>` or the nightly workflow.")
+    return EXIT_OK
+
+
+# ── pending ─────────────────────────────────────────────────────────────────
+
+DEFAULT_MAX_GAP = 14
+
+
+def cmd_pending(args) -> int:
+    """Print the days the nightly workflow should ingest, one per line.
+
+    Deliberately does NOT reason from max(manifest day). An off-day writes no
+    manifest entry, so the high-water mark is the last day that *had games* —
+    and from October to March that is months behind by design. A gap check
+    against it would fail the nightly every night for the whole off-season,
+    which is precisely the unread-signal failure this workflow exists to avoid.
+
+    So: walk the trailing window instead, and ask the schedule whether a day
+    without an entry actually had final games. Off-days, the All-Star break and
+    the entire off-season all answer no and cost one cheap call each.
+
+    A saturated window (every day in it pending) means the warehouse is behind
+    by at least --max-gap and this job is the wrong tool: exit 2 rather than
+    silently starting what could become a 2,000-day backfill. That is also what
+    opening day looks like, and a seasonal backfill should be a human decision.
+    """
+    store = _store(args)
+    m = manifest.load(store)
+
+    last = date.fromisoformat(_yesterday())
+    window = [(last - timedelta(days=i)).isoformat()
+              for i in range(args.max_gap - 1, -1, -1)]
+
+    todo = []
+    for day in window:
+        if manifest.entry(m, "pitches", day):
+            continue
+        if not schedule(day):
+            continue  # off-day, off-season, or nothing final yet
+        todo.append(day)
+
+    for day in todo:
+        print(day)
+
+    if todo and len(todo) == args.max_gap:
+        print(
+            f"error: all {args.max_gap} days of the catch-up window "
+            f"({window[0]}..{window[-1]}) are missing, so the warehouse is "
+            f"behind by at least that much and older days are likely missing "
+            f"too. Refusing to guess the true extent. Run "
+            f"`python -m warehouse status`, then backfill the range "
+            f"deliberately.",
+            file=sys.stderr)
+        return EXIT_ERROR
     return EXIT_OK
 
 
@@ -197,6 +252,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     s = sub.add_parser("status", help="manifest summary + verified vs ingested-only")
     s.set_defaults(fn=cmd_status)
+
+    p = sub.add_parser("pending",
+                       help="days the nightly should ingest, one per line")
+    p.add_argument("--max-gap", type=int, default=DEFAULT_MAX_GAP,
+                   help="How far back to look. A fully missing window exits 2 "
+                        "rather than starting an unbounded backfill.")
+    p.set_defaults(fn=cmd_pending)
 
     v = sub.add_parser("verify", help="independent re-derivation against the MLB API")
     g = v.add_mutually_exclusive_group(required=True)

@@ -47,9 +47,12 @@ Consequences you must internalise before touching anything:
 - **Postgres still holds full 2025–26 history.** 1,213,819 pitches and 313,294
   at-bats *(measured)*. Nothing has been pruned. R2 is currently **additive**,
   not a replacement.
-- **There is no nightly warehouse job.** `.github/workflows/warehouse.yml` does
-  not exist. R2 is a one-shot backfill frozen at **2026-07-30** and drifts
-  further from Supabase every day.
+- ~~**There is no nightly warehouse job.**~~ **Shipped 2026-08-02**
+  (Phase 2). `.github/workflows/warehouse.yml` ingests and verifies daily at
+  14:00 UTC. R2 was frozen at 2026-07-30; the gap was closed by hand and
+  `max(day)` now tracks yesterday. Note that a **scheduled workflow only runs
+  from the default branch** — the nightly does not fire until this is merged
+  to `master`.
 - **Nothing reads R2 yet.** No production code path queries the warehouse. It
   is a verified, complete, currently-unused asset.
 
@@ -506,6 +509,10 @@ prune gate both branch on them:
 ### 6.1 Environment
 
 The warehouse needs `boto3`, `pyarrow`, `duckdb` and `python-dotenv`.
+`requirements-warehouse.txt` **exists as of 2026-08-02** (Phase 2); until then
+this section referenced a file nobody had written. CI's `backend` job installs
+it alongside `requirements.txt`, which is what puts `config.py`, `ingest.py`,
+`manifest.py` and `verify.py` under test at all.
 
 > **Gotcha:** these are **not installed in `.venv`** — only `pyarrow` is. The
 > 2026-07-30 backfill ran on **system Python 3.13**
@@ -624,9 +631,9 @@ select jobname, schedule, active from cron.job;
 
 | Missing | Consequence of leaving it |
 |---|---|
-| `.github/workflows/warehouse.yml` | **R2 is frozen at 2026-07-30.** Every day the gap between warehouse and live widens. Highest-priority gap. |
+| ~~`.github/workflows/warehouse.yml`~~ | **Shipped 2026-08-02.** Nightly ingest + `verify --record` at 14:00 UTC, catch-up bounded to 14 days. Fires only once merged to `master`. |
 | `warehouse/duck.py`, `cells.py`, `aggregates.py`, `publish.py` | Nothing can read R2 in production. The whole asset is inert. |
-| ~~`warehouse/cli.py`~~ | **Shipped 2026-08-02.** `python -m warehouse status\|verify\|ingest\|backfill`. |
+| ~~`warehouse/cli.py`~~ | **Shipped 2026-08-02.** `python -m warehouse status\|pending\|verify\|ingest\|backfill`. |
 | Migrations `20260730000001_warehouse_tables`, `20260731000001_hot_window_swap` | No aggregate tables; no capacity reclaim. |
 | Row-level `predictions` export to R2 | No out-of-sample evaluation set is accumulating. Every day without it is a day of holdout data lost. |
 
