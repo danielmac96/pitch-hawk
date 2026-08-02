@@ -271,12 +271,38 @@ Two deviations from this plan as written, both deliberate:
 
 Measured outcomes not predicted by this plan:
 
-- **A three-day pipeline outage exists at 2026-07-13 → 2026-07-15.** `pitches`
-  holds 0 rows for 07-13 and 07-14 and only 260 for 07-15 (against ~8,700/day).
-  `predictions` is empty for all three. This is inside the 35-day hot window so
-  it does not affect the Phase 3 delete set, and R2 is unaffected because the
-  warehouse ingests independently from the MLB API — which is precisely the
-  redundancy the warehouse was built for. **Root cause not yet diagnosed.**
+- **The apparent 2026-07-13 → 07-15 gap is the MLB All-Star break, not an
+  outage.** Diagnosed 2026-08-02; recorded here because it looks alarming from
+  row counts alone and should not be re-investigated.
+  - 07-13 and 07-14 have zero regular-season games league-wide. The same
+    3-to-4-day hole appears in R2 in 2023 (07-10→07-13), 2024 (07-15→07-18)
+    and 2025 (07-14→07-17), from a completely independent ingest path.
+  - The 260 pitches on UTC 07-15 are **the All-Star Game itself** — `game_pk`
+    823443, `game_type = 'A'`, National League All-Stars vs American League
+    All-Stars. Supabase's `live-poll` ingests it; the warehouse correctly
+    excludes it, because `mlb.schedule` filters `game_type="R"`. July 2026
+    holds 370 `R` games and exactly 1 `A` game.
+  - The apparent shortfall on 07-17 (Supabase 712 pitches vs R2 4,247) is a
+    bucketing artifact, not a gap: Supabase dates a pitch by UTC `pitch_ts`
+    while the warehouse partitions by `officialDate`, and a 7pm ET first pitch
+    lands on the *next* UTC day. **Compared per `game_pk` instead of per date,
+    the two stores agree to 100.0%** — 13,594 vs 13,593 pitches over the 46
+    games of officialDate 07-16..07-19, with zero games absent and zero games
+    short.
+
+  Two things worth carrying forward from this:
+
+  1. **`pitch_ts` (UTC) and warehouse `game_date` (officialDate) are not the
+     same key**, and they disagree by up to a day for every night game. Phase 3
+     deletes from Postgres on `pitch_ts >= now() - 35 days` but the gate
+     verifies R2 by `game_date`. The 35-day window has 5 days of margin over
+     the 30-day rolling lookback, so a one-day skew is absorbed — but the
+     delete range and the verify range must not be assumed to be the same
+     dates. **Verify one day either side of the boundary.**
+  2. Game 824978 holds 301 pitches in Supabase against 300 in R2, at distinct
+     natural keys (the unique constraint rules out a duplicate). Almost
+     certainly a live-feed pitch the final play-by-play revised away. One row
+     in 13,593; noted, not chased.
 - The prune deleted part of 2026-07-12, not just whole days: the horizon is
   `now() - 21 days`, not a date boundary. The R2 export ran first and holds all
   24,845 rows for that day, so nothing was lost.
