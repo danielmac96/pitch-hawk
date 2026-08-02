@@ -127,7 +127,7 @@ def ingest_day(store, day: str, *, with_boxscore: bool = True,
         store.put(object_key(dataset, day), blob)
         total_bytes += len(blob)
         manifest.record(m, dataset, day, rows=len(rows), size_bytes=len(blob),
-                        checksum=checksum(rows, dataset), verified_at=now,
+                        checksum=checksum(rows, dataset), ingested_at=now,
                         games=len(game_rows))
     if owns_manifest:
         manifest.save(store, m)

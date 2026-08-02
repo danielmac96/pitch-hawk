@@ -56,7 +56,9 @@ class LocalStore:
 class R2Store:
     """Cloudflare R2 over the S3 API."""
 
-    def __init__(self, cfg: R2Config) -> None:
+    def __init__(self, cfg: R2Config, *, probe: bool = True) -> None:
+        """`probe=False` skips the reachability check — for tests that build a
+        store against a stubbed client and never touch the network."""
         import boto3
         from botocore.config import Config
 
@@ -71,6 +73,32 @@ class R2Store:
             region_name="auto",
             config=Config(retries={"max_attempts": 5, "mode": "standard"}),
         )
+        if probe:
+            self._probe()
+
+    def _probe(self) -> None:
+        """Fail loudly at construction if the bucket is not reachable.
+
+        Without this a wrong bucket name is silent and deeply misleading: R2
+        answers 403 (not 404) on every object, `exists()` swallows the
+        ClientError and returns False, and `manifest.load()` therefore returns
+        an EMPTY manifest rather than raising. The warehouse then reads as
+        empty instead of unreachable — which is exactly what a `.env` typo
+        (`pitch-hawk-wa3rehouse`) did until 2026-08-02.
+        """
+        from botocore.exceptions import ClientError
+
+        try:
+            self._s3.head_bucket(Bucket=self.bucket)
+        except ClientError as exc:
+            code = exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            # 404 is a genuinely absent bucket; 403 is far more often a typo,
+            # since the scoped token is authorised for one bucket only.
+            raise RuntimeError(
+                f"R2 bucket {self.bucket!r} is not reachable (HTTP {code}). "
+                f"Check R2_BUCKET - a wrong name returns 403 on every object "
+                f"and yields an empty manifest, not an error."
+            ) from exc
 
     def put(self, key: str, data: bytes) -> None:
         self._s3.put_object(Bucket=self.bucket, Key=key, Body=data)
