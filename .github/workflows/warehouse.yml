@@ -1,0 +1,100 @@
+name: Warehouse nightly
+
+# R2 was frozen at 2026-07-30 and drifting one day per day, because nothing
+# ingested it on a schedule. This job closes that.
+#
+# Ingest and verify run in the SAME job on purpose. Verification is what earns
+# a day its place in the hot-window prune's delete gate; an ingest without one
+# accumulates days the prune will refuse, and the shortfall only surfaces on
+# the day someone tries to reclaim space.
+#
+# Failures are never swallowed. A nightly nobody reads a signal from is exactly
+# how R2 came to be three days stale without anyone noticing.
+
+on:
+  schedule:
+    - cron: "0 14 * * *"      # after np-daily-ingest at 13:00 UTC
+  workflow_dispatch:
+    inputs:
+      day:
+        description: "YYYY-MM-DD (default: catch up through yesterday)"
+        required: false
+      force:
+        description: "Re-ingest the day even if the manifest already has it"
+        type: boolean
+        default: false
+
+concurrency:
+  group: warehouse-nightly
+  cancel-in-progress: false    # never two writers on one manifest
+
+permissions:
+  contents: read
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install warehouse deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-warehouse.txt
+
+      # Doubles as the R2_BUCKET check: R2Store probes the bucket at
+      # construction and raises on a wrong name, rather than reporting an empty
+      # manifest the way the mistyped local .env did until 2026-08-02.
+      - name: Status before
+        run: python -m warehouse status
+
+      - name: Resolve the days to ingest
+        env:
+          DAY: ${{ inputs.day }}
+        run: |
+          set -euo pipefail
+          if [ -n "${DAY:-}" ]; then
+            echo "$DAY" > days.txt
+          else
+            # Exits 2 if the whole catch-up window is missing, which means a
+            # deliberate backfill is needed rather than a nightly.
+            python -m warehouse pending --max-gap 14 > days.txt
+          fi
+          echo "days to process:"; cat days.txt
+
+      - name: Ingest and verify each day
+        env:
+          FORCE: ${{ inputs.force }}
+        run: |
+          set -euo pipefail
+          if [ ! -s days.txt ]; then
+            echo "nothing pending; warehouse is current"
+            exit 0
+          fi
+          force=""
+          if [ "${FORCE:-false}" = "true" ]; then force="--force"; fi
+          while read -r day; do
+            [ -n "$day" ] || continue
+            echo "::group::$day"
+            # Only final games are ingested, so a day whose games are still in
+            # progress writes nothing and is picked up by a later run.
+            python -m warehouse ingest --day "$day" $force
+            # --record is the point of the job. Without it the day is stored
+            # but never earns the prune's gate.
+            python -m warehouse verify --day "$day" --record
+            echo "::endgroup::"
+          done < days.txt
+
+      - name: Status after
+        if: always()
+        run: python -m warehouse status

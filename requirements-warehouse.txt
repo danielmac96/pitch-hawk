@@ -1,0 +1,13 @@
+# Warehouse dependencies: the R2/Parquet layer under warehouse/ and
+# scripts/warehouse_backfill.py.
+#
+# Kept separate from requirements.txt on purpose. The API and job code do not
+# need pyarrow or duckdb, and the 2026-07-30 backfill ran on system Python by
+# accident precisely because this file was referenced by the docs but never
+# written. CI's backend job installs both files so warehouse/ is importable
+# under test.
+
+boto3            # R2 over the S3 API (warehouse/store.py)
+pyarrow          # Parquet read/write and the frozen SCHEMAS (warehouse/config.py)
+duckdb           # query layer over s3:// Parquet (Phase 4)
+python-dotenv    # .env loading in warehouse/config.py
