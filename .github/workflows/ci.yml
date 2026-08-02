@@ -52,11 +52,13 @@ jobs:
           PGPASSWORD: postgres
         run: |
           psql -h localhost -U postgres -c "create role anon; create role authenticated;"
-          # Apply every migration except the two that need Supabase-only
-          # extensions/functions (pg_cron/pg_net): cron + harden_functions.
+          # Apply every migration except those that need Supabase-only
+          # extensions/functions (pg_cron/pg_net). live_windows reschedules
+          # np-daily-ingest/np-live-poll and reads cron.job directly, so it
+          # fails on a stock Postgres exactly as cron.sql does.
           for f in supabase/migrations/*.sql; do
             case "$f" in
-              *_cron.sql|*_harden_functions.sql) echo "skip $f (needs pg_cron/pg_net)";;
+              *_cron.sql|*_harden_functions.sql|*_live_windows.sql) echo "skip $f (needs pg_cron/pg_net)";;
               *) echo "== $f"
                  psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f "$f";;
             esac

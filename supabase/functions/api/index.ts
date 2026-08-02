@@ -75,7 +75,10 @@ function corsHeaders(origin: string, cacheTtl?: number): Record<string, string> 
 }
 
 // Wrap a JSON-returning handler with the in-instance memo + cache/CORS headers.
-async function cached(key: string, ttl: number, origin: string, fn: () => Promise<Response>): Promise<Response> {
+// `fn` may be sync or async: the `sportsbooks` route hands us `() => json(...)`,
+// which builds a Response without awaiting anything. `await fn()` below handles
+// both, so the signature admits both rather than forcing pointless `async`.
+async function cached(key: string, ttl: number, origin: string, fn: () => Response | Promise<Response>): Promise<Response> {
   const now = Date.now();
   const hit = memo.get(key);
   let text: string, status: number;
