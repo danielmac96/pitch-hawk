@@ -9,6 +9,7 @@ on an integrity check nobody can invoke is deletion gated on nothing.
     python -m warehouse ingest --day 2026-08-01
     python -m warehouse backfill --seasons 2026
     python -m warehouse pending --max-gap 14
+    python -m warehouse publish --dry-run
 
 Exit codes are load-bearing - the nightly workflow and the prune gate both
 branch on them:
@@ -217,6 +218,36 @@ def cmd_ingest(args) -> int:
     return EXIT_OK
 
 
+# ── publish ─────────────────────────────────────────────────────────────────
+
+def cmd_publish(args) -> int:
+    """Build the display aggregates in DuckDB and swap them into Supabase."""
+    from warehouse import publish as pub
+
+    store = _store(args)
+    t0 = time.time()
+    print(f"building aggregates (min_pa={args.min_pa})"
+          + (" [dry run]" if args.dry_run else ""))
+
+    def on_build(name, rows, el):
+        print(f"  built    {name:24} {rows:>8,} rows  [{el:5.1f}s]", flush=True)
+
+    def on_pub(name, rows):
+        print(f"  PUBLISHED {name:23} {rows:>8,} rows live", flush=True)
+
+    summary = pub.publish(store, min_pa=args.min_pa,
+                          only=args.only or None, dry_run=args.dry_run,
+                          on_progress=on_build, on_publish=on_pub)
+
+    total_mb = sum(s["bytes"] for s in summary.values()) / 1e6
+    print(f"\n{len(summary)} table(s), "
+          f"{sum(s['rows'] for s in summary.values()):,} rows, "
+          f"{total_mb:.1f} MB  [{(time.time()-t0)/60:.1f} min]")
+    if args.dry_run:
+        print("dry run: nothing was written to Supabase")
+    return EXIT_OK
+
+
 # ── backfill ────────────────────────────────────────────────────────────────
 
 def cmd_backfill(args) -> int:
@@ -280,6 +311,17 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--workers", type=int, default=6)
     i.add_argument("--no-boxscore", action="store_true")
     i.set_defaults(fn=cmd_ingest)
+
+    pu = sub.add_parser("publish",
+                        help="build display aggregates and swap them into Supabase")
+    pu.add_argument("--dry-run", action="store_true",
+                    help="Build and print row counts; write nothing.")
+    pu.add_argument("--min-pa", type=int, default=3,
+                    help="matchup_history PA floor. 3 keeps it ~11 MB; "
+                         "dropping to 1 makes it ~34 MB and 68%% noise.")
+    pu.add_argument("--only", nargs="*", default=None,
+                    help="Publish only these tables.")
+    pu.set_defaults(fn=cmd_publish)
 
     b = sub.add_parser("backfill", help="ingest whole seasons (resumable)")
     b.add_argument("--seasons", nargs="*", type=int, default=None)
