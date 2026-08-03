@@ -10,6 +10,7 @@
 
 import { json, svc } from "../_shared/db.ts";
 import { mlbToday } from "../_shared/mlb.ts";
+import * as aggs from "../_shared/aggregates.ts";
 
 const MARKET_LABELS: Record<string, string> = {
   ab_result: "At-Bat Result",
@@ -39,6 +40,12 @@ const TTL: Record<string, number> = {
   "live": 10, "edge": 15, "odds/today": 30,
   "picks/today": 60, "record": 60, "games": 60,
   "sportsbooks": 3600,
+  // Warehouse display aggregates. They are rebuilt once nightly, so 300s is
+  // deliberately conservative -- it bounds staleness after a publish without
+  // making the cache pointless. game/context is immutable once a game is
+  // final, hence an hour.
+  "player/profile": 300, "player/splits": 300, "player/fatigue": 300,
+  "matchup": 300, "game/context": 3600,
 };
 
 // In-instance memo so even a CDN miss on a warm instance skips Postgres.
@@ -283,8 +290,13 @@ async function live(): Promise<Response> {
       game_label: `${g.away_team ?? raw.away_team ?? "Away"} @ ${g.home_team ?? raw.home_team ?? "Home"}`,
       away_abbr: g.away_abbr ?? raw.away_abbr ?? null,
       home_abbr: g.home_abbr ?? raw.home_abbr ?? null,
+      // Ids are additive (Phase 5) and exist so the Data Feed can look the
+      // pair up in the warehouse aggregates, which are keyed on player id.
+      // The live board itself renders names only and ignores these.
+      pitcher_id: ls.pitcher_id ?? null,
       pitcher_name: pitcher?.full_name ?? null,
       pitcher_hand: pitcher?.pitch_hand ?? null,
+      batter_id: ls.batter_id ?? null,
       batter_name: batter?.full_name ?? null,
       batter_hand: batter?.bat_side ?? null,
       situation: {
@@ -477,6 +489,55 @@ Deno.serve(async (req) => {
   try {
     const em = route.match(/^edge\/(\d+)$/);
     if (em) return await cached(`edge/${em[1]}`, TTL["edge"], origin, () => edge(Number(em[1])));
+
+    // Parameterised aggregate routes. These follow the `edge/(\d+)` pattern
+    // rather than the switch below, which only matches literal paths.
+    // A player or game with no published rows is a 404 with found:false, so
+    // the Data Feed can render an empty panel with a note instead of
+    // mistaking absence for breakage.
+    const pm = route.match(/^player\/(\d+)\/(profile|splits|fatigue)$/);
+    if (pm) {
+      const id = Number(pm[1]);
+      const kind = pm[2];
+      const fn = kind === "profile"
+        ? () => aggs.playerProfile(svc(), id)
+        : kind === "splits"
+        ? () => aggs.playerSplits(svc(), id)
+        : () => aggs.playerFatigue(svc(), id);
+      return await cached(`player/${id}/${kind}`, TTL[`player/${kind}`], origin,
+        async () => {
+          const r = await fn();
+          return json({ found: r.found, ...r.data }, r.found ? 200 : 404);
+        });
+    }
+
+    const mm = route.match(/^matchup\/(\d+)\/(\d+)$/);
+    if (mm) {
+      const [p, b] = [Number(mm[1]), Number(mm[2])];
+      return await cached(`matchup/${p}/${b}`, TTL["matchup"], origin,
+        async () => {
+          const r = await aggs.matchup(svc(), p, b);
+          // found:false here means "fewer than 3 career meetings", which is
+          // the norm, not an error -- still 200.
+          return json({ found: r.found, ...r.data });
+        });
+    }
+
+    const gm = route.match(/^game\/(\d+)\/context$/);
+    if (gm) {
+      const pk = Number(gm[1]);
+      return await cached(`game/${pk}/context`, TTL["game/context"], origin,
+        async () => {
+          const r = await aggs.gameContext(svc(), pk);
+          // 200 even when absent. Context is written by the nightly warehouse
+          // publish, so every in-progress game is legitimately missing until
+          // tomorrow -- the overwhelmingly common case. A 404 here logged a
+          // browser console error on every Data Feed load during a live game,
+          // and `cached()` only memoises 200s, so it also re-hit the origin
+          // on every batter change.
+          return json({ found: r.found, ...r.data });
+        });
+    }
     switch (route) {
       case "health": case "": return await cached(route, TTL[route] ?? 0, origin, health);
       case "games": return await cached("games", TTL["games"], origin, games);

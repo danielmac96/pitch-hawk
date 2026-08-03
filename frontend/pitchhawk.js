@@ -19,6 +19,10 @@
 
   const API_BASE = window.PITCH_EDGE_API || "http://localhost:8080";
   const POLL_MS = 8000;   // backend polls MLB every ~8s (POLL_INTERVAL_SECONDS)
+  // Last pitcher/batter/game the Data Feed showed. Persisted so the warehouse
+  // scouting panels survive a reload — the session graded log cannot, because
+  // nothing stores per-pitch prediction history (that store is deferred).
+  const SCOUT_KEY = "ph.scout.v1";
 
   const PH = window.PITCHHAWK;
   const COPY = window.PH_COPY;
@@ -78,6 +82,9 @@
         liveGames: {}, liveSources: { draftkings: true, fanduel: true, kalshi: true, polymarket: true },
         edgeThreshold: 0.03,
         dark: initialDark(), t: 0,
+        // Phase 4 aggregates. `loaded` stays false until the first fetch
+        // settles, so the panels are absent rather than flashing empty.
+        scout: { seed: null, ctx: null, profile: null, fatigue: null, matchup: null, loaded: false },
       };
       this._pollIv = null;
       // Client-side plate-appearance history (see trackAtBats): /live only
@@ -87,6 +94,10 @@
       // Session-graded prediction log powering the Data Feed (see trackGradedLog).
       this.gradedLog = [];
       this._seenPitch = {};
+      // Warehouse-backed scouting panels. Durable across reloads, unlike the
+      // graded log above. `_scoutSigs` gates re-fetching per panel, so a new
+      // batter does not re-request the pitcher profile or the game context.
+      this._scoutSigs = {};
       this.root.addEventListener("click", (e) => this._onClick(e));
     }
     setState(patch) { Object.assign(this.state, patch); this.render(); }
@@ -984,11 +995,156 @@
     }
 
     // ══ DATA FEED (1e mobile · 1d desktop) ═══════════════════════════════
+    // ══ WAREHOUSE SCOUTING (durable — survives a reload) ══════════════════
+    // The graded log above is session-only and stays that way: nothing stores
+    // per-pitch prediction history, and the holdout store that would is
+    // explicitly deferred. These panels instead come from the Phase 4 nightly
+    // aggregates in R2, so the Data Feed has real content on a cold load for
+    // the first time. Everything here degrades to a note — a warehouse outage
+    // must never blank the live board.
+    scoutSeed() {
+      try {
+        return JSON.parse(window.localStorage.getItem(SCOUT_KEY) || "null");
+      } catch (_e) { return null; }   // private mode / disabled storage
+    }
+    saveScoutSeed(seed) {
+      try { window.localStorage.setItem(SCOUT_KEY, JSON.stringify(seed)); }
+      catch (_e) { /* non-fatal: the panels just won't survive this reload */ }
+    }
+
+    // Fetch the aggregate panels for one pitcher/batter/game. Only re-fetches
+    // when the trio actually changes, so an 8s poll does not become an 8s
+    // request storm against five routes.
+    async loadScouting(seed) {
+      if (!seed || (!seed.pitcherId && !seed.gamePk)) return;
+      // Keyed per panel, not per trio. The batter changes every at-bat, so a
+      // single combined signature re-fetched the pitcher profile, the fatigue
+      // curve and the game context several times an inning for no new data.
+      const sigs = {
+        ctx: `g:${seed.gamePk}`,
+        profile: `p:${seed.pitcherId}`,
+        fatigue: `f:${seed.pitcherId}`,
+        matchup: `m:${seed.pitcherId}:${seed.batterId}`,
+      };
+      const prev = this._scoutSigs || (this._scoutSigs = {});
+      const stale = Object.keys(sigs).filter((k) => prev[k] !== sigs[k]);
+      if (!stale.length && this.state.scout.loaded) return;
+      this.saveScoutSeed(seed);
+
+      // fetchJson swallows non-2xx and network errors into null, which is
+      // exactly the degradation we want: an unreachable warehouse means an
+      // empty panel with a note, never a broken tab.
+      const want = (k, path) => {
+        if (prev[k] === sigs[k]) return Promise.resolve(this.state.scout[k]);
+        return fetchJson(path).then((v) => { prev[k] = sigs[k]; return v; });
+      };
+      const [ctx, profile, fatigue, matchup] = await Promise.all([
+        seed.gamePk ? want("ctx", `/game/${seed.gamePk}/context`) : null,
+        seed.pitcherId ? want("profile", `/player/${seed.pitcherId}/profile`) : null,
+        seed.pitcherId ? want("fatigue", `/player/${seed.pitcherId}/fatigue`) : null,
+        seed.pitcherId && seed.batterId
+          ? want("matchup", `/matchup/${seed.pitcherId}/${seed.batterId}`) : null,
+      ]);
+      this.setState({ scout: { seed, ctx, profile, fatigue, matchup, loaded: true } });
+    }
+
+    // Seed from the live board when it has games, otherwise from the last
+    // session. This is what makes the tab survive a refresh.
+    syncScouting() {
+      const g = PH.games.find((x) => x.gamePk === this.state.feedGame)
+        || PH.games[0];
+      if (g && (g.pitcher.id || g.batter.id)) {
+        this.loadScouting({
+          gamePk: g.gamePk, pitcherId: g.pitcher.id, batterId: g.batter.id,
+          pitcherName: g.pitcher.name, batterName: g.batter.name,
+          label: g.label || `${g.away} @ ${g.home}`,
+        });
+      } else if (!this.state.scout.loaded) {
+        const seed = this.scoutSeed();
+        if (seed) this.loadScouting(seed);
+      }
+    }
+
+    scoutingHtml() {
+      const C = this.C;
+      const s = this.state.scout;
+      const thinNote = (t) => `<div style="padding:14px;font-size:12.5px;color:${C.faint};font-style:italic;line-height:1.5;">${esc(t)}</div>`;
+      const card = (title, body, note) => `<div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};padding:15px 16px;">
+        <div style="font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};margin-bottom:10px;">${esc(title)}</div>
+        ${body}
+        ${note ? `<div style="margin-top:9px;font-size:11px;color:${C.faint};line-height:1.5;">${esc(note)}</div>` : ""}</div>`;
+      const kvRow = (k, v) => `<div style="display:flex;justify-content:space-between;gap:10px;padding:3px 0;font-size:12.5px;">
+        <span style="color:${C.dim};">${esc(k)}</span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:${C.txt};">${esc(v)}</span></div>`;
+      const pct = (x) => (x == null ? "—" : `${Math.round(Number(x) * 100)}%`);
+
+      if (!s.loaded) return "";
+      const seed = s.seed || {};
+
+      // ── pitcher profile: career / season / d30 side by side ──────────
+      const prof = s.profile && s.profile.found ? (s.profile.pitcher || []) : [];
+      const profBody = prof.length
+        ? `<div style="display:grid;grid-template-columns:64px repeat(${prof.length},1fr);gap:6px;font-size:11.5px;align-items:center;">
+            <span></span>${prof.map((p) => `<span style="text-align:center;color:${C.faint};font-weight:700;text-transform:uppercase;letter-spacing:.05em;">${esc(p.scope)}</span>`).join("")}
+            ${[["K%", "k_rate"], ["BB%", "bb_rate"], ["Whiff", "whiff_rate"], ["Zone", "zone_rate"], ["Chase", "chase_rate"]]
+              .map(([label, key]) => `<span style="color:${C.dim};">${label}</span>${prof.map((p) => `<span style="text-align:center;font-family:'IBM Plex Mono',monospace;font-weight:600;">${pct(p[key])}</span>`).join("")}`).join("")}
+          </div>`
+        : thinNote("No published profile for this pitcher yet. Profiles need 30+ pitches in the window and are rebuilt nightly.");
+
+      // ── fatigue: the TYPICAL curve. The current game's trend stays live,
+      //    computed from the hot table — that split is deliberate.
+      const buckets = s.fatigue && s.fatigue.found ? (s.fatigue.buckets || []) : [];
+      const BUCKET_LABEL = ["0–24", "25–49", "50–74", "75–99", "100+"];
+      const fatBody = buckets.length
+        ? `<div style="display:flex;flex-direction:column;gap:5px;">
+            ${buckets.map((b) => {
+              const d = b.velo_delta_vs_bucket0;
+              const col = d == null ? C.faint : d <= -0.8 ? this.GRD.bad.fg : d <= -0.3 ? this.GRD.amber.fg : this.GRD.good.fg;
+              return `<div style="display:grid;grid-template-columns:54px minmax(0,1fr) 118px;gap:9px;align-items:center;font-size:12px;">
+                <span style="font-family:'IBM Plex Mono',monospace;color:${C.dim};">${BUCKET_LABEL[b.pitch_bucket] || b.pitch_bucket}</span>
+                <span style="height:7px;background:${C.chip};border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:${col};width:${Math.max(4, Math.min(100, Math.round(((b.mean_velo || 0) / 100) * 100)))}%;"></span></span>
+                <span style="text-align:right;font-family:'IBM Plex Mono',monospace;"><b style="font-weight:600;">${b.mean_velo == null ? "—" : Number(b.mean_velo).toFixed(1)}</b><span style="color:${col};"> ${d == null ? "" : (d > 0 ? "+" : "") + Number(d).toFixed(2)}</span></span>
+              </div>`;
+            }).join("")}
+          </div>`
+        : thinNote("No published fatigue curve for this pitcher yet.");
+
+      // ── head-to-head ─────────────────────────────────────────────────
+      const mu = s.matchup;
+      const muBody = mu && mu.found
+        ? `${kvRow("Plate appearances", mu.pa_count)}${kvRow("Strikeouts", mu.so_count)}${kvRow("Walks", mu.bb_count)}${kvRow("Hits", mu.h_count)}${kvRow("Home runs", mu.hr_count == null ? "—" : mu.hr_count)}${kvRow("Last faced", mu.last_faced || "—")}`
+        : thinNote("Fewer than three career meetings — the published table applies a 3-PA floor, so there is no meaningful history here.");
+
+      // ── game context ─────────────────────────────────────────────────
+      const c = s.ctx;
+      const ctxBody = c && c.found
+        ? `${kvRow("Venue", c.venue_name || "—")}${kvRow("Home-plate umpire", c.hp_umpire || "—")}${kvRow("Weather", c.weather_condition || "—")}${kvRow("Temperature", c.temp_f == null ? "—" : `${c.temp_f}°F`)}${kvRow("Wind", c.wind_mph == null ? "—" : `${c.wind_mph} mph ${c.wind_direction || ""}`.trim())}${kvRow("Attendance", c.attendance == null ? "—" : Number(c.attendance).toLocaleString())}`
+        : thinNote("No published context for this game yet — game context is written by the nightly warehouse publish, so today's games appear tomorrow.");
+
+      const stale = !s.profile && !s.fatigue && !s.ctx && !s.matchup;
+      return `<div style="margin-bottom:18px;">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:10px;flex-wrap:wrap;">
+          <span style="font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">Scouting context · from the warehouse</span>
+          <span style="font-size:11px;color:${C.faint};">${esc(seed.label || "")}${seed.pitcherName ? " · " + esc(seed.pitcherName) : ""}${seed.batterName ? " vs " + esc(seed.batterName) : ""}</span>
+        </div>
+        ${stale ? thinNote("The warehouse aggregates are unreachable right now. The live board above is unaffected — these panels are display-only and will fill in on the next successful load.") : `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px;">
+          ${card("Pitcher profile", profBody, "Career here means the published three-season window, not all history.")}
+          ${card("Typical fatigue curve", fatBody, "Mean velocity by in-game pitch count, with the change from his first bucket. The current game's trend is computed live above — this is the baseline it moves against.")}
+          ${card("Head to head", muBody, null)}
+          ${card("Game context", ctxBody, null)}
+        </div>`}
+      </div>`;
+    }
+
     dataHtml() {
       const C = this.C;
       const mobile = this.mob();
       if (!PH.games.length) {
-        return `<div style="padding:2.5rem 14px;text-align:center;color:${C.faint};">No live games right now — the data feed fills as pitches are graded.</div>`;
+        // Cold load with no live games. Before Phase 4 this was the whole
+        // tab, which is why it lost everything on refresh; the scouting
+        // panels are restored from the last session and render here.
+        return `${this.scoutingHtml()}<div style="padding:2.5rem 14px;text-align:center;color:${C.faint};">No live games right now — the graded log fills as pitches arrive.</div>`;
       }
       const rows = this.dfRows();
       const st = this.dfStats(rows);
@@ -1299,6 +1455,8 @@
         </div>
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:9px;margin-bottom:16px;">${panels}</div>
 
+        ${this.scoutingHtml()}
+
         <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px;">${kpis}</div>
 
         <div style="display:grid;grid-template-columns:${this.narrow() ? "minmax(0,1fr)" : "minmax(0,1fr) 400px"};gap:16px;align-items:start;">
@@ -1357,6 +1515,10 @@
             this.state.feedGame = PH.games[0].gamePk;
           }
           this.render();
+          // Deliberately not awaited: the live board must not wait on the
+          // warehouse. syncScouting no-ops unless the pitcher/batter/game
+          // actually changed, and every fetch inside it degrades to null.
+          this.syncScouting();
         }
         // loadLive throws on network error → keep last-good board.
       } catch (_e) { console.warn("[pitchhawk] live poll failed; keeping last data"); }
@@ -1424,6 +1586,10 @@
     const board = new Board(root);
     board.state.feedGame = PH.games[0] ? PH.games[0].gamePk : null;
     board.start();
+    // Restore the Data Feed's warehouse panels immediately, before the first
+    // poll returns. With no live games this is the only thing that puts
+    // content in the tab, and it is what makes it survive a refresh.
+    board.syncScouting();
     window.__npBoard = board;
   }
 

@@ -38,6 +38,11 @@ jobs:
             echo "== $fn"
             deno check "supabase/functions/$fn/index.ts"
           done
+      # The aggregate read handlers ship in the edge function, so pytest
+      # cannot reach them -- backend/ is a parallel dev implementation. These
+      # cover the same cases the plan asked for in tests/api/test_routes.py.
+      - name: Test edge function handlers
+        run: deno test --allow-net supabase/functions/tests/
 
   migrations:
     runs-on: ubuntu-latest

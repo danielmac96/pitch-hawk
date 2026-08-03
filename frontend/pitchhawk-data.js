@@ -601,8 +601,10 @@ window.PITCHHAWK = (function () {
         away: sit.away_score != null ? String(sit.away_score) : "—",
         home: sit.home_score != null ? String(sit.home_score) : "—",
       },
-      pitcher: { name: lg.pitcher_name || "TBD", hand: lg.pitcher_hand || "", meta: "" },
-      batter: { name: lg.batter_name || "TBD", hand: lg.batter_hand || "", meta: "" },
+      // `id` is carried through for the Data Feed's warehouse lookups, which
+      // are keyed on player id. The live board renders names only.
+      pitcher: { id: lg.pitcher_id || null, name: lg.pitcher_name || "TBD", hand: lg.pitcher_hand || "", meta: "" },
+      batter: { id: lg.batter_id || null, name: lg.batter_name || "TBD", hand: lg.batter_hand || "", meta: "" },
       onDeck: "On-deck TBD",
       inning: sit.inning, half: sit.half || "▲", count: sit.count || "0-0",
       outs: sit.outs || 0,
