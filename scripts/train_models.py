@@ -27,10 +27,38 @@ import os
 import sys
 from datetime import datetime, timezone
 
-import numpy as np
-from sklearn.linear_model import LinearRegression, LogisticRegression
+DISABLED = """
+scripts/train_models.py is disabled as of 2026-08-02 (Phase 3).
 
-from backend.db.client import get_client
+The train_*_cells() RPCs it reads were dropped in migration
+supabase/migrations/20260802000002_drop_training_rpcs.sql, because the
+hot-window swap in 20260802000003 cut `pitches` and `at_bats` to 35 days.
+Those RPCs had no time filter, so they would have kept returning cells and
+this script would have kept fitting models -- on ~10% of the intended
+history, with nothing in the output to say so.
+
+Refusing outright rather than letting the per-market try/except turn this into
+a partial run: game_moneyline trains from train_home_advantage, which reads
+only `games` and still works, so four markets would fail loudly and the fifth
+would quietly activate a new version.
+
+The model layer is deferred. See the "Deferred" section of
+docs/plans/data-pipeline-2026-08-02.md; retraining resumes against DuckDB over
+the R2 warehouse, which holds all 2,013 days. Do not re-point this at Postgres.
+"""
+
+# Deliberately ahead of the numpy/sklearn/backend imports. Those fail with a
+# bare ModuleNotFoundError in any environment that lacks them, which would
+# hide the explanation above behind an unrelated traceback -- and the message
+# is the entire point of leaving this file in place.
+if __name__ == "__main__":
+    print(DISABLED, file=sys.stderr)
+    sys.exit(2)
+
+import numpy as np  # noqa: E402
+from sklearn.linear_model import LinearRegression, LogisticRegression  # noqa: E402
+
+from backend.db.client import get_client  # noqa: E402
 
 VERSION = "v1_" + datetime.now(timezone.utc).strftime("%Y%m%d")
 

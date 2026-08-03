@@ -57,11 +57,18 @@ Deno.serve(async (req) => {
     detail.players_added = await ensurePlayers([...playerIds]);
 
     // Aggregates the live scorer reads.
+    // Both look back 30 days, which fits inside the 35-day hot window the
+    // Phase 3 swap leaves behind (20260802000003).
     const { data: n1, error: e1 } = await svc().rpc("refresh_pitcher_rolling_stats");
     const { data: n2, error: e2 } = await svc().rpc("refresh_batter_rolling_stats");
-    const { data: n3, error: e3 } = await svc().rpc("refresh_matchup_history");
-    for (const e of [e1, e2, e3]) if (e) errors.push(`rpc: ${e.message}`);
-    detail.rolling = { pitchers: n1, batters: n2, matchups: n3 };
+    for (const e of [e1, e2]) if (e) errors.push(`rpc: ${e.message}`);
+    // refresh_matchup_history was called here until 2026-08-02 and is dropped
+    // in 20260802000002. It read at_bats with no time filter and upserted the
+    // result over the stored career counts, so against a 35-day at_bats it
+    // would have overwritten head-to-head history with 35-day figures on the
+    // first run after the swap -- silently, and within hours of it.
+    // matchup_history is rebuilt from the warehouse in Phase 4 (Task 4.2).
+    detail.rolling = { pitchers: n1, batters: n2 };
 
     // Retention. Roll predictions up into prediction_accuracy_daily BEFORE
     // pruning them — the rollup is the permanent accuracy record and the raw

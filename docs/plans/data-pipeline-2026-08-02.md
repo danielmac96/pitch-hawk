@@ -896,13 +896,89 @@ are deliberately separate from the swap and, in the migration file, commented ou
 
 ### Phase 3 exit criteria
 
-- [ ] `pg_database_size` ≈ 170 MB
-- [ ] `select count(*) from pitches` ≈ 126,000; `at_bats` ≈ 33,000
-- [ ] `pg_policies` shows `"public read"` on both tables
-- [ ] `insert into pitches` succeeds (the sequence survived)
-- [ ] `np-live-poll` active; a new pitch appears within 60 s
-- [ ] `/api/health`, `/api/live`, `/api/picks/today`, `/api/record`, `/api/games` all 200 with unchanged shape
-- [ ] `refresh_pitcher_rolling_stats` / `refresh_batter_rolling_stats` still return their usual ~500 / ~430 (the 30-day lookback fits inside the 35-day window)
+- [x] `pg_database_size` ≈ 170 MB — **456 MB → 182 MB, 274 MB reclaimed**
+- [x] `pitches` ≈ 126,000; `at_bats` ≈ 33,000 — **126,067 and 32,439**
+- [x] `pg_policies` shows `"public read"` on both tables — **both present, RLS on**
+- [x] `insert into pitches` succeeds (the sequence survived) — **id 10,571,893**
+- [x] `np-live-poll` active; a new pitch appears within 60 s — **max(pitch_ts)
+      advanced 00:11:15 → 00:12:43 UTC across a 76 s wait**
+- [x] all five `/api/*` routes 200 with unchanged shape — **byte-compared
+      against baselines captured immediately before the swap**
+- [x] `refresh_*_rolling_stats` still return ~500 / ~430 — **507 / 436**
+
+### Phase 3 — notes from execution (2026-08-02 ~00:00–00:15 UTC)
+
+Executed live, with games in progress, at the user's direction. `np-live-poll`
+was paused for **under four minutes** and self-healed: it re-polls full game
+state, so the missed cycles cost nothing.
+
+Measured against prediction, the sizing model was near-exact:
+
+| Step | Predicted | Actual |
+|---|---:|---:|
+| start | 452 MB | 456 MB |
+| after `at_bats` swap | 458 | 462 |
+| after `drop at_bats_old` | 400 | 410 |
+| after `pitches` swap | 427 | 436 |
+| after `drop pitches_old` + vacuum | ~171 | **182** |
+
+**Three defects in this plan were found before they fired.** All three would
+have been silent.
+
+1. **`refresh_matchup_history()` was missing from Task 3.1.** It reads
+   `at_bats` with no time filter and *upserts* the result over the stored
+   career head-to-head counts — the same failure mode Task 3.1 exists to
+   prevent, but worse, because it is the only one that writes its misreading
+   to disk. Post-swap it would have recomputed careers from 35 days and
+   overwritten every pair that met inside the window, leaving
+   `matchup_history` a silent mix of career and 35-day figures. It is called
+   by `daily-ingest` at 13:00 UTC daily, so it would have fired within ~13
+   hours of the swap. Dropped in `20260802000002`, call removed from
+   `daily-ingest`, function redeployed *before* the drop so there was never a
+   window where live code called a missing function. **`matchup_history` is
+   still 41,381 rows, unchanged** — confirmed after the swap.
+
+2. **Runbook step 8 would have degraded `np-live-poll`.** It restores the job
+   as `select call_edge_function('live-poll')`, but the real command is a
+   conditional `do $body$` block that only calls the function when a game is
+   inside its window or a board game is live. Restoring the plan's version
+   would have invoked the edge function every 30 s, 24/7, forever. Used
+   `cron.alter_job(7, active := false/true)` instead, which never destroys the
+   command text; the original is also saved verbatim in the scratchpad.
+   **Do not use unschedule/reschedule on this job.**
+
+3. **`/api/health` does read `pitches`** (`supabase/functions/api/index.ts:99`,
+   an exact count), contradicting §4.3's "the `api` function never touches
+   them". Not a breakage — same shape, still 200 — but `pitches_rows` in the
+   health payload dropped **1,217,858 → ~126,000** and will read as
+   catastrophic data loss to anyone who does not know about the swap. Worth
+   relabelling when Phase 4 adds aggregate freshness to that endpoint.
+
+Smaller things worth carrying forward:
+
+- **The `≤ 455 MB` precondition was missed by 1 MB** (456 MB measured). Its
+  *purpose* — keep the peak under the 500 MB cap — held with ~38 MB to spare,
+  so it was not treated as blocking. The number to gate on is the peak, not
+  the start.
+- **`LIKE ... INCLUDING ALL` names indexes and constraints after the new
+  table**, so the swapped tables carried `pitches_new_pkey` etc. until the
+  `_old` tables were dropped and the names freed. Renamed back afterwards so
+  `pg_indexes` still matches `20260703000001_core_schema.sql`.
+- **`setval` uses `greatest(max(id), last_value)`** rather than the plan's
+  bare `max(id)`. Upserts burn sequence values without storing rows —
+  `pitches_id_seq` sat at 10,569,990 against 1,217,836 rows, roughly eight
+  burned per stored row — so the plan's version would have moved the sequence
+  backwards by ~9 million. Harmless in principle, since burned ids are never
+  reused, but there is no reason to accept the risk.
+- **A CTE cannot delete what it just inserted.** The sequence-survival check
+  did `with ins as (insert ...), del as (delete ...)`; `del` ran against the
+  pre-insert snapshot and removed nothing, leaving a sentinel row in
+  production `pitches`. Caught and deleted in the next statement.
+- `get_pitcher_stats`, `get_pitcher_ab_stats` and `get_league_averages` are
+  also unwindowed and now silently return 35-day figures. Left in place
+  deliberately: read-only, so nothing is corrupted, and their only caller is
+  `backend/models/stats_cache.py` in the deferred model layer. Recorded in
+  `20260802000002` so this is a known consequence, not a future surprise.
 
 ---
 
@@ -1099,8 +1175,8 @@ leadership, not silence.
 |---|---|---|---|
 | 0 — Capacity incident | **complete** | Claude | 2026-08-02 |
 | 1 — Arm the gate | **complete** | Claude | 2026-08-02 |
-| 2 — Close the drift | **work complete; nightly unproven until merged** | Claude | 2026-08-02 |
-| 3 — The prune | not started | | |
+| 2 — Close the drift | **complete** (merged; 1st nightly green, 2nd due 14:00 UTC) | Claude | 2026-08-02 |
+| 3 — The prune | **complete** — 456 MB → 182 MB | Claude | 2026-08-03 |
 | 4 — Read layer + aggregates | not started | | |
 | 5 — Frontend wiring | not started | | |
 | Deferred — model layer | not scheduled | | |
