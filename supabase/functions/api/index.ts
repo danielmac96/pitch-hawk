@@ -121,7 +121,17 @@ async function health(): Promise<Response> {
   // rolled up, so one stalled aggregate is visible instead of averaged away.
   // `stale` is generous: the publisher runs nightly, so 36h allows a single
   // missed run without crying wolf.
-  const aggregates = (aggRows ?? []).map((r: {
+  type AggFreshness = {
+    table: string;
+    rows: number;
+    updated_at: string | null;
+    age_hours: number | null;
+    stale: boolean;
+  };
+  // Annotated explicitly: `aggRows` comes back as `any` from rpc(), so an
+  // inferred `.map()` result would leave `a` implicitly any and fail
+  // `deno check` (TS7006) even though it runs fine.
+  const aggregates: AggFreshness[] = (aggRows ?? []).map((r: {
     table_name: string; rows: number; updated_at: string | null;
   }) => {
     const ageHours = r.updated_at
@@ -148,7 +158,7 @@ async function health(): Promise<Response> {
     backfill: bf ?? null,
     active_models: model ?? [],
     aggregates,
-    aggregates_stale: aggregates.some((a) => a.stale),
+    aggregates_stale: aggregates.some((a: AggFreshness) => a.stale),
   });
 }
 
