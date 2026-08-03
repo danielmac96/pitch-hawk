@@ -95,12 +95,14 @@ async function cached(key: string, ttl: number, origin: string, fn: () => Respon
 
 async function health(): Promise<Response> {
   const db = svc();
-  const [{ count: pitchCount }, { data: runs }, { data: model }, { data: bf }] = await Promise.all([
-    db.from("pitches").select("id", { count: "exact", head: true }),
-    db.from("ingest_runs").select("job,finished_at,ok").order("id", { ascending: false }).limit(200),
-    db.from("model_params").select("market,version").eq("is_active", true),
-    db.from("backfill_progress").select("cursor_date,start_date,done,updated_at").eq("id", 1).maybeSingle(),
-  ]);
+  const [{ count: pitchCount }, { data: runs }, { data: model }, { data: bf }, { data: aggRows }] =
+    await Promise.all([
+      db.from("pitches").select("id", { count: "exact", head: true }),
+      db.from("ingest_runs").select("job,finished_at,ok").order("id", { ascending: false }).limit(200),
+      db.from("model_params").select("market,version").eq("is_active", true),
+      db.from("backfill_progress").select("cursor_date,start_date,done,updated_at").eq("id", 1).maybeSingle(),
+      db.rpc("aggregate_freshness"),
+    ]);
   const now = Date.now();
   // Last SUCCESSFUL finish per job + how stale it is.
   const jobs: Record<string, { last_success: string | null; age_seconds: number | null }> = {};
@@ -114,14 +116,49 @@ async function health(): Promise<Response> {
   // The live board is "fresh" when live-poll succeeded within the last 2 min.
   const liveAge = jobs["live-poll"]?.age_seconds ?? null;
   const dataFresh = liveAge != null ? liveAge <= 120 : true;
+
+  // Warehouse display aggregates (Phase 4). Reported per table rather than
+  // rolled up, so one stalled aggregate is visible instead of averaged away.
+  // `stale` is generous: the publisher runs nightly, so 36h allows a single
+  // missed run without crying wolf.
+  type AggFreshness = {
+    table: string;
+    rows: number;
+    updated_at: string | null;
+    age_hours: number | null;
+    stale: boolean;
+  };
+  // Annotated explicitly: `aggRows` comes back as `any` from rpc(), so an
+  // inferred `.map()` result would leave `a` implicitly any and fail
+  // `deno check` (TS7006) even though it runs fine.
+  const aggregates: AggFreshness[] = (aggRows ?? []).map((r: {
+    table_name: string; rows: number; updated_at: string | null;
+  }) => {
+    const ageHours = r.updated_at
+      ? Math.round((now - new Date(r.updated_at).getTime()) / 3600_000)
+      : null;
+    return {
+      table: r.table_name,
+      rows: Number(r.rows ?? 0),
+      updated_at: r.updated_at,
+      age_hours: ageHours,
+      stale: ageHours == null || ageHours > 36,
+    };
+  });
+
   return json({
     status: "ok",
     timestamp: new Date().toISOString(),
+    // NOTE: this is the 35-day hot window since the Phase 3 swap, not all of
+    // history. It fell 1,217,858 -> ~126,000 on 2026-08-03 by design; the rest
+    // lives in R2. See docs/plans/data-pipeline-2026-08-02.md.
     pitches_rows: pitchCount ?? 0,
     jobs,
     data_fresh: dataFresh,
     backfill: bf ?? null,
     active_models: model ?? [],
+    aggregates,
+    aggregates_stale: aggregates.some((a: AggFreshness) => a.stale),
   });
 }
 
