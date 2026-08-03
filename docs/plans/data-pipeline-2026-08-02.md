@@ -1209,10 +1209,70 @@ an unknown player id, and an empty aggregate table.
 
 ### Phase 5 exit criteria
 
-- [ ] All five routes 200 with correct CORS
-- [ ] Data Feed survives a page refresh
-- [ ] Live board unchanged when aggregate routes are forced to fail
-- [ ] `pytest tests/ -q` green; `deno check` green on all six functions
+- [x] All five routes 200 with correct CORS — verified against the deployed
+      function, with `Cache-Control: public, s-maxage=300` (3600 for game
+      context) and an `Access-Control-Allow-Origin` header on each
+- [x] Data Feed survives a page refresh — **panels render 1.8 s after a cold
+      load, well before the 8 s poll**, from the persisted seed
+- [x] Live board unchanged when aggregate routes are forced to fail — all four
+      aggregate calls rejected, live board still rendered its game and pitcher,
+      graded log intact at 30 rows, outage note shown in the Data Feed
+- [x] `pytest tests/ -q` green (152) ; `deno check` green on all six functions;
+      **11 new `deno test` cases**
+
+### Phase 5 — notes from execution (2026-08-03)
+
+**`/api/live` had to start returning `pitcher_id` and `batter_id`.** The
+aggregates are keyed on player id and the live payload carried names only, so
+the Data Feed had no way to look anything up — `live_state` has had the ids all
+along and was using them internally to join `player_info`. Additive; the live
+board renders names and ignores them.
+
+**The session graded log is not replaced, and cannot be.** Task 5.2 says to
+"replace session-memory accumulation with fetches against the routes above",
+but those five routes serve player, matchup and game aggregates — not graded
+predictions. Nothing in this project stores per-pitch prediction history, and
+the store that would (`holdout_predictions`) is explicitly deferred. So the
+warehouse panels are **additive alongside** the graded log, and the log stays
+session-scoped with its existing copy. What "survives a page refresh" now means
+concretely: the scouting panels do.
+
+**Task 5.3's test target was wrong and the tests moved.**
+`tests/api/test_routes.py` exercises the FastAPI app under `backend/`, which is
+a parallel dev implementation — the routes ship in the Deno edge function that
+actually serves production, so pytest cannot reach them. Same three cases the
+plan specified (happy path, unknown id, empty aggregate table) are in
+`supabase/functions/tests/aggregates_test.ts`, and `deno test` was added to the
+edge-functions CI job. The handlers live in `_shared/aggregates.ts` rather than
+`index.ts` precisely so they can be imported: `index.ts` calls `Deno.serve()`
+at module level, so importing it to test a handler would start a server.
+
+Two corrections made after watching it run in a browser:
+
+1. **`/api/game/{pk}/context` returns 200 `found:false`, not 404.** Context is
+   written by the nightly publish, so *every in-progress game* is legitimately
+   missing until the next day — the overwhelmingly common case. As a 404 it
+   logged a browser console error on every Data Feed load during a live game,
+   and `cached()` only memoises 200s, so it also re-hit the origin on every
+   batter change. An unknown *player* is still a 404: that is a genuine
+   not-found, not a routine state.
+2. **Re-fetching is keyed per panel, not per pitcher/batter/game trio.** The
+   batter changes every at-bat, so a single combined signature re-requested the
+   pitcher profile, the fatigue curve and the game context several times an
+   inning for no new data. Confirmed by instrumenting `fetch`: three successive
+   new batters now trigger `matchup` calls only, zero profile and zero context.
+
+Smaller things:
+
+- **`dataHtml()` has two return paths and the panels were only wired into
+  one.** The first browser check restored state correctly and rendered
+  nothing, because the no-live-games branch is not the branch that runs when
+  games exist.
+- `localStorage` access is wrapped — private mode throws on write, and the
+  failure mode should be "panels do not survive this reload", not a broken tab.
+- The Data Feed still shows nothing on a *first ever* visit with no live games,
+  since there is no seed yet. Acceptable: the seed lands on the first poll with
+  a live game.
 
 ---
 
@@ -1263,5 +1323,5 @@ leadership, not silence.
 | 2 — Close the drift | **complete** (merged; 1st nightly green, 2nd due 14:00 UTC) | Claude | 2026-08-02 |
 | 3 — The prune | **complete** — 456 MB → 182 MB | Claude | 2026-08-03 |
 | 4 — Read layer + aggregates | **complete** — 7 tables, 118,317 rows live | Claude | 2026-08-03 |
-| 5 — Frontend wiring | not started | | |
+| 5 — Frontend wiring | **complete** — 5 routes live, Data Feed durable | Claude | 2026-08-03 |
 | Deferred — model layer | not scheduled | | |
