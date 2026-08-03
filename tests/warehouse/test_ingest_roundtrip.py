@@ -27,7 +27,7 @@ from pathlib import Path
 import pyarrow.parquet as pq
 import pytest
 
-from warehouse import ingest, manifest
+from warehouse import cli, ingest, manifest
 from warehouse.config import PITCH_SCHEMA, object_key
 from warehouse.mlb import MlbApiError, flatten_play_by_play
 from warehouse.store import LocalStore
@@ -248,6 +248,86 @@ def test_ingest_range_is_idempotent(store, stub_api):
     # Empty days have no manifest entry, so they are re-checked against the
     # schedule — but the day with games costs no further API traffic.
     assert len(stub_api["calls"]) == calls_after_first
+
+
+# ── players snapshot ────────────────────────────────────────────────────────
+
+@pytest.fixture
+def stub_people(monkeypatch):
+    """Stub the /people lookup at the name `warehouse.ingest` calls."""
+    calls: list[list[int]] = []
+
+    def fake_fetch_players(ids):
+        calls.append(list(ids))
+        return [{"player_id": i, "full_name": f"Player {i}"} for i in ids]
+
+    monkeypatch.setattr(ingest, "fetch_players", fake_fetch_players)
+    return calls
+
+
+def test_refresh_players_only_fetches_ids_it_has_not_seen(store, stub_people):
+    """Merge-only. The stored fields are effectively immutable, so re-fetching
+    a known player is pure API traffic."""
+    assert ingest.refresh_players(store, [1, 2, 3]) == 3
+    assert stub_people == [[1, 2, 3]]
+
+    # 3 is already known; only 4 is new.
+    assert ingest.refresh_players(store, [3, 4]) == 1
+    assert stub_people[-1] == [4]
+
+    from warehouse.config import snapshot_key
+    stored = pq.read_table(io.BytesIO(store.get(snapshot_key("players"))))
+    assert sorted(stored.column("player_id").to_pylist()) == [1, 2, 3, 4]
+
+
+def test_refresh_players_does_not_rewrite_when_nothing_is_new(store, stub_people):
+    """The snapshot is rewritten whole, so an unconditional write meant ~90 KB
+    of pointless upload per ingested day across a 2,000-day backfill."""
+    from warehouse.config import snapshot_key
+
+    ingest.refresh_players(store, [1, 2])
+    before = store.get(snapshot_key("players"))
+    mtime = (store.root / snapshot_key("players")).stat().st_mtime_ns
+
+    assert ingest.refresh_players(store, [1, 2]) == 0
+    assert (store.root / snapshot_key("players")).stat().st_mtime_ns == mtime
+    assert store.get(snapshot_key("players")) == before
+
+
+def test_ingest_refreshes_the_players_snapshot(store, stub_api, stub_people):
+    """The nightly runs `ingest --day`, so this is what keeps callups named.
+    Until 2026-08-03 it ran only from scripts/warehouse_backfill.py."""
+    from warehouse.config import snapshot_key
+
+    assert cli.main(["--local", str(store.root), "ingest", "--day", DAY]) == 0
+    assert store.exists(snapshot_key("players"))
+    stored = pq.read_table(io.BytesIO(store.get(snapshot_key("players"))))
+    # The fixture's at-bats name three pitchers/batters across both games.
+    assert stored.num_rows > 0
+    assert stub_people, "ingest did not refresh the players snapshot"
+
+
+def test_ingest_no_players_skips_the_refresh(store, stub_api, stub_people):
+    from warehouse.config import snapshot_key
+
+    assert cli.main(["--local", str(store.root), "ingest", "--day", DAY,
+                     "--no-players"]) == 0
+    assert not store.exists(snapshot_key("players"))
+    assert stub_people == []
+
+
+def test_a_failed_players_refresh_does_not_fail_the_ingest(
+        store, stub_api, monkeypatch, capsys):
+    """The day's Parquet and manifest entry are already written, and the prune
+    gates on those. A names lookup must not turn into a skipped day."""
+    def boom(_ids):
+        raise RuntimeError("simulated /people outage")
+
+    monkeypatch.setattr(ingest, "fetch_players", boom)
+
+    assert cli.main(["--local", str(store.root), "ingest", "--day", DAY]) == 0
+    assert manifest.is_ingested(manifest.load(store), "pitches", DAY)
+    assert "players snapshot refresh failed" in capsys.readouterr().err
 
 
 def test_ingest_range_reports_a_failed_day_without_aborting_the_window(

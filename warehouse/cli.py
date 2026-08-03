@@ -32,7 +32,7 @@ from datetime import date, timedelta
 
 from warehouse import manifest
 from warehouse.config import HOT_WINDOW_DAYS, r2_config
-from warehouse.ingest import daterange, ingest_day
+from warehouse.ingest import daterange, ingest_day, refresh_players
 from warehouse.mlb import MlbApiError, schedule
 from warehouse.store import LocalStore, R2Store
 
@@ -212,6 +212,26 @@ def cmd_ingest(args) -> int:
 
     print(f"{day}: {res['games']} games, {res['pitches']:,} pitches, "
           f"{res['at_bats']:,} at_bats, {res['bytes']/1e6:.1f} MB")
+
+    # Keep the players snapshot current. Until 2026-08-03 this ran only from
+    # scripts/warehouse_backfill.py, so the nightly ingested pitches and
+    # at_bats for callups by id and never learned their names -- fine while
+    # nothing read the snapshot, wrong the moment a surface wants to label a
+    # player who is not in the live feed.
+    #
+    # Deliberately non-fatal. The day's Parquet and its manifest entry are
+    # already written above, and that is what the prune gates on; failing the
+    # run over a names lookup would turn a cosmetic gap into a red nightly and
+    # a skipped day. Loud on stderr instead.
+    if not args.no_players:
+        try:
+            added = refresh_players(store, sorted(res["player_ids"]))
+            print(f"  players snapshot: +{added} new"
+                  if added else "  players snapshot: already current")
+        except Exception as exc:  # noqa: BLE001
+            print(f"warning: players snapshot refresh failed for {day}: {exc}",
+                  file=sys.stderr)
+
     if args.force:
         print("  re-ingest cleared any prior verification for this day; "
               "re-verify it before the prune relies on it")
@@ -310,6 +330,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Re-ingest a day already in the manifest.")
     i.add_argument("--workers", type=int, default=6)
     i.add_argument("--no-boxscore", action="store_true")
+    i.add_argument("--no-players", action="store_true",
+                   help="Skip the players-snapshot refresh. The snapshot is "
+                        "rewritten whole, so this is worth setting when "
+                        "re-ingesting many days in a loop.")
     i.set_defaults(fn=cmd_ingest)
 
     pu = sub.add_parser("publish",

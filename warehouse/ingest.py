@@ -185,14 +185,27 @@ def ingest_range(store, start: str, end: str, *, with_boxscore: bool = True,
 
 
 def refresh_players(store, ids: list[int]) -> int:
-    """Rewrite the players snapshot, merging new ids into whatever is stored."""
+    """Merge any unseen player ids into the players snapshot.
+
+    Merge-only: a player already in the snapshot is never re-fetched. The
+    stored fields (name, handedness, position, debut, birth date) are
+    effectively immutable, so the cost of a nightly call is one API request
+    per 100 genuinely new players -- usually zero, occasionally a callup.
+
+    Returns the number of players added. Writes nothing when nothing was
+    added: the snapshot is rewritten whole, so an unconditional write meant
+    ~90 KB of pointless upload on every ingest of every day of a 2,000-day
+    backfill.
+    """
     existing: list[dict] = []
     key = snapshot_key("players")
-    if store.exists(key):
+    exists = store.exists(key)
+    if exists:
         existing = pq.read_table(io.BytesIO(store.get(key))).to_pylist()
     have = {r["player_id"] for r in existing}
-    missing = [i for i in ids if i not in have]
+    missing = [i for i in ids if i and i not in have]
     fetched = fetch_players(missing) if missing else []
-    merged = existing + fetched
-    store.put(key, to_parquet(merged, "players"))
+    if not fetched and exists:
+        return 0
+    store.put(key, to_parquet(existing + fetched, "players"))
     return len(fetched)
