@@ -88,6 +88,9 @@ jobs:
             echo "::group::$day"
             # Only final games are ingested, so a day whose games are still in
             # progress writes nothing and is picked up by a later run.
+            # Also refreshes the players snapshot with any callups the day
+            # introduced: merge-only, so it is usually a no-op and never
+            # re-fetches a player already stored.
             python -m warehouse ingest --day "$day" $force
             # --record is the point of the job. Without it the day is stored
             # but never earns the prune's gate.

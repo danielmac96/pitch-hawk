@@ -718,12 +718,12 @@ Measured outcomes not predicted by this plan:
   nightly is not always an outage**; the fix is
   `python -m warehouse ingest --day D --force` then re-verify. At 14:00 UTC
   against the previous ET evening's games this should be rare.
-- **The nightly does not refresh the players snapshot.** `refresh_players` is
-  reachable only from `scripts/warehouse_backfill.py`, so every callup since
-  2026-07-30 will be present in `pitches`/`at_bats` by id and absent from
-  `players/snapshot.parquet`. Nothing consumes that file yet, so it costs
-  nothing today — but **Task 4.2 must refresh it**, or `pitcher_profiles` and
-  `batter_profiles` will render unnamed players.
+- ~~**The nightly does not refresh the players snapshot.**~~ **Closed
+  2026-08-03.** `refresh_players` was reachable only from
+  `scripts/warehouse_backfill.py`, so callups landed in `pitches`/`at_bats` by
+  id and never in `players/snapshot.parquet`. `python -m warehouse ingest` now
+  refreshes it from the ids the day actually produced, which is what the
+  nightly runs. Merge-only and non-fatal — see the Phase 5 follow-up note.
 - **`status` still reports 1,732 pitch-days as ingested-only, and that is
   correct.** Phase 1 verified the Phase 3 delete set (2025-03-26..2026-06-29),
   not all 2,013 days. Pre-2025 history is not in the delete set and does not
@@ -1151,10 +1151,10 @@ Smaller things worth carrying forward:
   the documented invariant. `duck.py` still resolves through the manifest —
   it survives the token being tightened, reads only days the warehouse claims,
   and can filter to verified days.
-- **The players snapshot is still not refreshed by the nightly** (carried over
-  from Phase 2). It holds 4,195 players. Nothing in these seven tables joins to
-  it — they are keyed on player ids — so the aggregates are correct, but any
-  frontend surface that wants *names* in Phase 5 will need it current.
+- ~~**The players snapshot is still not refreshed by the nightly**~~ —
+  **closed 2026-08-03**, see the follow-up note at the end of Phase 5. It held
+  4,195 players and now holds 4,200; zero players appearing in 2026 are
+  unnamed.
 
 ---
 
@@ -1273,6 +1273,43 @@ Smaller things:
 - The Data Feed still shows nothing on a *first ever* visit with no live games,
   since there is no seed yet. Acceptable: the seed lands on the first poll with
   a live game.
+
+### Follow-up — the players snapshot is now refreshed nightly (2026-08-03)
+
+Carried over from Phase 2 and flagged again in Phase 4; closed here.
+
+`refresh_players` existed but was reachable only from
+`scripts/warehouse_backfill.py`, so the nightly ingested every callup's pitches
+and at-bats **by id** and never learned their names. Nothing read the snapshot
+yet, which is why it cost nothing and stayed open — but it is a silent gap that
+only surfaces the day a UI tries to label a player who is not in the live feed.
+
+`python -m warehouse ingest` now refreshes it from `ingest_day`'s own
+`player_ids`, so it runs in the nightly with no workflow change and no extra
+I/O to find the ids.
+
+Three properties worth stating, because each was a choice:
+
+- **Merge-only.** A player already in the snapshot is never re-fetched. The
+  stored fields — name, handedness, position, debut, birth date — are
+  effectively immutable, so a nightly costs one `/people` request per 100
+  genuinely new players, and usually zero.
+- **No write when nothing is new.** The snapshot is rewritten whole, so the
+  previous unconditional `store.put` meant ~90 KB of pointless upload for every
+  day of a 2,000-day backfill. Verified against production R2: passing 500
+  already-known ids returns 0 and leaves the object byte-identical.
+- **Non-fatal.** The day's Parquet and manifest entry are already written
+  before this runs, and those are what the prune gates on. A failed names
+  lookup warns on stderr rather than failing the run — otherwise a `/people`
+  outage would turn a cosmetic gap into a red nightly *and* a day that
+  `pending` then skips, because the manifest entry already exists.
+  `--no-players` skips it outright, which is worth setting when re-ingesting
+  many days in a loop.
+
+Running it once over 2026 closed the gap the pre-refresh nightly had already
+opened: **4,195 → 4,200 players, and zero player ids appearing in 2026 are now
+unnamed.** Those five were introduced by 2026-07-31 and 08-01, which were
+ingested by hand in Phase 2 before this existed.
 
 ---
 
