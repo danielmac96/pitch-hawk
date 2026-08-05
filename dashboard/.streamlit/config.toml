@@ -1,0 +1,18 @@
+# Streamlit chrome, aligned with utils/palette.py.
+#
+# The only setting that matters for correctness is primaryColor. Streamlit's
+# default is a saturated red, which it puts on the Refresh button and on widget
+# focus rings — the same red this dashboard reserves for a failing check. A
+# reader scanning for red must find only real failures, so the chrome takes the
+# categorical slot-1 blue instead.
+
+[theme]
+primaryColor = "#2a78d6"
+
+[server]
+# QA data, but still the warehouse's contents: don't hand it to a telemetry
+# endpoint by default.
+enableCORS = true
+
+[browser]
+gatherUsageStats = false

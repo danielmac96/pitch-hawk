@@ -26,13 +26,23 @@ dist/
 # AI assistant / tooling (local, not part of the app)
 CLAUDE.md
 .claude/settings.json
+.claude/settings.local.json
 graphify-out/
+docs/superpowers/
+
+# Vendored agent skills. skills-lock.json pins source repo + content hash;
+# restore with `npx skills add` rather than tracking the docs themselves.
+.agents/skills/
+
+# Browser automation scratch (console logs, page snapshots, screenshots)
+.playwright-mcp/
 
 # warehouse local dry-run output + backfill logs
 .warehouse-local/
 .warehouse-smoke/
 warehouse-backfill.log
 warehouse-backfill.out
+verify-gate-*.log
 
 # supabase CLI scratch (written by `supabase functions deploy`)
 supabase/.temp/
