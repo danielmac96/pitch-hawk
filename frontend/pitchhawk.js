@@ -73,6 +73,40 @@
     return changed;
   }
 
+  // Last completed slate, graded. Fetched from /board and refreshed rarely —
+  // it only changes when a day finishes. This is what the Live Board shows
+  // above everything else, and it is why there is no longer an empty state:
+  // at 9am, before a pitch is thrown, yesterday's numbers fill the screen.
+  let RECAP = null;
+  let RECAP_AT = 0;
+  let RECAP_ERR = false;
+  // On boot this is the FIRST paint: /board returns the recap plus the whole
+  // slate in one call, so the board has content before the 8s /live poll has
+  // even fired. Afterwards it refreshes only every 5 minutes, because a
+  // completed slate does not change.
+  async function fetchRecap(force) {
+    if (!force && RECAP !== null && Date.now() - RECAP_AT < 300000) return false;
+    try {
+      const b = await PH.loadBoard(API_BASE);
+      RECAP_AT = Date.now();
+      RECAP_ERR = false;
+      const changed = JSON.stringify(b && b.recap) !== JSON.stringify(RECAP);
+      RECAP = (b && b.recap) || null;
+      // Seed the slate on a cold start; the live poll takes over from here and
+      // must not be clobbered once it has run.
+      if (!PH.games || !PH.games.length) {
+        PH.games = [].concat(b.live || [], b.upcoming || [], b.final || []);
+      }
+      return changed;
+    } catch (_e) {
+      // Distinct from "no games": the board must never present a fetch failure
+      // as a quiet day.
+      RECAP_ERR = true;
+      RECAP_AT = Date.now();
+      return false;
+    }
+  }
+
   class Board {
     constructor(root) {
       this.root = root;
@@ -85,6 +119,11 @@
         // Phase 4 aggregates. `loaded` stays false until the first fetch
         // settles, so the panels are absent rather than flashing empty.
         scout: { seed: null, ctx: null, profile: null, fatigue: null, matchup: null, loaded: false },
+        // Durable prediction history from /api/feed. The session graded log
+        // below is now an overlay on top of this, not the only source — that
+        // is what stops the Data Feed emptying itself on every reload.
+        feed: { rows: [], players: [], summary: null, loaded: false, err: false },
+        feedF: { days: 30, market: "all", team: "", pitcher_id: "", batter_id: "" },
       };
       this._pollIv = null;
       // Client-side plate-appearance history (see trackAtBats): /live only
@@ -98,13 +137,35 @@
       // graded log above. `_scoutSigs` gates re-fetching per panel, so a new
       // batter does not re-request the pitcher profile or the game context.
       this._scoutSigs = {};
+      this._feedSig = null;
       this.root.addEventListener("click", (e) => this._onClick(e));
+      // `change` rather than `input`: it fires on blur/Enter, so a re-render
+      // never lands mid-keystroke. Combined with the focus guard in render(),
+      // typing in a filter box survives the 8s poll.
+      this.root.addEventListener("change", (e) => this._onFilterChange(e));
+    }
+
+    _onFilterChange(e) {
+      const el = e.target && e.target.closest ? e.target.closest("[data-feedfilter]") : null;
+      if (!el) return;
+      const key = el.getAttribute("data-feedfilter");
+      const val = (el.value || "").trim();
+      if (this.state.feedF[key] === val) return;
+      this.state.feedF[key] = val;
+      this.syncFeed();
+      this.render();
     }
     setState(patch) { Object.assign(this.state, patch); this.render(); }
 
     // ── formatters ───────────────────────────────────────────────────────
     dk() { return this.state.dark; }
-    pct(p) { return Math.round((p || 0) * 100) + "%"; }
+    // A missing prediction renders as "—", never as 0%.
+    //
+    // This used to be `Math.round((p || 0) * 100)`, so an unscored market — the
+    // normal state of every game before first pitch — displayed as a confident
+    // "0%". That is a wrong number presented as a real one, which is worse than
+    // an empty cell.
+    pct(p) { return p == null ? "—" : Math.round(p * 100) + "%"; }
     fmtEdge(e) { return e == null ? "—" : (e >= 0 ? "+" : "−") + (Math.abs(e) * 100).toFixed(1) + "%"; }
     am(a) { return a == null ? "—" : (a > 0 ? "+" + a : "" + a); }
     tier(e) {
@@ -290,6 +351,21 @@
         case "view": return this.setState({ view: arg });
         case "goHome": return this.setState({ view: "home" });
         case "goLive": return this.setState({ view: "live" });
+        case "feedDays": {
+          this.state.feedF.days = Number(arg) || 30;
+          this.syncFeed();
+          return this.render();
+        }
+        case "feedMarket": {
+          this.state.feedF.market = arg;
+          this.syncFeed();
+          return this.render();
+        }
+        case "feedClear": {
+          this.state.feedF = { days: 30, market: "all", team: "", pitcher_id: "", batter_id: "" };
+          this.syncFeed();
+          return this.render();
+        }
         case "liveGame": {
           const pk = Number(arg);
           const o = Object.assign({}, this.state.liveGames); o[pk] = this.liveGameOn(pk) ? false : true;
@@ -582,15 +658,20 @@
         return { name: n, label: PH.OUTCOME_LABEL[n] || n, pct: Math.round((oc.modelProb || 0) * 100), rec: n === abr.recommendation, c: this.OUT_COLOR[n] };
       }).sort((a, b) => b.pct - a.pct);
     }
+    // The focused game is always a live one: the rail, situation strip and
+    // pitch log all describe a game in progress. Upcoming and final games have
+    // their own sections.
     focused() {
-      if (!PH.games.length) return null;
-      return PH.games.find((g) => g.gamePk === this.state.focusGame) || PH.games[0];
+      const live = this.liveGames();
+      if (!live.length) return null;
+      return live.find((g) => g.gamePk === this.state.focusGame) || live[0];
     }
 
     // ── Live Board · game rail (1c) / focus strip (1b) ────────────────────
     gameRailHtml(focusPk, mobile) {
       const C = this.C;
-      const items = PH.games.map((g) => {
+      const rail = this.liveGames();
+      const items = rail.map((g) => {
         const on = g.gamePk === focusPk;
         const nc = this.nextCall(g);
         const mini = `${g.score.away}–${g.score.home} ${g.half}${g.inning}`;
@@ -622,7 +703,7 @@
       return `<div class="phv-sc" style="border-right:1px solid ${C.bd};background:${C.rail};overflow-y:auto;padding:14px 12px;">
         <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;padding:0 2px;">
           <span style="font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">Live games</span>
-          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};">${PH.games.length}</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};">${rail.length}</span>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;">${items}</div>
       </div>`;
@@ -852,23 +933,146 @@
       </div>`;
     }
 
+    // ── Live Board · section header ───────────────────────────────────────
+    sectionHead(title, note) {
+      const C = this.C;
+      return `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin:22px 0 10px;">
+        <span style="font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">${esc(title)}</span>
+        ${note ? `<span style="font-size:11.5px;color:${C.faint};">${esc(note)}</span>` : ""}
+      </div>`;
+    }
+
+    // Coverage pill: how many of the six markets this game actually carries.
+    // Renders the shortfall explicitly rather than letting missing markets
+    // disappear into blank cells.
+    covPill(g) {
+      const C = this.C;
+      const c = g.coverage;
+      if (!c) return "";
+      const full = c.markets_covered >= c.markets_total;
+      return `<span title="${esc((c.missing || []).join(", ") || "all markets scored")}" style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;white-space:nowrap;background:${full ? "rgba(74,222,128,.14)" : C.chip};color:${full ? C.grn : C.dim};">${c.markets_covered}/${c.markets_total}</span>`;
+    }
+
+    firstPitch(ts) {
+      if (!ts) return "";
+      const t = Date.parse(ts);
+      if (!isFinite(t)) return "";
+      const mins = Math.round((t - Date.now()) / 60000);
+      const clock = new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      if (mins <= 0) return `${clock} · starting`;
+      if (mins < 60) return `${clock} · in ${mins}m`;
+      return `${clock} · in ${Math.floor(mins / 60)}h ${mins % 60}m`;
+    }
+
+    // ── Live Board · yesterday's graded totals ────────────────────────────
+    // The section that fills the screen when nothing has started. Built from
+    // graded game_predictions, so it is real history, not a placeholder.
+    recapHtml() {
+      const C = this.C;
+      if (RECAP_ERR && !RECAP) {
+        return this.sectionHead("Last completed slate") +
+          `<div style="padding:14px;border:1px solid ${C.bd};border-radius:12px;background:${C.panel};font-size:12.5px;color:${C.mut};">
+            Couldn't reach the results feed just now — this is a connection problem, not an empty schedule. Retrying automatically.
+          </div>`;
+      }
+      if (!RECAP || !RECAP.games || !RECAP.games.length) return "";
+      const t = RECAP.totals || {};
+      const kpi = (label, value, tone) => `<div style="flex:1;min-width:96px;padding:10px 12px;border:1px solid ${C.bd};border-radius:11px;background:${C.panel};">
+        <div style="font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};margin-bottom:3px;">${esc(label)}</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:17px;font-weight:700;color:${tone || C.txt};">${esc(value)}</div>
+      </div>`;
+      const units = Number(t.profit_units || 0);
+      const tiles = [
+        kpi("Games", String(t.games != null ? t.games : RECAP.games.length)),
+        kpi("Calls graded", String(t.n_graded != null ? t.n_graded : 0)),
+        kpi("Hit rate", t.win_rate != null ? `${Math.round(t.win_rate * 100)}%` : "—"),
+        kpi("Net units", (units >= 0 ? "+" : "−") + Math.abs(units).toFixed(2), units >= 0 ? C.grn : "#ff7b6b"),
+      ].join("");
+
+      const rows = RECAP.games.map((gm) => {
+        const graded = (gm.markets || []).filter((m) => m.result === "win" || m.result === "loss");
+        const wins = graded.filter((m) => m.result === "win").length;
+        const score = `${gm.away_abbr || "AWY"} ${gm.away_score != null ? gm.away_score : "—"} · ${gm.home_abbr || "HOM"} ${gm.home_score != null ? gm.home_score : "—"}`;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid ${C.bd};font-size:12.5px;">
+          <span style="font-weight:700;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(score)}</span>
+          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">${graded.length ? `${wins}/${graded.length} calls` : "ungraded"}</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:700;padding:2px 6px;border-radius:5px;background:${C.chip};color:${C.dim};">${gm.coverage ? `${gm.coverage.markets_covered}/${gm.coverage.markets_total}` : "—"}</span>
+        </div>`;
+      }).join("");
+
+      return this.sectionHead("Last completed slate", RECAP.date || "") +
+        `<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">${tiles}</div>
+         <div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel2};overflow:hidden;">${rows}</div>`;
+    }
+
+    // ── Live Board · today's upcoming games ───────────────────────────────
+    upcomingHtml() {
+      const C = this.C;
+      const list = this.upcomingGames();
+      if (!list.length) return "";
+      const cards = list.map((g) => {
+        const ml = g.m.game_moneyline, tot = g.m.game_total;
+        const mlTxt = ml && ml.covered && ml.recommendation
+          ? `${esc(ml.recommendation === "home" ? g.home : g.away)} ${this.pct(ml.modelProb)}`
+          : "—";
+        const totTxt = tot && tot.covered && tot.predictedValue != null
+          ? `${Number(tot.predictedValue).toFixed(1)} runs${tot.line != null ? ` · ${esc(PH.OUTCOME_LABEL[tot.recommendation] || tot.recommendation || "")} ${tot.line}` : ""}`
+          : "—";
+        const probables = [g.probables && g.probables.away, g.probables && g.probables.home]
+          .filter(Boolean).map((n) => this.shortName(n)).join(" vs ");
+        return `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};padding:11px 13px;display:flex;flex-direction:column;gap:7px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:13.5px;font-weight:800;">${esc(g.label)}</span>
+            <span style="margin-left:auto;">${this.covPill(g)}</span>
+          </div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">${esc(this.firstPitch(g.startTs))}</div>
+          ${probables ? `<div style="font-size:11.5px;color:${C.mut};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(probables)}</div>` : ""}
+          <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:1px;">
+            <span style="font-size:11px;color:${C.dim};background:${C.chip};padding:3px 7px;border-radius:6px;">ML ${mlTxt}</span>
+            <span style="font-size:11px;color:${C.dim};background:${C.chip};padding:3px 7px;border-radius:6px;">Total ${totTxt}</span>
+          </div>
+        </div>`;
+      }).join("");
+      return this.sectionHead("Today · upcoming", `${list.length} game${list.length === 1 ? "" : "s"} · predictions ready before first pitch`) +
+        `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:9px;">${cards}</div>`;
+    }
+
+    // ── Live Board · today's finished games ───────────────────────────────
+    finalsHtml() {
+      const C = this.C;
+      const list = this.finalGames();
+      if (!list.length) return "";
+      const rows = list.map((g) => `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px solid ${C.bd};font-size:12.5px;">
+        <span style="font-weight:700;">${esc(g.label)}</span>
+        <span style="font-family:'IBM Plex Mono',monospace;color:${C.mut};">${esc(g.score.away)}–${esc(g.score.home)}</span>
+        <span style="margin-left:auto;">${this.covPill(g)}</span>
+      </div>`).join("");
+      return this.sectionHead("Today · final", `${list.length}`) +
+        `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel2};overflow:hidden;">${rows}</div>`;
+    }
+
     // ══ LIVE BOARD (1b mobile · 1c desktop) ══════════════════════════════
     liveHtml() {
       const C = this.C;
-      if (!PH.games.length) {
-        return `<div style="padding:0 14px;">
+      const g = this.focused();
+      const mobile = this.mob();
+      // Recap + upcoming + finals always render. They are what makes the board
+      // non-empty before first pitch, and they stay below the live panel once
+      // games start.
+      const dayBlocks = this.recapHtml() + this.upcomingHtml() + this.finalsHtml();
+
+      if (!g) {
+        return `<div style="padding:0 14px 28px;">
           <div style="margin:18px 0 12px;">
             <h1 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.liveTitle)}</h1>
             <p style="margin:.3rem 0 0;color:${C.mut};font-size:.95rem;">${esc(COPY.liveSub)}</p>
           </div>
-          <div style="padding:3.5rem 1rem;text-align:center;background:${C.panel};border:1px solid ${C.bd};border-radius:14px;">
-            <div style="font-size:1.05rem;font-weight:700;margin-bottom:.35rem;">No live games right now</div>
-            <div style="font-size:.9rem;color:${C.mut};">The board wakes up automatically at first pitch — <button data-act="goHome" style="border:0;background:transparent;color:${C.grn};font-family:inherit;font-weight:700;font-size:.9rem;cursor:pointer;padding:0;">see today's schedule</button>.</div>
-          </div>
+          ${dayBlocks || `<div style="padding:3.5rem 1rem;text-align:center;background:${C.panel};border:1px solid ${C.bd};border-radius:14px;">
+            <div style="font-size:1.05rem;font-weight:700;margin-bottom:.35rem;">No games on the schedule</div>
+            <div style="font-size:.9rem;color:${C.mut};">MLB has nothing listed for today. Yesterday's results return here as soon as a slate completes.</div>
+          </div>`}
         </div>`;
       }
-      const g = this.focused();
-      const mobile = this.mob();
       const hist = this.paHist[g.gamePk] || [];
 
       if (mobile) {
@@ -890,6 +1094,7 @@
               ${this.earlierRows(g, true)}` : ""}
             </div>
             <div style="font-size:10.5px;color:${C.faint};padding:8px 2px 0;line-height:1.5;">Velo shading — <span style="color:${this.GRD.good.fg};font-weight:700;">green</span> within 1.5 mph, <span style="color:${this.GRD.amber.fg};font-weight:700;">amber</span> within 3, <span style="color:${this.GRD.bad.fg};font-weight:700;">red</span> beyond. Class calls are green when right, red when wrong.</div>
+            ${dayBlocks}
           </div>
         </div>`;
       }
@@ -927,6 +1132,7 @@
               ${this.zonePanelHtml(g)}
             </div>
           </div>
+          ${dayBlocks}
         </div>
       </div>`;
     }
@@ -1137,25 +1343,132 @@
       </div>`;
     }
 
+    // ── Data Feed · durable 30-day history ────────────────────────────────
+    // Server-backed, so it survives a reload and a fresh browser. The session
+    // graded log further down is now an overlay for pitches arriving in this
+    // tab, not the only record that exists.
+    // `bare` drops the outer padding for when this is embedded inside a tab
+    // that already has its own.
+    feedHtml(bare) {
+      const C = this.C;
+      const mobile = this.mob();
+      const f = this.state.feedF;
+      const fd = this.state.feed;
+
+      const chip = (act, arg, label, on) =>
+        `<button data-act="${act}" data-arg="${esc(arg)}" style="border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${on ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:${mobile ? 11 : 11.5}px;padding:${mobile ? "4px 9px" : "5px 11px"};border-radius:999px;cursor:pointer;">${esc(label)}</button>`;
+
+      const dayChips = [[1, "Today"], [7, "7 days"], [30, "30 days"]]
+        .map(([d, l]) => chip("feedDays", d, l, Number(f.days) === d)).join("");
+      const mktChips = [["all", "All markets"], ["game_moneyline", "Moneyline"], ["game_total", "Total"],
+        ["pitch_speed_ou", "Pitch velo"], ["pitch_result", "Pitch result"],
+        ["ab_result", "AB result"], ["ab_pitches_ou", "AB pitches"]]
+        .map(([k, l]) => chip("feedMarket", k, l, f.market === k)).join("");
+
+      const input = (key, ph, val) =>
+        `<input data-feedfilter="${key}" value="${esc(val || "")}" placeholder="${esc(ph)}" style="border:1px solid ${C.bd};background:${C.panel};color:${C.txt};font-family:inherit;font-size:11.5px;padding:5px 9px;border-radius:8px;width:${mobile ? 96 : 118}px;" />`;
+
+      const anyFilter = f.market !== "all" || f.team || f.pitcher_id || f.batter_id || Number(f.days) !== 30;
+
+      const filters = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px;">
+        ${dayChips}
+        <span style="width:1px;height:16px;background:${C.bd2};"></span>
+        ${input("team", "Team (NYM)", f.team)}
+        ${input("pitcher_id", "Pitcher id", f.pitcher_id)}
+        ${input("batter_id", "Batter id", f.batter_id)}
+        ${anyFilter ? chip("feedClear", "", "Clear", false) : ""}
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${mktChips}</div>`;
+
+      let body;
+      if (!fd.loaded) {
+        body = `<div style="padding:16px 14px;font-size:12.5px;color:${C.faint};font-style:italic;">Loading prediction history…</div>`;
+      } else if (fd.err) {
+        body = `<div style="padding:16px 14px;font-size:12.5px;color:${C.faint};">Couldn't reach the history feed — a connection problem, not an empty record. Retrying on the next refresh.</div>`;
+      } else if (!fd.rows.length && !fd.players.length) {
+        body = `<div style="padding:16px 14px;font-size:12.5px;color:${C.faint};">No stored predictions match these filters in the selected window.</div>`;
+      } else {
+        const head = `<div style="display:grid;grid-template-columns:${mobile ? "1fr 74px 54px" : "88px 1fr 128px 96px 74px 62px"};gap:${mobile ? 8 : 12}px;padding:9px 13px;border-bottom:1px solid ${C.bd};background:${C.panel3};font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:${C.faint};">
+          ${mobile ? "<span>Game · market</span><span style='text-align:center;'>Call</span><span style='text-align:center;'>Result</span>"
+            : "<span>Date</span><span>Game</span><span>Market</span><span>Call</span><span style='text-align:center;'>Actual</span><span style='text-align:center;'>Result</span>"}
+        </div>`;
+        const tone = (r) => r.result === "win" ? this.GRD.good.fg
+          : r.result === "loss" ? this.GRD.bad.fg
+          : r.result ? C.dim : C.faint;
+        const rows = fd.rows.slice(0, 120).map((r) => {
+          const meta = PH.MARKETS[r.market] || { short: r.market };
+          const game = `${r.away_abbr || "AWY"} @ ${r.home_abbr || "HOM"}`;
+          const call = r.recommendation
+            ? `${PH.OUTCOME_LABEL[r.recommendation] || r.recommendation}${r.line != null ? ` ${r.line}` : ""}`
+            : "—";
+          const actual = r.actual_value != null ? String(r.actual_value) : "—";
+          const res = r.result ? r.result : "pending";
+          if (mobile) {
+            return `<div style="display:grid;grid-template-columns:1fr 74px 54px;gap:8px;padding:8px 13px;border-top:1px solid ${C.bd};font-size:11.5px;align-items:center;">
+              <span style="min-width:0;"><span style="font-weight:700;">${esc(game)}</span><br/><span style="color:${C.faint};font-size:10.5px;">${esc(r.official_date)} · ${esc(meta.short)}</span></span>
+              <span style="text-align:center;font-family:'IBM Plex Mono',monospace;font-size:10.5px;">${esc(call)}</span>
+              <span style="text-align:center;font-weight:700;color:${tone(r)};font-size:10.5px;">${esc(res)}</span>
+            </div>`;
+          }
+          return `<div style="display:grid;grid-template-columns:88px 1fr 128px 96px 74px 62px;gap:12px;padding:8px 13px;border-top:1px solid ${C.bd};font-size:12px;align-items:center;">
+            <span style="font-family:'IBM Plex Mono',monospace;color:${C.faint};">${esc(r.official_date)}</span>
+            <span style="font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(game)}</span>
+            <span style="color:${C.mut};">${esc(meta.short)}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;">${esc(call)}</span>
+            <span style="text-align:center;font-family:'IBM Plex Mono',monospace;color:${C.mut};">${esc(actual)}</span>
+            <span style="text-align:center;font-weight:700;color:${tone(r)};">${esc(res)}</span>
+          </div>`;
+        }).join("");
+        const more = fd.rows.length > 120
+          ? `<div style="padding:8px 13px;border-top:1px solid ${C.bd};font-size:11.5px;color:${C.faint};">Showing 120 of ${fd.rows.length} rows — narrow the filters to see the rest.</div>`
+          : "";
+        body = head + rows + more;
+      }
+
+      const s = fd.summary || {};
+      const units = Number(s.profit_units || 0);
+      const stat = (label, value, tone) => `<div style="flex:1;min-width:92px;padding:9px 11px;border:1px solid ${C.bd};border-radius:11px;background:${C.panel};">
+        <div style="font-size:9.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};margin-bottom:3px;">${esc(label)}</div>
+        <div style="font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:700;color:${tone || C.txt};">${esc(value)}</div>
+      </div>`;
+      const summary = fd.loaded && !fd.err ? `<div style="display:flex;gap:7px;flex-wrap:wrap;margin-bottom:10px;">
+        ${stat("Predictions", String(s.n || 0))}
+        ${stat("Graded", String(s.n_graded || 0))}
+        ${stat("Hit rate", s.win_rate != null ? `${Math.round(s.win_rate * 100)}%` : "—")}
+        ${stat("Net units", (units >= 0 ? "+" : "−") + Math.abs(units).toFixed(2), units >= 0 ? C.grn : "#ff7b6b")}
+      </div>` : "";
+
+      return `<div style="padding:${bare ? "0 0 18px" : (mobile ? "14px 14px 4px" : "18px 24px 6px")};">
+        <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px;">
+          <span style="font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">Prediction history</span>
+          <span style="font-size:11.5px;color:${C.faint};">stored server-side · survives reload</span>
+        </div>
+        ${filters}
+        ${summary}
+        <div style="border:1px solid ${C.bd};border-radius:13px;background:${C.panel2};overflow:hidden;">${body}</div>
+      </div>`;
+    }
+
     dataHtml() {
       const C = this.C;
       const mobile = this.mob();
-      if (!PH.games.length) {
-        // Cold load with no live games. Before Phase 4 this was the whole
-        // tab, which is why it lost everything on refresh; the scouting
-        // panels are restored from the last session and render here.
-        return `${this.scoutingHtml()}<div style="padding:2.5rem 14px;text-align:center;color:${C.faint};">No live games right now — the graded log fills as pitches arrive.</div>`;
+      const live = this.liveGames();
+      if (!live.length) {
+        // No game in progress. The tab is still full: durable history and the
+        // scouting panels both render. It used to say "No live games right
+        // now" and show nothing else.
+        return `${this.feedHtml()}${this.scoutingHtml()}`;
       }
       const rows = this.dfRows();
       const st = this.dfStats(rows);
       const scopeLabel = this.state.dfGame === "all"
         ? "all live games"
-        : (PH.games.find((x) => x.gamePk === this.state.dfGame) || {}).label || "all live games";
+        : (live.find((x) => x.gamePk === this.state.dfGame) || {}).label || "all live games";
 
       // ── game panels ────────────────────────────────────────────────────
       const allOn = this.state.dfGame === "all";
       const allChip = `<button data-act="dfGame" data-arg="all" style="border:1px solid ${allOn ? C.acc : C.bd};background:${allOn ? "#12301f" : C.chip};color:${allOn ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:${mobile ? 11.5 : 12}px;padding:${mobile ? "4px 11px" : "5px 12px"};border-radius:999px;cursor:pointer;">All${mobile ? "" : " games"}</button>`;
-      const panels = PH.games.map((g) => {
+      const panels = live.map((g) => {
         const on = g.gamePk === this.state.dfGame;
         const nc = this.nextCall(g);
         return `<button data-act="dfGame" data-arg="${g.gamePk}" style="${mobile ? "flex:none;width:158px;" : ""}display:flex;flex-direction:column;gap:6px;text-align:left;border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.panel};border-radius:12px;padding:${mobile ? "9px 10px" : "10px 11px"};font-family:inherit;color:${C.txt};cursor:pointer;opacity:${g.stale ? 0.7 : 1};">
@@ -1179,7 +1492,7 @@
         { label: "Velo MAE", value: st.mae == null ? "—" : st.mae.toFixed(2), unit: "mph", c: st.mae == null ? C.dim : this.grd(this.veloBand(st.mae)).fg, sub: `mean |called − actual| · n=${st.velo.length}` },
         { label: "Velo within 1.5", value: st.within == null ? "—" : Math.round(st.within * 100) + "%", c: st.within == null ? C.dim : st.within >= 0.5 ? this.GRD.good.fg : this.GRD.amber.fg, sub: `green band share · n=${st.velo.length}` },
         { label: "Class hit rate", value: st.clsHit == null ? "—" : Math.round(st.clsHit * 100) + "%", c: st.clsHit == null ? C.dim : st.clsHit >= 0.5 ? this.GRD.good.fg : this.GRD.amber.fg, sub: `strike/ball/in-play · n=${st.cls.length}` },
-        { label: "Graded this session", value: String(st.n), c: C.txt, sub: `${scopeLabel} · resets on reload` },
+        { label: "Graded this session", value: String(st.n), c: C.txt, sub: `${scopeLabel} · live overlay` },
       ];
       const kpis = kpiDefs.map((k) => mobile
         ? `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};padding:11px 12px;">
@@ -1245,7 +1558,7 @@
         </div>`;
       }).join("");
 
-      const logEmpty = `<div style="padding:16px 14px;font-size:12.5px;color:${C.faint};font-style:italic;line-height:1.55;">Nothing graded yet this session. A row lands as soon as a pitch arrives with a prediction attached — the feed carries no prediction history, so the log starts empty on reload.</div>`;
+      const logEmpty = `<div style="padding:16px 14px;font-size:12.5px;color:${C.faint};font-style:italic;line-height:1.55;">No pitches graded in this tab yet — a row lands as soon as one arrives with a prediction attached. The stored 30-day history above is unaffected by a reload.</div>`;
 
       // ── analytics modules (computed from the session log) ───────────────
       const modCard = (title, body, note, right) => `<div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};padding:15px 16px;">
@@ -1409,6 +1722,8 @@
           <h1 style="margin:0;font-size:23px;font-weight:800;letter-spacing:-.02em;">${esc(COPY.dataTitle)}</h1>
           <p style="margin:4px 0 14px;font-size:13px;color:${C.mut};">${esc(COPY.dataSub)}</p>
 
+          ${this.feedHtml(true)}
+
           <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;">
             <span style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">Live games</span>
             ${allChip}
@@ -1445,8 +1760,10 @@
         <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px;">
           <h1 style="margin:0;font-size:27px;font-weight:800;letter-spacing:-.02em;">${esc(COPY.dataTitle)}</h1>
           <p style="margin:0;font-size:13.5px;color:${C.mut};">${esc(COPY.dataSub)}</p>
-          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">graded live as pitches land · session-scoped</span>
+          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">30-day stored history · live grading on top</span>
         </div>
+
+        ${this.feedHtml(true)}
 
         <div style="display:flex;align-items:center;gap:10px;margin-bottom:9px;">
           <span style="font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">Live games</span>
@@ -1480,6 +1797,16 @@
     }
 
     render() {
+      // The whole UI is rebuilt with innerHTML, which destroys focus and
+      // selection. Skip a render while the user is typing in a feed filter —
+      // otherwise the 8s poll yanks the cursor out of the box mid-word. The
+      // pending state is picked up by the next render after blur.
+      const ae = document.activeElement;
+      if (ae && ae.hasAttribute && ae.hasAttribute("data-feedfilter") && this.root.contains(ae)) {
+        this._renderDeferred = true;
+        return;
+      }
+      this._renderDeferred = false;
       this.root.setAttribute("data-theme", this.dk() ? "dark" : "light");
       const view = this.state.view;
       let main;
@@ -1495,24 +1822,57 @@
     }
 
     // ── data lifecycle ────────────────────────────────────────────────────
-    // /live can keep serving a finished game for up to ~30 min (its live_state
-    // row just goes stale) — the schedule knows "Final" much sooner, so drop
-    // any game the slate marks final from the live board and data feed.
-    _withoutFinals(games) {
-      const finals = new Set((SLATE || []).filter((g) => isFinalStatus(g.status)).map((g) => g.game_pk));
-      return games.filter((g) => !finals.has(g.gamePk));
+    // /live now serves the whole slate with an explicit `phase` per game, so
+    // the client no longer has to reconcile a stale live_state against the
+    // schedule to work out which games are over — the server does it, from
+    // games.status. The old _withoutFinals() filter is gone with it; dropping
+    // finals here would now delete a section the board is meant to render.
+    // ── durable prediction history ────────────────────────────────────────
+    // Signature-gated so the 8s poll does not re-request an unchanged window.
+    async syncFeed(force) {
+      const f = this.state.feedF;
+      const sig = JSON.stringify(f);
+      if (!force && sig === this._feedSig) return;
+      this._feedSig = sig;
+      const to = new Date();
+      const from = new Date(to.getTime() - (Number(f.days) - 1) * 864e5);
+      const iso = (d) => d.toISOString().slice(0, 10);
+      try {
+        const res = await PH.loadFeed(API_BASE, {
+          from: iso(from), to: iso(to), limit: 300,
+          market: f.market, team: f.team,
+          pitcher_id: f.pitcher_id, batter_id: f.batter_id,
+        });
+        this.state.feed = {
+          rows: res.games || [], players: res.players || [],
+          summary: res.summary || null, loaded: true, err: false,
+        };
+      } catch (_e) {
+        // Keep whatever we had; flag it so the panel says "couldn't reach"
+        // rather than implying there is no history.
+        this.state.feed = Object.assign({}, this.state.feed, { loaded: true, err: true });
+      }
+      this.render();
     }
+
+    liveGames() { return (PH.games || []).filter((g) => g.phase === "live"); }
+    upcomingGames() { return (PH.games || []).filter((g) => g.phase === "pregame"); }
+    finalGames() { return (PH.games || []).filter((g) => g.phase === "final"); }
+
     async poll() {
       try {
-        await fetchSlate().catch(() => {}); // throttled to 60s; needed for the finals filter
+        await fetchSlate().catch(() => {});
+        // Refreshed on its own 5-minute cadence inside fetchRecap; calling it
+        // every tick is a no-op until then.
+        fetchRecap().then((changed) => { if (changed) this.render(); }).catch(() => {});
         const games = await PH.loadLive(API_BASE);
         if (Array.isArray(games)) {
-          // [] is a real answer (no live games) — empty the board.
-          PH.games = this._withoutFinals(games);
-          this.trackAtBats(PH.games);
-          this.trackGradedLog(PH.games);
-          if (PH.games.length && !PH.games.some((g) => g.gamePk === this.state.feedGame)) {
-            this.state.feedGame = PH.games[0].gamePk;
+          PH.games = games;
+          const live = this.liveGames();
+          this.trackAtBats(live);
+          this.trackGradedLog(live);
+          if (live.length && !live.some((g) => g.gamePk === this.state.feedGame)) {
+            this.state.feedGame = live[0].gamePk;
           }
           this.render();
           // Deliberately not awaited: the live board must not wait on the
@@ -1526,10 +1886,7 @@
     async hydrate() {
       try {
         const changed = await fetchSlate();
-        if (changed) {
-          PH.games = this._withoutFinals(PH.games); // a game may have just gone final
-          this.render();
-        }
+        if (changed) this.render();
       } catch (_e) { /* keep last-good schedule */ }
     }
     // ±20% jitter so 1000 clients don't stampede the origin in lockstep.
@@ -1548,7 +1905,11 @@
     // design, so an idle board is never flagged as stale.
     async checkHealth() {
       const h = await fetchJson("/health");
-      this._setStaleBanner(!!(h && h.data_fresh === false) && PH.games.length > 0, h);
+      // Must be LIVE games, not slate games. PH.games now carries the whole
+      // slate, so `PH.games.length > 0` would flag the poller as stale every
+      // morning — while it is correctly asleep before first pitch, which is
+      // exactly the case the banner is documented not to fire in.
+      this._setStaleBanner(!!(h && h.data_fresh === false) && this.liveGames().length > 0, h);
     }
     _setStaleBanner(stale, h) {
       let el = document.getElementById("ph-stale");
@@ -1569,6 +1930,11 @@
       this.render();
       this.hydrate();
       this.poll();
+      // Both are durable, server-side and independent of what is live right
+      // now — they are what the board and feed show before first pitch, so
+      // they are fetched on boot rather than waiting for a game to start.
+      fetchRecap(true).then(() => this.render()).catch(() => {});
+      this.syncFeed(true);
       this.checkHealth();
       this._scheduleNextPoll();
       document.addEventListener("visibilitychange", () => {

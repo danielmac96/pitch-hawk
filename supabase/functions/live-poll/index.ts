@@ -14,10 +14,13 @@ import {
   liveHomeWinProb, mlbToday,
 } from "../_shared/mlb.ts";
 import {
-  loadActiveModels, MarketPrediction, pitchesOverProb, predictAbPitches,
+  loadActiveModels, pitchesOverProb, predictAbPitches,
   predictAbResult, predictPitchResult, predictPitchSpeed, ScoreContext,
   speedOverProb,
 } from "../_shared/model.ts";
+// latestOdds/ouJoin moved to _shared/market.ts so game-predict scores its
+// pregame rows against the identical line-join and model_fair convention.
+import { latestOdds, ouJoin } from "../_shared/market.ts";
 import { americanToProb, probToAmerican } from "../_shared/vocab.ts";
 
 // ab_result picks have no real prop price, so settle grades them flat even-money
@@ -26,69 +29,6 @@ import { americanToProb, probToAmerican } from "../_shared/vocab.ts";
 // prob clearing 0.5 with a small buffer. See docs/MODELS.md.
 const AB_PICK_MIN_PROB = 0.52;
 const ML_PICK_EDGE = 0.04;     // model win prob vs market implied
-
-async function latestOdds(gamePk: number): Promise<Record<string, any[]>> {
-  const { data } = await svc().from("odds")
-    .select("market,outcome,line,over_price,under_price,price_american,implied_prob,source,fetched_at")
-    .eq("game_pk", gamePk)
-    .gte("fetched_at", new Date(Date.now() - 30 * 60_000).toISOString())
-    .order("fetched_at", { ascending: false }).limit(60);
-  const byMarket: Record<string, any[]> = {};
-  const seen = new Set<string>();
-  for (const r of data ?? []) {
-    const key = `${r.market}:${r.source}:${r.outcome ?? ""}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    (byMarket[r.market] ??= []).push(r);
-  }
-  return byMarket;
-}
-
-// Join an over/under model prediction to a line. If a real book quote exists we
-// price against it and edge = model - implied. If not (no book publishes
-// per-pitch/per-AB lines), we fall back to a MODEL-FAIR line at even money:
-// edge is then measured vs a 50% coin-flip, and the row is tagged book:
-// "model_fair" so it's never mistaken for beating a real sportsbook.
-function ouJoin(
-  pred: MarketPrediction, overProb: (line: number) => number, odds: any[] | undefined,
-  modelFair = false,
-): Record<string, unknown> {
-  const row: Record<string, unknown> = {
-    market: pred.market, predicted_value: pred.predicted_value,
-    confidence: pred.confidence, probs: pred.probs, recommendation: null,
-    line: null, price: null, edge: null, model_version: pred.model_version,
-    book: null,
-  };
-  const quote = (odds ?? []).find((o) => o.line != null);
-  if (quote && pred.predicted_value != null) {
-    const line = Number(quote.line);
-    const pOver = overProb(line);
-    const side = pOver >= 0.5 ? "over" : "under";
-    const pSide = side === "over" ? pOver : 1 - pOver;
-    const price = side === "over" ? quote.over_price : quote.under_price;
-    const implied = americanToProb(price);
-    row.recommendation = side;
-    row.line = line;
-    row.price = price;
-    row.book = quote.source ?? null;
-    row.confidence = Math.round(pSide * 10000) / 10000;
-    row.edge = implied != null ? Math.round((pSide - implied) * 10000) / 10000 : null;
-    return row;
-  }
-  if (modelFair && pred.predicted_value != null) {
-    const line = Math.round(Number(pred.predicted_value) * 2) / 2; // nearest 0.5
-    const pOver = overProb(line);
-    const side = pOver >= 0.5 ? "over" : "under";
-    const pSide = side === "over" ? pOver : 1 - pOver;
-    row.recommendation = side;
-    row.line = line;
-    row.price = 100; // even money
-    row.book = "model_fair";
-    row.confidence = Math.round(pSide * 10000) / 10000;
-    row.edge = Math.round((pSide - 0.5) * 10000) / 10000; // vs 50% fair
-  }
-  return row;
-}
 
 Deno.serve(async (req) => {
   const denied = await requireCronSecret(req);
@@ -276,6 +216,34 @@ Deno.serve(async (req) => {
         const { error: predErr } = await db.from("predictions").insert(predRows);
         if (predErr) errors.push(`pred ${g.game_pk}: ${predErr.message}`);
         else predictionsWritten += predRows.length;
+
+        // Mirror the batch to the game-level table at phase='live'.
+        //
+        // This is an UPSERT, not an insert: it is bounded at one row per market
+        // per game no matter how many times the poller runs, so a 4-hour game at
+        // 30s intervals still leaves 6 rows. The per-pitch rows above are
+        // untouched and remain the live board's source; these are what survives
+        // the 21-day prune and backs the 30-day feed.
+        const nowIso = new Date().toISOString();
+        const liveGameRows = marketRows.map((m) => ({
+          game_pk: g.game_pk,
+          // official_date is NOT NULL on the table; the schedule always
+          // supplies it, but a null here would fail the whole batch.
+          official_date: g.official_date ?? mlbToday(),
+          phase: "live",
+          home_team_id: g.home_team_id ?? null,
+          away_team_id: g.away_team_id ?? null,
+          home_abbr: g.home_abbr ?? null,
+          away_abbr: g.away_abbr ?? null,
+          n_pitch_predictions: pn ?? 0,
+          updated_at: nowIso,
+          ...m,
+        }));
+        const { error: gpErr } = await db.from("game_predictions")
+          .upsert(liveGameRows, { onConflict: "game_pk,market,phase" });
+        // Non-fatal: the per-pitch write above already succeeded, and the live
+        // board reads that. A failure here costs feed history, not the board.
+        if (gpErr) errors.push(`game_pred ${g.game_pk}: ${gpErr.message}`);
 
         // Publish an at-bat pick once, at the start of the PA (first pitch just
         // landed — the earliest live_state we ever observe for a new batter),

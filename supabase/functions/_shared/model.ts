@@ -11,6 +11,8 @@ export const LEAGUE = {
   ab_result: { strikeout: 0.221, walk: 0.087, hit: 0.239, out: 0.453 },
   avg_pitches_pa: 3.85,
   speed_sigma: 5.4,
+  // Runs per team per game. League total sits at ~8.8.
+  avg_runs_per_team: 4.4,
 };
 
 export interface ScoreContext {
@@ -284,6 +286,112 @@ export function pitchesOverProb(
   }
   // Geometric-ish tail fallback around the mean.
   return 1 - normCdf((line - mean) / 1.9);
+}
+
+// ── game_total ────────────────────────────────────────────────────────────
+// Projected combined runs.
+//
+// This market previously had no model at all: it was ingested from ESPN/The
+// Odds API as a book line, and when odds-ingest was unscheduled it went to zero
+// rows and stayed there. A total that depends on a third party being up is not
+// a prediction we can promise coverage on, so this projects runs directly and
+// grades against the final score.
+//
+// Deliberately a transparent rate model rather than a fit one: there is no
+// labelled training path for it today (scripts/train_models.py exits 2), and a
+// blended-rates projection with published park and weather terms is auditable
+// and roughly calibrated. It reports total_v1 so a fitted version can supersede
+// it through the normal model_params route later.
+
+export interface GameTotalContext {
+  // Season rates, runs per game. Null falls back to the league mean.
+  home_runs_scored_pg: number | null;
+  home_runs_allowed_pg: number | null;
+  away_runs_scored_pg: number | null;
+  away_runs_allowed_pg: number | null;
+  // pitcher_profiles rows for the probable starters.
+  home_starter: Record<string, any> | null;
+  away_starter: Record<string, any> | null;
+  // Multiplicative, 1.0 = neutral. Shrunk toward 1 by the caller.
+  park_factor: number | null;
+  temp_f: number | null;
+  wind_mph: number | null;
+  wind_direction: string | null;
+  // Games behind the team rates, for the league blend.
+  sample_games: number;
+}
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+// A starter's effect on the runs his opponent scores. Better than league (more
+// strikeouts, fewer walks) pushes below 1.
+//
+// Weighted down to ~60% because a starter covers roughly 5-6 of 9 innings; the
+// bullpen behind him is assumed league-average, which is the honest default
+// when we have no reliever usage data at slate-load time.
+function starterMultiplier(prof: Record<string, any> | null): number {
+  if (!prof) return 1;
+  const al = LEAGUE.ab_result;
+  const n = Number(prof.pa ?? 0);
+  const k = blend(numOrNull(prof.k_rate), al.strikeout, n, 200);
+  const bb = blend(numOrNull(prof.bb_rate), al.walk, n, 200);
+  const raw = 1 - 1.6 * (k - al.strikeout) + 1.1 * (bb - al.walk);
+  return clamp(1 + 0.6 * (raw - 1), 0.78, 1.22);
+}
+
+function weatherMultiplier(ctx: GameTotalContext): number {
+  let m = 1;
+  // Warm air carries. ~0.4% per degree off a 70F baseline, capped either way.
+  if (ctx.temp_f != null) m *= clamp(1 + 0.004 * (Number(ctx.temp_f) - 70), 0.94, 1.08);
+  // Wind only matters when we know its direction relative to the plate.
+  const dir = (ctx.wind_direction ?? "").toLowerCase();
+  const mph = ctx.wind_mph != null ? Number(ctx.wind_mph) : 0;
+  if (mph > 0) {
+    if (dir.includes("out")) m *= clamp(1 + 0.006 * mph, 1, 1.10);
+    else if (dir.includes("in")) m *= clamp(1 - 0.005 * mph, 0.92, 1);
+  }
+  return m;
+}
+
+export function predictGameTotal(
+  ctx: GameTotalContext,
+): MarketPrediction & { sigma: number } {
+  const lg = LEAGUE.avg_runs_per_team;
+  const n = ctx.sample_games;
+
+  // What each side scores is half its own offense and half the other side's
+  // run prevention, each blended toward the league mean by sample size.
+  const homeOff = blend(ctx.home_runs_scored_pg, lg, n, 40);
+  const awayDef = blend(ctx.away_runs_allowed_pg, lg, n, 40);
+  const awayOff = blend(ctx.away_runs_scored_pg, lg, n, 40);
+  const homeDef = blend(ctx.home_runs_allowed_pg, lg, n, 40);
+
+  // The away starter suppresses the home team's runs, and vice versa.
+  const homeExp = ((homeOff + awayDef) / 2) * starterMultiplier(ctx.away_starter);
+  const awayExp = ((awayOff + homeDef) / 2) * starterMultiplier(ctx.home_starter);
+
+  const park = ctx.park_factor != null ? clamp(Number(ctx.park_factor), 0.85, 1.18) : 1;
+  const mu = clamp((homeExp + awayExp) * park * weatherMultiplier(ctx), 4.5, 14);
+
+  // Run totals are overdispersed relative to Poisson (var ~ 2x mean); the
+  // normal approximation on that variance matches the ~4.3 observed SD of MLB
+  // game totals closely enough for an over/under probability.
+  const sigma = Math.max(3.0, Math.sqrt(mu * 2.0));
+
+  return {
+    market: "game_total",
+    predicted_value: Math.round(mu * 100) / 100,
+    confidence: null, // set once joined to a line
+    probs: null,
+    model_version: "total_v1",
+    sample_size: n,
+    sigma,
+  };
+}
+
+// P(combined runs > line). Lines are half-runs in practice, so no push mass.
+export function totalOverProb(mu: number, sigma: number, line: number): number {
+  return 1 - normCdf((line - mu) / sigma);
 }
 
 function numOrNull(v: unknown): number | null {

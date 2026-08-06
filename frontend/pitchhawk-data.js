@@ -88,11 +88,17 @@ window.PITCHHAWK = (function () {
     pitch_result:   { key: "pitch_result",   label: "Next Pitch Result",  short: "Pitch Result", group: "Pitch",  kind: "cat" },
     ab_result:      { key: "ab_result",      label: "At-Bat Result",      short: "AB Result",   group: "At-Bat", kind: "cat" },
     ab_pitches_ou:  { key: "ab_pitches_ou",  label: "Pitches in At-Bat",  short: "AB Pitches",  group: "At-Bat", kind: "ou",  unit: "pitches" },
+    // Game-level markets. Absent from this map until 2026-08-06, which meant
+    // normalizeGame() silently dropped them even when the API sent them —
+    // moneyline and total could never appear on the board.
+    game_moneyline: { key: "game_moneyline", label: "Moneyline",  short: "Moneyline", group: "Game", kind: "cat" },
+    game_total:     { key: "game_total",     label: "Game Total", short: "Total",     group: "Game", kind: "ou", unit: "runs" },
   };
   const OUTCOME_LABEL = {
     strike_foul: "Strike / Foul", ball: "Ball", in_play: "In Play",
     strikeout: "Strikeout", walk: "Walk", hit: "Hit", out: "Out",
     over: "Over", under: "Under",
+    home: "Home", away: "Away",
   };
 
   // ── games ─────────────────────────────────────────────────────────────
@@ -475,11 +481,16 @@ window.PITCHHAWK = (function () {
       .filter((s) => s.implied_prob != null)
       .map((s) => boardSource(s.source, s.implied_prob, s.price, s.edge));
     const best = src.length ? bestOf(src) : null;
-    const modelProb = (edgeRow && edgeRow.confidence != null ? edgeRow.confidence
-      : (liveMkt && liveMkt.confidence)) || 0;
+    // modelProb must stay null when nothing scored this market. It used to
+    // default to 0, and the renderer turned that into a confident-looking
+    // "0%" — a game with no prediction was indistinguishable from one the
+    // model genuinely called at zero.
+    const rawProb = (edgeRow && edgeRow.confidence != null) ? edgeRow.confidence
+      : (liveMkt && liveMkt.confidence != null ? liveMkt.confidence : null);
     return {
       market: key, kind: "ou",
-      modelProb,
+      covered: !!(liveMkt || edgeRow),
+      modelProb: rawProb != null ? +rawProb : null,
       predictedValue: (edgeRow && edgeRow.predicted_value != null ? edgeRow.predicted_value
         : (liveMkt && liveMkt.predicted_value)),
       line: (edgeRow && edgeRow.line != null ? edgeRow.line : (liveMkt && liveMkt.line)),
@@ -504,7 +515,10 @@ window.PITCHHAWK = (function () {
     const recOutcome = outcomes.find((o) => o.name === rec) || outcomes[0] || null;
     return {
       market: key, kind: "cat", probs, outcomes, recommendation: rec,
-      recOutcome, modelProb: recOutcome ? recOutcome.modelProb : 0,
+      covered: !!(liveMkt || edgeRow),
+      recOutcome,
+      // null, not 0 — see the note in ouFromLive.
+      modelProb: recOutcome && recOutcome.modelProb != null ? +recOutcome.modelProb : null,
       edge: null, best: null, conf,
     };
   }
@@ -612,6 +626,19 @@ window.PITCHHAWK = (function () {
       pitchCountPa: sit.pitch_count_pa != null ? sit.pitch_count_pa : pitches.length,
       pitchCountGame: null, pitches, nextPred, lastPitch: sit.last_pitch_ts, stale, m,
       modelVersion: lg.model_version || null,
+      // Phase + coverage are what let the board render a scheduled game
+      // honestly: which markets exist, which do not, and why the situation
+      // panel is empty.
+      phase: lg.phase || (sit.inning != null ? "live" : "pregame"),
+      status: lg.status || null,
+      startTs: lg.start_ts || null,
+      coverage: lg.coverage || null,
+      probables: {
+        home: (lg.probable_home_pitcher && lg.probable_home_pitcher.name) || null,
+        away: (lg.probable_away_pitcher && lg.probable_away_pitcher.name) || null,
+        homeId: (lg.probable_home_pitcher && lg.probable_home_pitcher.id) || null,
+        awayId: (lg.probable_away_pitcher && lg.probable_away_pitcher.id) || null,
+      },
     };
   }
 
@@ -638,6 +665,43 @@ window.PITCHHAWK = (function () {
     return games;
   }
 
+  // Fetch the whole day: yesterday's graded recap, what's live now, and what's
+  // still to come. This is the boot call — /live alone returned only in-progress
+  // games, so before first pitch the board had nothing to render.
+  async function loadBoard(apiBase, fetchImpl, date) {
+    const f = fetchImpl || ((...a) => fetch(...a));
+    const qs = date ? `?date=${encodeURIComponent(date)}` : "";
+    const res = await f(`${apiBase}/board${qs}`);
+    if (!res.ok) throw new Error(`/board ${res.status}`);
+    const b = await res.json();
+    const norm = (arr) => {
+      const games = (arr || []).map((lg) => normalizeGame(lg, []));
+      enrichUpcoming(games);
+      return games;
+    };
+    return {
+      date: b.date || null,
+      recap: b.recap || null,
+      live: norm(b.live),
+      upcoming: norm(b.upcoming),
+      final: norm(b.final),
+    };
+  }
+
+  // The 30-day rolling feed. Filters map straight onto /api/feed's query
+  // params; anything null is omitted so the server applies its own default.
+  async function loadFeed(apiBase, filters, fetchImpl) {
+    const f = fetchImpl || ((...a) => fetch(...a));
+    const qs = new URLSearchParams();
+    Object.keys(filters || {}).forEach((k) => {
+      const v = filters[k];
+      if (v != null && v !== "" && v !== "all") qs.set(k, v);
+    });
+    const res = await f(`${apiBase}/feed?${qs.toString()}`);
+    if (!res.ok) throw new Error(`/feed ${res.status}`);
+    return await res.json();
+  }
+
   // Live-only boot: the board starts empty and fills from loadLive(). The
   // sample generators above are kept for local demos (call buildGames() +
   // enrichUpcoming/enrichPitchPredictions by hand); RECENT/RECORD sample
@@ -647,7 +711,7 @@ window.PITCHHAWK = (function () {
     SOURCES, MARKETS, OUTCOME_LABEL, RECENT: [], RECORD: null,
     games, edges: [], buildEdges,
     tick, impliedFromAmerican, americanFromImplied, calcEdge,
-    loadLive, buildGames, enrichUpcoming, enrichPitchPredictions,
+    loadLive, loadBoard, loadFeed, buildGames, enrichUpcoming, enrichPitchPredictions,
   };
 })();
 
