@@ -1,0 +1,13 @@
+# QA dashboard dependencies.
+#
+# The dashboard imports the repo's `warehouse` package for credentials, the
+# manifest and the R2 store, so this file is a superset of
+# ../requirements-warehouse.txt. Install it into the same environment.
+
+streamlit>=1.50        # the UI (needs width="stretch"; use_container_width is out)
+duckdb>=1.1            # queries Parquet in R2 over the S3 API (httpfs)
+pyarrow>=17            # the frozen Parquet schemas in warehouse/config.py
+pandas>=2.2            # result frames only; aggregation stays in SQL
+plotly>=5.24           # row-count and distribution charts
+boto3>=1.35            # R2 over the S3 API (warehouse/store.py)
+python-dotenv>=1.0     # .env loading
