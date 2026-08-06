@@ -75,6 +75,34 @@ export async function getSchedule(dateISO: string): Promise<GameRow[]> {
   return out;
 }
 
+export interface ProbableRow {
+  game_pk: number;
+  home_pitcher_id: number | null;
+  away_pitcher_id: number | null;
+}
+
+// Probable starters for a slate. Separate from getSchedule() because the
+// `probablePitcher` hydrate is only meaningful for upcoming games and the
+// ingest path has no use for it — game-predict needs it to score a game hours
+// before anyone has thrown a pitch.
+export async function getProbables(dateISO: string): Promise<ProbableRow[]> {
+  const data = await mlbGet("/schedule", {
+    sportId: "1", date: dateISO, hydrate: "probablePitcher",
+  });
+  const out: ProbableRow[] = [];
+  for (const d of data.dates ?? []) {
+    for (const g of d.games ?? []) {
+      if (!g.gamePk) continue;
+      out.push({
+        game_pk: g.gamePk,
+        home_pitcher_id: g?.teams?.home?.probablePitcher?.id ?? null,
+        away_pitcher_id: g?.teams?.away?.probablePitcher?.id ?? null,
+      });
+    }
+  }
+  return out;
+}
+
 export function isLive(status: string | null | undefined): boolean {
   return !!status && LIVE_STATUSES.has(status);
 }

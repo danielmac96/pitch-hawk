@@ -68,7 +68,7 @@ jobs:
 
       - name: Deploy edge functions
         run: |
-          for fn in api backfill daily-ingest live-poll odds-ingest settle; do
+          for fn in api backfill daily-ingest game-predict live-poll odds-ingest settle; do
             echo "== deploying $fn"
             supabase functions deploy "$fn" --no-verify-jwt --project-ref "$REF"
           done

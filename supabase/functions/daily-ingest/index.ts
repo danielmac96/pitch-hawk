@@ -77,16 +77,32 @@ Deno.serve(async (req) => {
     if (e3b) errors.push(`rollup: ${e3b.message}`);
     detail.accuracy_rollup = ra;
 
-    // Bound the bookkeeping tables (ingest_runs 7d, odds 14d, predictions 21d).
+    // Per-player rollup, same ordering guarantee: predictions carry no player
+    // id, so this is the ONLY chance to derive per-pitcher/per-batter history
+    // before the raw rows are deleted. It joins at_bats, which is on a 35-day
+    // hot window and so still covers the 21-day prune horizon.
+    const { data: rp, error: e3c } = await svc().rpc("rollup_player_predictions");
+    if (e3c) errors.push(`rollup_player: ${e3c.message}`);
+    detail.player_rollup = rp;
+
+    // Bound the bookkeeping tables (ingest_runs 7d, odds 14d, predictions 21d,
+    // game_predictions 35d, player_prediction_daily 90d).
     const { data: pr, error: e4 } = await svc().rpc("prune_ingest_runs");
     const { data: po, error: e5 } = await svc().rpc("prune_odds");
-    // Skip the prune if the rollup failed, so a bad rollup can't silently
+    // Skip the prune if EITHER rollup failed, so a bad rollup can't silently
     // destroy predictions we have no aggregate for.
-    const { data: pp, error: e6 } = e3b
+    const { data: pp, error: e6 } = (e3b || e3c)
       ? { data: null, error: null }
       : await svc().rpc("prune_predictions");
-    for (const e of [e4, e5, e6]) if (e) errors.push(`prune: ${e.message}`);
-    detail.pruned = { ingest_runs: pr, odds: po, predictions: pp };
+    // These two are independent of the raw predictions rollup — they are the
+    // aggregates, not the source.
+    const { data: pg, error: e7 } = await svc().rpc("prune_game_predictions");
+    const { data: pd, error: e8 } = await svc().rpc("prune_player_prediction_daily");
+    for (const e of [e4, e5, e6, e7, e8]) if (e) errors.push(`prune: ${e.message}`);
+    detail.pruned = {
+      ingest_runs: pr, odds: po, predictions: pp,
+      game_predictions: pg, player_prediction_daily: pd,
+    };
 
     detail.errors = errors.slice(0, 10);
     await logRun("daily-ingest", startedAt, errors.length === 0, detail);
