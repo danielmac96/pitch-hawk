@@ -1,7 +1,24 @@
 """One-time cold dump of Supabase `predictions` to R2 Parquet.
 
-Why this exists
----------------
+SUPERSEDED 2026-08-08 by `python -m warehouse export`
+-----------------------------------------------------
+Do not run this. The nightly now exports `predictions`, `picks` AND
+`game_predictions` on a schedule, with manifest entries, under the normal
+`<dataset>/season=/month=/day=` keys.
+
+This script's output is still in the bucket under `holdout/predictions/`
+(verified present for 2026-07-07 onward). It is NOT migrated and NOT in the
+manifest, because its locally-declared schema differs from
+`warehouse.config.PREDICTION_SCHEMA` — it has no `official_date`, and it dated
+rows by `created_at`, which files a 23:58 ET prediction under the next day.
+Anyone building a holdout set across that boundary has to reconcile the two;
+the alternative was silently unioning two different column lists.
+
+Kept, not deleted, because it is the only record of how those early days were
+written.
+
+Why this existed
+----------------
 `prune_predictions(21)` has never actually run: the deployed `daily-ingest`
 build predates the migration that created it. Its first successful pass
 permanently deletes every prediction older than 21 days -- measured on

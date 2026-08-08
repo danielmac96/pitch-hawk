@@ -702,6 +702,24 @@ window.PITCHHAWK = (function () {
     return await res.json();
   }
 
+  // Per-pitch graded predictions for one day, paginated.
+  //
+  // Replaces the Data Feed's old session-accumulated log. The server has been
+  // making and grading these predictions all along; nothing served them, so
+  // the browser rebuilt a partial copy from whatever it happened to watch.
+  // Every user now gets the same rows for the same day.
+  async function loadPitches(apiBase, params, fetchImpl) {
+    const f = fetchImpl || ((...a) => fetch(...a));
+    const qs = new URLSearchParams();
+    Object.keys(params || {}).forEach((k) => {
+      const v = params[k];
+      if (v != null && v !== "" && v !== "all") qs.set(k, v);
+    });
+    const res = await f(`${apiBase}/pitches?${qs.toString()}`);
+    if (!res.ok) throw new Error(`/pitches ${res.status}`);
+    return await res.json();
+  }
+
   // Live-only boot: the board starts empty and fills from loadLive(). The
   // sample generators above are kept for local demos (call buildGames() +
   // enrichUpcoming/enrichPitchPredictions by hand); RECENT/RECORD sample
@@ -711,7 +729,8 @@ window.PITCHHAWK = (function () {
     SOURCES, MARKETS, OUTCOME_LABEL, RECENT: [], RECORD: null,
     games, edges: [], buildEdges,
     tick, impliedFromAmerican, americanFromImplied, calcEdge,
-    loadLive, loadBoard, loadFeed, buildGames, enrichUpcoming, enrichPitchPredictions,
+    loadLive, loadBoard, loadFeed, loadPitches,
+    buildGames, enrichUpcoming, enrichPitchPredictions,
   };
 })();
 

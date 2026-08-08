@@ -10,10 +10,30 @@ name: Warehouse nightly
 #
 # Failures are never swallowed. A nightly nobody reads a signal from is exactly
 # how R2 came to be three days stale without anyone noticing.
+#
+# TIMING (moved to 04:00 ET on 2026-08-08, from 14:00 UTC)
+#
+# 04:00 ET is roughly two hours after the last West Coast finish, which is a
+# much thinner margin than the old 10:00 ET. That is deliberate and it is
+# safe in one direction only:
+#
+#   * Ingest is unaffected in the worst case. Only FINAL games are written and
+#     a day is all-or-nothing, so a game still in progress means the day writes
+#     nothing and `pending --max-gap 14` picks it up tomorrow. Late, never
+#     wrong.
+#   * The export is the part that actually wants the margin, because it copies
+#     graded rows. np-settle-sweep runs at 03:00 ET for exactly this reason,
+#     and the export overwrites by default so a day re-exported later picks up
+#     grades that landed after the fact.
 
 on:
   schedule:
-    - cron: "0 14 * * *"      # after np-daily-ingest at 13:00 UTC
+    # 04:00 America/New_York, year round. GitHub cron is UTC-only and has no
+    # timezone option, so both offsets are listed and the guard step below
+    # drops whichever one is not 04:00 locally today. A single "0 8 * * *"
+    # would silently become 03:00 ET the morning DST ends.
+    - cron: "0 8 * * *"       # 04:00 EDT (Mar-Nov, the whole season)
+    - cron: "0 9 * * *"       # 04:00 EST (Nov-Mar)
   workflow_dispatch:
     inputs:
       day:
@@ -32,7 +52,46 @@ permissions:
   contents: read
 
 jobs:
+  # Which of the two DST cron lines is the real 04:00 ET today. The other one
+  # stops here. workflow_dispatch always proceeds -- a manual run means someone
+  # wants it now, whatever the clock says.
+  #
+  # This branches on WHICH CRON LINE FIRED, not on what time it is now, and the
+  # difference is the whole design. GitHub's scheduler is late on free runners:
+  # measured starts across five nights were 56 minutes to 2h29m after the
+  # nominal time. A `date +%H` = 04 check would therefore skip the entire
+  # night's run whenever the queue was busy -- turning a latency problem into a
+  # missed ingest, an unexported day, and a silent hole in the holdout set.
+  #
+  # github.event.schedule is the literal cron expression that triggered the
+  # run, so a run that starts at 06:12 ET still knows it was the 04:00 line.
+  # The UTC offset says which line that is: -0400 in EDT, -0500 in EST.
+  guard:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "schedule" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          offset="$(TZ=America/New_York date +%z)"
+          if [ "$offset" = "-0400" ]; then want="0 8 * * *"; else want="0 9 * * *"; fi
+          got="${{ github.event.schedule }}"
+          if [ "$got" = "$want" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Running: cron '$got' is 04:00 America/New_York at UTC offset $offset."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipped: cron '$got' is not 04:00 America/New_York at UTC offset $offset; '$want' is today's run."
+          fi
+
   ingest:
+    needs: guard
+    if: ${{ needs.guard.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:
@@ -102,10 +161,52 @@ jobs:
         if: always()
         run: python -m warehouse status
 
+  # Export yesterday's model output to R2 before Supabase's retention timers
+  # reach it (predictions 21 days, game_predictions 35).
+  #
+  # Deliberately NOT gated on `ingest` succeeding, only sequenced after it.
+  # These are two unrelated datasets from two unrelated sources: a day whose
+  # games are not all final yet blocks the MLB ingest and has no bearing
+  # whatsoever on whether our own predictions can be copied out. Coupling them
+  # would mean one delayed West Coast game quietly stops the holdout set
+  # accumulating -- the exact "every day of delay is a day of evaluation data
+  # permanently lost" problem this job exists to end.
+  #
+  # The ordering that IS required is manifest safety: both jobs do a
+  # load-modify-save on one JSON object, so they must not overlap.
+  export:
+    needs: [guard, ingest]
+    if: ${{ always() && needs.guard.outputs.run == 'true' && needs.ingest.result != 'cancelled' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-warehouse.txt -r requirements.txt
+
+      # No --skip-existing: re-exporting is how grades that landed after the
+      # fact (a suspended game finishing the next afternoon) reach R2.
+      - name: Export yesterday's predictions, picks and game_predictions
+        run: python -m warehouse export
+
   # Runs only if ingest+verify succeeded. Publishing aggregates built from a
   # day that failed verification would put unverified numbers on the site.
   publish:
-    needs: ingest
+    needs: [guard, ingest]
+    if: ${{ needs.guard.outputs.run == 'true' }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     env:

@@ -28,7 +28,7 @@ from __future__ import annotations
 import argparse
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from warehouse import manifest
 from warehouse.config import HOT_WINDOW_DAYS, r2_config
@@ -46,6 +46,21 @@ def _store(args):
 
 def _yesterday() -> str:
     return (date.today() - timedelta(days=1)).isoformat()
+
+
+def _eastern_yesterday() -> str:
+    """Yesterday's Eastern game date.
+
+    `official_date`, `pick_date` and the whole slate are Eastern. The nightly
+    runs at 04:00 ET, which is 08:00/09:00 UTC — the same calendar day either
+    way, so `date.today()` happens to agree today. It stops agreeing the moment
+    anyone reruns the export from a machine west of UTC or before 00:00 UTC, so
+    the timezone is stated rather than assumed.
+    """
+    from zoneinfo import ZoneInfo
+
+    et = datetime.now(ZoneInfo("America/New_York")).date()
+    return (et - timedelta(days=1)).isoformat()
 
 
 def _resolve_days(args) -> list[str]:
@@ -238,6 +253,49 @@ def cmd_ingest(args) -> int:
     return EXIT_OK
 
 
+# ── export ──────────────────────────────────────────────────────────────────
+
+def cmd_export(args) -> int:
+    from warehouse.export import _client, export_day
+
+    store = _store(args)
+    if args.range:
+        if ".." not in args.range:
+            raise ValueError(f"--range wants A..B, got {args.range!r}")
+        a, b = args.range.split("..", 1)
+        wanted = daterange(a.strip(), b.strip())
+    else:
+        wanted = [args.day or _eastern_yesterday()]
+
+    m = manifest.load(store)
+    client = _client()
+    total = {"days": 0, "bytes": 0}
+    for day in wanted:
+        res = export_day(store, day, client=client, m=m,
+                         skip_existing=args.skip_existing)
+        if res.get("skipped"):
+            print(f"{day}: already exported; skipped")
+            continue
+        if not res["written"]:
+            # Off day, or a slate whose predictions have already aged out of
+            # Supabase. Nothing to say and nothing to fix.
+            print(f"{day}: no model output; nothing written")
+            continue
+        total["days"] += 1
+        total["bytes"] += res["bytes"]
+        print(f"{day}: {res['predictions']:,} predictions, "
+              f"{res['picks']:,} picks, "
+              f"{res['game_predictions']:,} game_predictions, "
+              f"{res['bytes']/1e6:.2f} MB")
+
+    # One manifest write for the whole run, not one per day: it is a single
+    # 1.5 MB JSON blob and a range export would otherwise rewrite it per day.
+    if total["days"]:
+        manifest.save(store, m)
+    print(f"exported {total['days']} day(s), {total['bytes']/1e6:.2f} MB")
+    return EXIT_OK
+
+
 # ── publish ─────────────────────────────────────────────────────────────────
 
 def cmd_publish(args) -> int:
@@ -346,6 +404,19 @@ def build_parser() -> argparse.ArgumentParser:
     pu.add_argument("--only", nargs="*", default=None,
                     help="Publish only these tables.")
     pu.set_defaults(fn=cmd_publish)
+
+    e = sub.add_parser("export",
+                       help="export a day of model output from Supabase to R2")
+    ge = e.add_mutually_exclusive_group()
+    ge.add_argument("--day", help="YYYY-MM-DD Eastern game date "
+                                  "(default: yesterday, Eastern)")
+    ge.add_argument("--range", help="A..B inclusive")
+    e.add_argument("--skip-existing", action="store_true",
+                   help="Skip days already in the manifest. For bulk "
+                        "backfills only — the nightly must NOT set this, "
+                        "because a suspended game grades the following day "
+                        "and re-exporting is how that reaches R2.")
+    e.set_defaults(fn=cmd_export)
 
     b = sub.add_parser("backfill", help="ingest whole seasons (resumable)")
     b.add_argument("--seasons", nargs="*", type=int, default=None)
