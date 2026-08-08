@@ -1,0 +1,7 @@
+# Offline modeling workbench (modeling/). Superset of requirements-warehouse.txt
+# because the cell builds read R2 Parquet through the same DuckDB/manifest path.
+-r requirements-warehouse.txt
+
+numpy
+scikit-learn
+pandas>=2.2
