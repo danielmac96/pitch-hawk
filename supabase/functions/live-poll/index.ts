@@ -7,7 +7,9 @@
 //
 // Requires x-cron-secret.
 
-import { json, logRun, requireCronSecret, svc, upsertChunked } from "../_shared/db.ts";
+import {
+  invokeFunction, json, logRun, requireCronSecret, svc, upsertChunked,
+} from "../_shared/db.ts";
 import { ensurePlayers, upsertGames } from "../_shared/ingest.ts";
 import {
   currentPaPitches, deriveLiveState, getPlayByPlay, getSchedule, isLive,
@@ -46,14 +48,30 @@ Deno.serve(async (req) => {
     detail.live_games = liveGames.length;
     if (!liveGames.length) {
       // Mark stale live_state rows finished so the board empties out.
-      await db.from("live_state").update({ status: "final" })
+      const { data: closed } = await db.from("live_state").update({ status: "final" })
         .eq("status", "live")
-        .lt("updated_at", new Date(Date.now() - 20 * 60_000).toISOString());
-      // Deliberately NOT logged to ingest_runs. This branch fires every 30s
-      // for the whole of every game window in which nothing is live, and it
-      // was producing ~90% of the table's rows — 46,972 rows on 2026-07-28,
-      // of which the last 200 were all `{"live_games": 0}`. The tick is still
-      // recorded in cron.job_run_details if it ever needs auditing.
+        .lt("updated_at", new Date(Date.now() - 20 * 60_000).toISOString())
+        .select("game_pk");
+
+      // A game leaving the board is the moment its final-score markets become
+      // gradable, and this is the LAST live-poll cycle that will run today --
+      // pg_cron stops calling us once no game is in its window and no
+      // live_state row reads 'live'. Without this chain, every game-level
+      // prediction would sit ungraded until the 03:00 ET sweep.
+      if (closed?.length) {
+        const r = await invokeFunction("settle");
+        detail.closed_games = closed.length;
+        detail.settle_invoked = r.ok;
+        if (!r.ok) detail.settle_error = r.error;
+        // Worth a row: this fires at most once per slate, unlike the bare tick.
+        await logRun("live-poll", startedAt, r.ok, detail);
+      }
+      // The empty tick is deliberately NOT logged to ingest_runs. It fires
+      // every 30s for the whole of every game window in which nothing is live,
+      // and it was producing ~90% of the table's rows — 46,972 rows on
+      // 2026-07-28, of which the last 200 were all `{"live_games": 0}`. The
+      // tick is still recorded in cron.job_run_details if it ever needs
+      // auditing.
       return json(detail);
     }
 
@@ -296,6 +314,18 @@ Deno.serve(async (req) => {
       } catch (e) {
         errors.push(`game ${g.game_pk}: ${String(e).slice(0, 160)}`);
       }
+    }
+
+    // Score against the result we just ingested, rather than waiting for a
+    // timer. Only when something actually landed -- on a cycle where no game
+    // advanced there is nothing new to grade, and settle would scan for
+    // pending rows it already looked at 30 seconds ago.
+    if (newPitchStates > 0) {
+      const r = await invokeFunction("settle");
+      detail.settle_invoked = r.ok;
+      // Non-fatal by design: the pitch is already stored, and the 03:00 ET
+      // sweep grades anything a failed chain left behind.
+      if (!r.ok) errors.push(`settle: ${r.error}`);
     }
 
     detail.new_pitch_states = newPitchStates;

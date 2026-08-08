@@ -34,7 +34,11 @@ jobs:
           deno-version: v2.x
       - name: Typecheck edge functions
         run: |
-          for fn in api backfill daily-ingest live-poll odds-ingest settle; do
+          # Keep this list in sync with deploy-supabase.yml. game-predict was
+          # absent from here but present there between 2026-08-06 and
+          # 2026-08-08, so it deployed to production with a type error nothing
+          # ever ran deno check against.
+          for fn in api backfill daily-ingest game-predict live-poll odds-ingest settle; do
             echo "== $fn"
             deno check "supabase/functions/$fn/index.ts"
           done

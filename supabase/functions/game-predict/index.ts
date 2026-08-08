@@ -123,8 +123,15 @@ Deno.serve(async (req) => {
     for (const scope of ["career", "d30", "season"]) {
       for (const r of profRows ?? []) if (r.scope === scope) profBy.set(r.player_id, r);
     }
-    const rateBy = new Map((rateRows ?? []).map((r: any) => [r.team_id, r]));
-    const parkBy = new Map((parkRows ?? []).map((r: any) => [r.venue_id, Number(r.factor)]));
+    const rateBy = new Map<number, any>((rateRows ?? []).map((r: any) => [r.team_id, r]));
+    // Explicit generics, matching profBy above. Without them the tuple from an
+    // `any`-typed .map() infers as {} and `park_factor` fails to assign to
+    // GameTotalContext's `number | null`. This did not surface until
+    // 2026-08-08 because game-predict was missing from ci.yml's deno check
+    // loop -- it is in deploy-supabase.yml's, so it shipped unchecked.
+    const parkBy = new Map<number, number>(
+      (parkRows ?? []).map((r: any) => [r.venue_id, Number(r.factor)]),
+    );
 
     const rows: Record<string, unknown>[] = [];
     let skipped = 0;

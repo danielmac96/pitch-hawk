@@ -13,7 +13,17 @@ function winProfit(price: number | null | undefined, units = 1): number {
 
 function round3(v: number): number { return Math.round(v * 1000) / 1000; }
 
-interface Grade { result: string; profit: number }
+// `value` and `label` are what actually happened, carried out of grading
+// rather than discarded. gradeRow already had to compute both to decide
+// win/loss; persisting them is what lets the Data Feed render
+// "predicted 94.2, actual 93.1" from the table instead of rebuilding it in
+// browser memory, and what puts actuals in the R2 holdout export.
+interface Grade {
+  result: string;
+  profit: number;
+  value?: number | null;
+  label?: string | null;
+}
 
 function nextPitch(pitches: any[], abi: number | null, pn: number | null): any | null {
   const a = abi ?? -1, p = pn ?? -1;
@@ -35,29 +45,40 @@ function gradeRow(
   if (!rec) return { result: "void", profit: 0 };
   const units = Number(row.units ?? 1);
 
+  // Every branch below carries the actual out with it. `value` is the measured
+  // quantity where one exists, `label` the categorical outcome — see the
+  // column comments in 20260808000002.
+  const decide = (
+    actual: string | null, value: number | null, label: string | null,
+  ): Grade =>
+    rec === actual
+      ? { result: "win", profit: winProfit(row.price, units), value, label }
+      : { result: "loss", profit: -units, value, label };
+
   if (row.market === "game_moneyline") {
     if (!finalScores || finalScores.home == null || finalScores.away == null) return null;
-    if (finalScores.home === finalScores.away) return { result: "push", profit: 0 };
-    const winner = finalScores.home > finalScores.away ? "home" : "away";
-    return rec === winner
-      ? { result: "win", profit: winProfit(row.price, units) }
-      : { result: "loss", profit: -units };
+    const margin = finalScores.home - finalScores.away;
+    if (finalScores.home === finalScores.away) {
+      return { result: "push", profit: 0, value: 0, label: "tie" };
+    }
+    const winner = margin > 0 ? "home" : "away";
+    return decide(winner, margin, winner);
   }
 
   if (row.market === "pitch_speed_ou" || row.market === "pitch_result") {
     const nxt = nextPitch(pitches, row.at_bat_index, row.pitch_number);
     if (!nxt) return gameLive ? null : { result: "void", profit: 0 };
-    let actual: string | null;
     if (row.market === "pitch_speed_ou") {
       if (nxt.start_speed == null || row.line == null) return { result: "void", profit: 0 };
-      actual = Number(nxt.start_speed) > Number(row.line) ? "over" : "under";
-    } else {
-      actual = nxt.result_category;
-      if (!actual) return { result: "void", profit: 0 };
+      const speed = Number(nxt.start_speed);
+      const side = speed > Number(row.line) ? "over" : "under";
+      // value is the speed itself, not the over/under side: the Data Feed
+      // shows the miss in mph, which the side alone cannot express.
+      return decide(side, speed, side);
     }
-    return rec === actual
-      ? { result: "win", profit: winProfit(row.price, units) }
-      : { result: "loss", profit: -units };
+    const cat = nxt.result_category;
+    if (!cat) return { result: "void", profit: 0 };
+    return decide(cat, null, cat);
   }
 
   if (row.market === "ab_result" || row.market === "ab_pitches_ou") {
@@ -65,16 +86,15 @@ function gradeRow(
     if (!ab) return gameLive ? null : { result: "void", profit: 0 };
     if (row.market === "ab_result") {
       if (!ab.result) return { result: "void", profit: 0 };
-      return rec === ab.result
-        ? { result: "win", profit: winProfit(row.price, units) }
-        : { result: "loss", profit: -units };
+      return decide(ab.result, null, ab.result);
     }
     if (ab.pitch_count == null || row.line == null) return { result: "void", profit: 0 };
-    if (Number(ab.pitch_count) === Number(row.line)) return { result: "push", profit: 0 };
-    const actual = Number(ab.pitch_count) > Number(row.line) ? "over" : "under";
-    return rec === actual
-      ? { result: "win", profit: winProfit(row.price, units) }
-      : { result: "loss", profit: -units };
+    const n = Number(ab.pitch_count);
+    if (n === Number(row.line)) {
+      return { result: "push", profit: 0, value: n, label: "push" };
+    }
+    const side = n > Number(row.line) ? "over" : "under";
+    return decide(side, n, side);
   }
 
   return null;
@@ -119,6 +139,11 @@ async function settleTable(table: "predictions" | "picks"): Promise<{ graded: nu
         profit_units: grade.profit,
         graded_at: new Date().toISOString(),
       };
+      // Only `predictions` carries the actuals; `picks` has no such columns.
+      if (table === "predictions") {
+        patch.actual_value = grade.value ?? null;
+        patch.actual_label = grade.label ?? null;
+      }
       const { error: uerr } = await db.from(table).update(patch).eq("id", r.id);
       if (uerr) errors.push(uerr.message);
       else graded += 1;

@@ -189,15 +189,136 @@ PLAYER_SCHEMA = pa.schema([
     ("birth_date", pa.date32()),
 ])
 
+# ── Our own output, exported back out of Supabase ───────────────────────────
+#
+# Everything above this line is MLB's data, re-derivable from the API at any
+# time. Everything below is OURS: what the model said, and whether it was
+# right. That difference is not cosmetic — it is why these are a separate
+# dataset family (see EXPORT_DATASETS).
+#
+# Supabase deletes `predictions` after 21 days, `game_predictions` after 35 and
+# `picks` never but unboundedly. Before this export existed, every graded
+# prediction older than three weeks was gone, which is why no holdout
+# validation exists anywhere in this project.
+#
+# `probs` and `payload` are jsonb upstream. Parquet has no native JSON type, so
+# they land as strings holding JSON. DuckDB reads them back with json_extract.
+
+PREDICTION_SCHEMA = pa.schema([
+    ("id", pa.int64()),
+    ("game_pk", pa.int64()),
+    # Denormalised from `games` so a file is self-describing. `created_at` is
+    # NOT a substitute: a prediction written at 23:30 ET belongs to that day's
+    # slate but carries the next day's UTC date.
+    ("official_date", pa.date32()),
+    ("at_bat_index", pa.int32()),
+    ("pitch_number", pa.int32()),
+    ("market", pa.string()),
+    ("predicted_value", pa.float64()),
+    ("confidence", pa.float64()),
+    ("probs", pa.string()),
+    ("recommendation", pa.string()),
+    ("line", pa.float64()),
+    ("price", pa.int32()),
+    ("edge", pa.float64()),
+    ("units", pa.float64()),
+    ("result", pa.string()),
+    # What actually happened, not just whether we were right. Added
+    # 2026-08-08 with migration 20260808000002; rows graded before it carry
+    # nulls, and no backfill is possible past the 35-day `pitches` window.
+    # Without these, out-of-sample scoring has to re-join `pitches` in R2 —
+    # possible, since both sides share this partitioning, but needless.
+    ("actual_value", pa.float64()),
+    ("actual_label", pa.string()),
+    ("profit_units", pa.float64()),
+    ("graded_at", pa.timestamp("us", tz="UTC")),
+    ("model_version", pa.string()),
+    ("created_at", pa.timestamp("us", tz="UTC")),
+    ("book", pa.string()),
+])
+
+PICK_SCHEMA = pa.schema([
+    ("id", pa.int64()),
+    ("pick_date", pa.date32()),
+    ("game_pk", pa.int64()),
+    ("at_bat_index", pa.int32()),
+    ("market", pa.string()),
+    ("recommendation", pa.string()),
+    ("label", pa.string()),
+    ("line", pa.float64()),
+    ("price", pa.int32()),
+    ("confidence", pa.float64()),
+    ("edge", pa.float64()),
+    ("units", pa.float64()),
+    ("book", pa.string()),
+    ("source", pa.string()),
+    ("model_version", pa.string()),
+    ("status", pa.string()),
+    ("profit_units", pa.float64()),
+    ("payload", pa.string()),
+    ("created_at", pa.timestamp("us", tz="UTC")),
+    ("graded_at", pa.timestamp("us", tz="UTC")),
+])
+
+GAME_PREDICTION_SCHEMA = pa.schema([
+    ("game_pk", pa.int64()),
+    ("official_date", pa.date32()),
+    ("market", pa.string()),
+    ("phase", pa.string()),
+    ("predicted_value", pa.float64()),
+    ("probs", pa.string()),
+    ("recommendation", pa.string()),
+    ("confidence", pa.float64()),
+    ("line", pa.float64()),
+    ("price", pa.int32()),
+    ("edge", pa.float64()),
+    ("book", pa.string()),
+    ("model_version", pa.string()),
+    ("home_team_id", pa.int32()),
+    ("away_team_id", pa.int32()),
+    ("home_abbr", pa.string()),
+    ("away_abbr", pa.string()),
+    ("home_pitcher_id", pa.int32()),
+    ("away_pitcher_id", pa.int32()),
+    ("actual_value", pa.float64()),
+    ("result", pa.string()),
+    ("profit_units", pa.float64()),
+    ("graded_at", pa.timestamp("us", tz="UTC")),
+    ("n_pitch_predictions", pa.int32()),
+    ("scored_at", pa.timestamp("us", tz="UTC")),
+    ("updated_at", pa.timestamp("us", tz="UTC")),
+])
+
 SCHEMAS: dict[str, pa.Schema] = {
     "pitches": PITCH_SCHEMA,
     "at_bats": AT_BAT_SCHEMA,
     "games": GAME_SCHEMA,
     "players": PLAYER_SCHEMA,
+    "predictions": PREDICTION_SCHEMA,
+    "picks": PICK_SCHEMA,
+    "game_predictions": GAME_PREDICTION_SCHEMA,
 }
 
-# Date-partitioned datasets, written one file per day.
+# Date-partitioned datasets ingested FROM the MLB API, one file per day.
 DATASETS = ("pitches", "at_bats", "games")
+
+# Date-partitioned datasets exported FROM Supabase, one file per day.
+#
+# Deliberately NOT part of DATASETS, and the separation is load-bearing:
+# `warehouse.verify` earns a day its manifest verification by re-fetching it
+# from the MLB API and re-deriving it from scratch. There is no upstream to
+# re-fetch these from — they are our own model output, and Supabase deletes
+# them on a retention timer. A verify pass over them could only ever compare
+# them against themselves, which is exactly the self-certification defect that
+# made the v1 manifest worthless (see manifest.py).
+#
+# So: these days carry `ingested_at` and never `verified_at`. Nothing gates on
+# their verification, and the prune's delete gate only ever asks about
+# `pitches`.
+EXPORT_DATASETS = ("predictions", "picks", "game_predictions")
+
+# Every day-partitioned dataset, whichever direction it came from.
+DAY_PARTITIONED = DATASETS + EXPORT_DATASETS
 
 # Overwritten in full each run.
 SNAPSHOTS = ("players",)
@@ -209,6 +330,10 @@ KEY_COLUMNS: dict[str, tuple[str, ...]] = {
     "at_bats": ("game_pk", "at_bat_index"),
     "games": ("game_pk",),
     "players": ("player_id",),
+    "predictions": ("id",),
+    "picks": ("id",),
+    # game_predictions has no surrogate key; this triple is its primary key.
+    "game_predictions": ("game_pk", "market", "phase"),
 }
 
 
@@ -244,10 +369,16 @@ def r2_config() -> R2Config:
 
 
 def object_key(dataset: str, day: str) -> str:
-    """Key for one date-partitioned dataset-day. `day` is YYYY-MM-DD."""
-    if dataset not in DATASETS:
+    """Key for one date-partitioned dataset-day. `day` is YYYY-MM-DD.
+
+    Accepts both the MLB-sourced datasets and the Supabase exports; they share
+    one key scheme so DuckDB can join a prediction to the pitch it was made
+    against with the same Hive partitioning on both sides.
+    """
+    if dataset not in DAY_PARTITIONED:
         raise ValueError(
-            f"unknown dataset {dataset!r}; expected one of {sorted(DATASETS)}")
+            f"unknown dataset {dataset!r}; "
+            f"expected one of {sorted(DAY_PARTITIONED)}")
     return f"{dataset}/season={day[:4]}/month={day[5:7]}/day={day}.parquet"
 
 

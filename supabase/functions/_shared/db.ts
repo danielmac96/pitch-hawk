@@ -29,6 +29,56 @@ export async function requireCronSecret(req: Request): Promise<Response | null> 
   return null;
 }
 
+// Call another edge function from inside one, with the cron secret those
+// functions gate on. This is what makes scoring event-driven: live-poll chains
+// settle the moment a result lands, instead of settle polling every 10 minutes
+// hoping something has.
+//
+// The secret is read fresh every call and deliberately NOT cached in a module
+// global. deploy-supabase.yml rotates cron_secret on every deploy, and a warm
+// instance holding the old value would send 403s to a function that is working
+// perfectly -- a failure that would look like a settle bug and reproduce on
+// nobody's machine.
+//
+// Failures are returned, never thrown. A chained settle that does not land is a
+// grading delay until the 03:00 ET sweep, which is a much smaller problem than
+// live-poll dropping a pitch because the call after it failed.
+export async function invokeFunction(
+  name: string, timeoutMs = 20_000,
+): Promise<{ ok: boolean; error?: string }> {
+  const base = Deno.env.get("SUPABASE_URL");
+  if (!base) return { ok: false, error: "SUPABASE_URL unset" };
+
+  const { data, error } = await svc()
+    .from("app_secrets").select("value").eq("key", "cron_secret").maybeSingle();
+  if (error || !data?.value) return { ok: false, error: "cron secret not provisioned" };
+
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    const res = await fetch(`${base}/functions/v1/${name}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-cron-secret": data.value,
+        // The functions deploy with verify_jwt=false, but the gateway still
+        // needs a key to route the request at all.
+        Authorization: `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""}`,
+      },
+      body: "{}",
+      signal: ctl.signal,
+    });
+    // Drain the body: an unread response holds the connection open, and this
+    // runs on every new pitch.
+    await res.text().catch(() => {});
+    return res.ok ? { ok: true } : { ok: false, error: `${name} -> HTTP ${res.status}` };
+  } catch (e) {
+    return { ok: false, error: `${name} -> ${String(e).slice(0, 120)}` };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function json(body: unknown, status = 200, extra: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,

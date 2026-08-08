@@ -119,23 +119,24 @@
         // Phase 4 aggregates. `loaded` stays false until the first fetch
         // settles, so the panels are absent rather than flashing empty.
         scout: { seed: null, ctx: null, profile: null, fatigue: null, matchup: null, loaded: false },
-        // Durable prediction history from /api/feed. The session graded log
-        // below is now an overlay on top of this, not the only source — that
-        // is what stops the Data Feed emptying itself on every reload.
+        // Durable prediction history from /api/feed.
         feed: { rows: [], players: [], summary: null, loaded: false, err: false },
         feedF: { days: 30, market: "all", team: "", pitcher_id: "", batter_id: "" },
+        // Per-pitch graded predictions for today, from /api/pitches. This
+        // replaced a session-accumulated array: the server has been making and
+        // grading these all along, so the table is now identical for every
+        // user, complete from the first game of the day, and survives a
+        // reload.
+        pitchFeed: { rows: [], summary: null, loaded: false, err: false },
       };
       this._pollIv = null;
       // Client-side plate-appearance history (see trackAtBats): /live only
       // carries the current PA, so finished at-bats are archived here.
       this.paHist = {};
       this.paWatch = {};
-      // Session-graded prediction log powering the Data Feed (see trackGradedLog).
-      this.gradedLog = [];
-      this._seenPitch = {};
-      // Warehouse-backed scouting panels. Durable across reloads, unlike the
-      // graded log above. `_scoutSigs` gates re-fetching per panel, so a new
-      // batter does not re-request the pitcher profile or the game context.
+      // Warehouse-backed scouting panels. `_scoutSigs` gates re-fetching per
+      // panel, so a new batter does not re-request the pitcher profile or the
+      // game context.
       this._scoutSigs = {};
       this._feedSig = null;
       this.root.addEventListener("click", (e) => this._onClick(e));
@@ -378,8 +379,27 @@
         }
         case "feedGame": return this.setState({ feedGame: Number(arg) });
         case "focusGame": return this.setState({ focusGame: Number(arg) });
-        case "dfGame": return this.setState({ dfGame: arg === "all" ? "all" : Number(arg) });
-        case "mkt": return this.setState({ mkt: arg });
+        case "dfGame": {
+          this.setState({ dfGame: arg === "all" ? "all" : Number(arg) });
+          // Scope is applied server-side, so the chip needs a refetch. Render
+          // immediately off the old rows (filtered by the guard in dfRows) and
+          // again when the new page lands.
+          this.loadPitchFeed()
+            .then((changed) => { if (changed) this.render(); })
+            .catch(() => {});
+          return;
+        }
+        case "mkt": {
+          // The market is now a server-side filter too, so narrowing to one
+          // refills the page with 300 rows of it rather than filtering a mixed
+          // page down. The client-side filter in the renderer still applies
+          // and covers the tick before this lands.
+          this.setState({ mkt: arg });
+          this.loadPitchFeed()
+            .then((changed) => { if (changed) this.render(); })
+            .catch(() => {});
+          return;
+        }
         case "logRow": return this.setState({ openLog: this.state.openLog === arg ? null : arg });
       }
     }
@@ -1137,55 +1157,99 @@
       </div>`;
     }
 
-    // ══ GRADED LOG (session-accumulated, feeds the Data Feed) ═════════════
-    // /live exposes only the current plate appearance and no prediction history,
-    // so the Data Feed's log and analytics are built by grading each pitch as
-    // it arrives and keeping the result for this tab's session. A per-game (or
-    // per-day) graded-prediction endpoint would make all of it durable.
-    trackGradedLog(games) {
-      if (!this.gradedLog) { this.gradedLog = []; this._seenPitch = {}; }
-      (games || []).forEach((g) => {
-        (g.pitches || []).forEach((p) => {
-          const key = `${g.gamePk}|${g.inning}${g.half}|${g.batter.name}|${p.n}`;
-          if (this._seenPitch[key]) return;
-          this._seenPitch[key] = 1;
-          const base = {
-            t: Date.now(), pk: g.gamePk, game: g.label, inning: g.inning,
-            pitcher: g.pitcher.name, batter: g.batter.name,
-            matchup: `${this.shortName(g.pitcher.name)} → ${this.shortName(g.batter.name)}`,
-            count: `${p.balls}-${p.strikes}`, outs: g.outs, type: p.type, speed: p.speed,
-            model: g.modelVersion || "—",
-          };
-          if (p.pred && p.pred.speed != null && p.speed != null) {
-            const err = p.pred.speed - p.speed;
-            this.gradedLog.unshift(Object.assign({}, base, {
-              id: key + "|v", mkt: "VELO",
-              pred: `${p.pred.speed.toFixed(1)} mph`, predRaw: p.pred.speed.toFixed(1),
-              actual: `${p.speed.toFixed(1)}`, actualRaw: p.speed.toFixed(1),
-              err: (err >= 0 ? "+" : "−") + Math.abs(err).toFixed(1), errAbs: Math.abs(err),
-              band: this.veloBand(err), hit: Math.abs(err) <= 1.5,
-            }));
-          }
-          if (p.pred && p.pred.resultCat && p.desc) {
-            const ok = p.pred.resultOk;
-            this.gradedLog.unshift(Object.assign({}, base, {
-              id: key + "|c", mkt: "CLASS",
-              pred: PH.OUTCOME_LABEL[p.pred.resultCat] || p.pred.resultCat,
-              predRaw: `${p.pred.resultCat} ${p.pred.resultProb != null ? Math.round(p.pred.resultProb * 100) + "%" : ""}`,
-              conf: p.pred.resultProb, actual: this.resultMeta(p.desc)[0], actualRaw: p.desc,
-              err: ok == null ? "ungraded" : ok ? "correct" : "miss",
-              band: ok == null ? null : ok ? "good" : "bad", hit: ok === true,
-            }));
-          }
+    // ══ GRADED LOG (server-backed) ════════════════════════════════════════
+    // Was session-accumulated until 2026-08-08: the Data Feed graded each
+    // pitch as /live delivered it and kept the result in an array capped at
+    // 400. That meant two people watching the same slate saw different tables,
+    // a refresh wiped it, and arriving at 21:00 showed nothing from the 13:00
+    // games — even though the server had made and graded every one of those
+    // predictions hours earlier.
+    //
+    // /api/pitches serves them. Everyone sees the same day.
+    // Always refetches. There is no cheap way to ask "did a new pitch land"
+    // without asking for the rows, and /api/pitches is CDN-cached for 15s
+    // against an ~8s poll, so roughly half of these never reach the origin.
+    async loadPitchFeed() {
+      try {
+        // Only the two per-pitch markets render here; asking for the rest
+        // would ship at-bat and game-level rows the mapper throws away.
+        const wanted = { VELO: "pitch_speed_ou", CLASS: "pitch_result" };
+        const res = await PH.loadPitches(API_BASE, {
+          game_pk: this.state.dfGame === "all" ? null : this.state.dfGame,
+          market: wanted[this.state.mkt] || "pitch_speed_ou,pitch_result",
+          status: "graded",
+          limit: 300,
         });
-      });
-      if (this.gradedLog.length > 400) this.gradedLog.length = 400;
+        this.state.pitchFeed = {
+          rows: (res.rows || []).map((r) => this.dfRow(r)).filter(Boolean),
+          summary: res.summary || null, loaded: true, err: false,
+        };
+        return true;
+      } catch (_e) {
+        // Keep whatever we had and flag it, so the panel says "couldn't reach"
+        // rather than implying the model made no predictions.
+        this.state.pitchFeed = Object.assign({}, this.state.pitchFeed, {
+          loaded: true, err: true,
+        });
+        return true;
+      }
     }
+
+    // One server row -> one display row. The server sends a market and an
+    // actual; VELO and CLASS are presentation categories, so the mapping lives
+    // here rather than in the API.
+    dfRow(r) {
+      const matchup = r.pitcher_name && r.batter_name
+        ? `${this.shortName(r.pitcher_name)} → ${this.shortName(r.batter_name)}`
+        : "—";
+      const base = {
+        t: r.graded_at || r.created_at, pk: r.game_pk, game: r.game_label || "—",
+        inning: r.inning, pitcher: r.pitcher_name, batter: r.batter_name, matchup,
+        count: r.count || "—", outs: r.outs == null ? "—" : r.outs,
+        type: r.actual_pitch_type, model: r.model_version || "—",
+        conf: r.confidence,
+      };
+      if (r.market === "pitch_speed_ou") {
+        // `error` is computed server-side so every client renders the same
+        // number. A null actual means the row predates actual capture.
+        if (r.predicted_value == null || r.actual_value == null) return null;
+        const err = r.error;
+        return Object.assign(base, {
+          id: `${r.id}|v`, mkt: "VELO",
+          pred: `${r.predicted_value.toFixed(1)} mph`,
+          predRaw: r.predicted_value.toFixed(1),
+          actual: r.actual_value.toFixed(1), actualRaw: r.actual_value.toFixed(1),
+          speed: r.actual_value,
+          err: err == null ? "ungraded"
+            : (err >= 0 ? "+" : "−") + Math.abs(err).toFixed(1),
+          errAbs: err == null ? null : Math.abs(err),
+          band: this.veloBand(err), hit: err != null && Math.abs(err) <= 1.5,
+        });
+      }
+      if (r.market === "pitch_result") {
+        const ok = r.result == null ? null : r.result === "win";
+        const label = (c) => (c ? PH.OUTCOME_LABEL[c] || c : "—");
+        return Object.assign(base, {
+          id: `${r.id}|c`, mkt: "CLASS",
+          pred: label(r.recommendation),
+          predRaw: `${r.recommendation || "—"} ${
+            r.confidence != null ? Math.round(r.confidence * 100) + "%" : ""
+          }`.trim(),
+          actual: label(r.actual_label), actualRaw: r.actual_label || "—",
+          err: ok == null ? "ungraded" : ok ? "correct" : "miss",
+          band: ok == null ? null : ok ? "good" : "bad", hit: ok === true,
+        });
+      }
+      // Other markets are game/at-bat level and have their own surfaces.
+      return null;
+    }
+
     dfRows() {
+      // Already scoped server-side by game_pk; the filter stays as a guard for
+      // the tick between changing the chip and the fetch landing.
       const scope = this.state.dfGame;
-      let rows = (this.gradedLog || []);
-      if (scope !== "all") rows = rows.filter((r) => r.pk === scope);
-      return rows;
+      const rows = (this.state.pitchFeed && this.state.pitchFeed.rows) || [];
+      return scope === "all" ? rows : rows.filter((r) => r.pk === scope);
     }
     dfStats(rows) {
       const velo = rows.filter((r) => r.mkt === "VELO");
@@ -1453,17 +1517,17 @@
       const C = this.C;
       const mobile = this.mob();
       const live = this.liveGames();
-      if (!live.length) {
-        // No game in progress. The tab is still full: durable history and the
-        // scouting panels both render. It used to say "No live games right
-        // now" and show nothing else.
-        return `${this.feedHtml()}${this.scoutingHtml()}`;
-      }
+      // No early return when nothing is live. The graded log is server-backed
+      // as of 2026-08-08, so it is complete for the whole day whether or not a
+      // game happens to be in progress right now — someone opening the tab at
+      // 02:00 sees every prediction made that day. Only the per-game live
+      // panels below depend on `live`, and they degrade to nothing.
       const rows = this.dfRows();
       const st = this.dfStats(rows);
       const scopeLabel = this.state.dfGame === "all"
-        ? "all live games"
-        : (live.find((x) => x.gamePk === this.state.dfGame) || {}).label || "all live games";
+        ? "all games today"
+        : (PH.games || []).concat(live).find((x) => x.gamePk === this.state.dfGame)?.label
+          || "all games today";
 
       // ── game panels ────────────────────────────────────────────────────
       const allOn = this.state.dfGame === "all";
@@ -1492,7 +1556,7 @@
         { label: "Velo MAE", value: st.mae == null ? "—" : st.mae.toFixed(2), unit: "mph", c: st.mae == null ? C.dim : this.grd(this.veloBand(st.mae)).fg, sub: `mean |called − actual| · n=${st.velo.length}` },
         { label: "Velo within 1.5", value: st.within == null ? "—" : Math.round(st.within * 100) + "%", c: st.within == null ? C.dim : st.within >= 0.5 ? this.GRD.good.fg : this.GRD.amber.fg, sub: `green band share · n=${st.velo.length}` },
         { label: "Class hit rate", value: st.clsHit == null ? "—" : Math.round(st.clsHit * 100) + "%", c: st.clsHit == null ? C.dim : st.clsHit >= 0.5 ? this.GRD.good.fg : this.GRD.amber.fg, sub: `strike/ball/in-play · n=${st.cls.length}` },
-        { label: "Graded this session", value: String(st.n), c: C.txt, sub: `${scopeLabel} · live overlay` },
+        { label: "Graded today", value: String(st.n), c: C.txt, sub: `${scopeLabel} · server record` },
       ];
       const kpis = kpiDefs.map((k) => mobile
         ? `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};padding:11px 12px;">
@@ -1587,7 +1651,7 @@
         { label: "Pitch velo · within 1.5 mph", hit: st.within, n: st.velo.length, base: veloBase, note: "vs always calling the session mean velo" },
         { label: "Pitch result · class correct", hit: st.clsHit, n: st.cls.length, base: clsBase, note: "vs always calling the most common class" },
       ].filter((r) => r.n > 0);
-      const calib = modCard("Calibration by market · this session",
+      const calib = modCard("Calibration by market · today",
         calibRows.length ? calibRows.map((r) => {
           const c = r.hit >= 0.6 ? this.GRD.good.fg : r.hit >= 0.45 ? this.GRD.amber.fg : this.GRD.bad.fg;
           return `<div style="margin-bottom:11px;">
@@ -1624,7 +1688,7 @@
             <span style="width:100%;border-radius:4px 4px 0 0;background:${this.veloColor(b.v)};height:${h}px;display:block;"></span>
             <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:${C.faint};">${b.inn}</span>
           </div>`;
-        }).join("")}</div>` : thin("Needs pitches from two or more innings this session."),
+        }).join("")}</div>` : thin("Needs pitches from two or more innings today."),
         trend ? `Average actual velocity per inning across ${esc(scopeLabel)}.` : null,
         trend ? `<span style="font-size:12px;font-weight:700;">${trend.drop >= 0 ? "+" : "−"}<span style="font-family:'IBM Plex Mono',monospace;color:${trend.drop < -1 ? C.red : C.dim};font-weight:600;">${Math.abs(trend.drop).toFixed(1)} mph</span></span>` : "");
 
@@ -1662,7 +1726,7 @@
             const a = p == null ? 0 : Math.min(0.34, (p / 100) * 0.42);
             return `<span style="font-family:'IBM Plex Mono',monospace;text-align:center;padding:7px 0;border-radius:6px;background:rgba(34,165,102,${a.toFixed(2)});color:${p == null ? C.faint : C.txt};font-weight:600;">${p == null ? "—" : p + "%"}</span>`;
           }).join("")}`).join("")}
-        </div>` : thin("Needs at least 8 graded pitches this session."),
+        </div>` : thin("Needs at least 8 graded pitches today."),
         mix ? `Share of pitches by type within each count state · n=${mix.n}.` : null);
 
       // confidence vs accuracy
@@ -1683,7 +1747,7 @@
             <span style="height:7px;background:${C.chip};border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;width:${Math.round(b.hit * 100)}%;background:${c};"></span></span>
             <span style="font-family:'IBM Plex Mono',monospace;text-align:right;"><b style="font-weight:600;color:${c};">${Math.round(b.hit * 100)}%</b> <span style="font-size:11px;color:${C.faint};">n=${b.n}</span></span>
           </div>`;
-        }).join("") : thin("Needs at least 4 graded class calls this session."),
+        }).join("") : thin("Needs at least 4 graded class calls today."),
         "A calibrated model's hit rate should track its stated confidence.");
 
       // mobile digest — only claims the session data actually supports
@@ -1709,7 +1773,7 @@
           out.push({
             c: trend.drop < 0 ? this.GRD.bad.fg : this.GRD.good.fg,
             kicker: "Fatigue", head: `Velocity ${trend.drop < 0 ? "down" : "up"} ${Math.abs(trend.drop).toFixed(1)} mph since the first inning seen`,
-            body: "Averaged per inning across the pitches graded this session.",
+            body: "Averaged per inning across every pitch graded today.",
             stat1: `${trend.bars[0].v.toFixed(1)} → ${trend.bars[trend.bars.length - 1].v.toFixed(1)}`, stat2: `${trend.bars.length} innings`,
           });
         }
@@ -1760,7 +1824,7 @@
         <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px;">
           <h1 style="margin:0;font-size:27px;font-weight:800;letter-spacing:-.02em;">${esc(COPY.dataTitle)}</h1>
           <p style="margin:0;font-size:13.5px;color:${C.mut};">${esc(COPY.dataSub)}</p>
-          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">30-day stored history · live grading on top</span>
+          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">30-day stored history · today graded per pitch</span>
         </div>
 
         ${this.feedHtml(true)}
@@ -1870,7 +1934,11 @@
           PH.games = games;
           const live = this.liveGames();
           this.trackAtBats(live);
-          this.trackGradedLog(live);
+          // Not awaited: the board must never wait on the graded feed. It
+          // re-renders itself when the rows land.
+          this.loadPitchFeed()
+            .then((changed) => { if (changed) this.render(); })
+            .catch(() => {});
           if (live.length && !live.some((g) => g.gamePk === this.state.feedGame)) {
             this.state.feedGame = live[0].gamePk;
           }
@@ -1935,6 +2003,12 @@
       // they are fetched on boot rather than waiting for a game to start.
       fetchRecap(true).then(() => this.render()).catch(() => {});
       this.syncFeed(true);
+      // The day's graded predictions, on boot. This is the difference between
+      // "the log starts filling once you arrive" and "the log is already
+      // complete when you arrive" — the whole point of moving it server-side.
+      this.loadPitchFeed()
+        .then((changed) => { if (changed) this.render(); })
+        .catch(() => {});
       this.checkHealth();
       this._scheduleNextPoll();
       document.addEventListener("visibilitychange", () => {

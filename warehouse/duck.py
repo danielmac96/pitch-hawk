@@ -22,7 +22,7 @@ is 1.47 MB and a seven-table publish would otherwise fetch it seven times.
 from __future__ import annotations
 
 from warehouse import manifest
-from warehouse.config import DATASETS, object_key
+from warehouse.config import DATASETS, DAY_PARTITIONED, object_key
 
 
 def connect(store):  # noqa: ANN001
@@ -39,9 +39,13 @@ def connect(store):  # noqa: ANN001
 def days(store, dataset: str, seasons=None, *, m: dict | None = None,
          verified_only: bool = False) -> list[str]:
     """Days the manifest holds for `dataset`, optionally limited to seasons."""
-    if dataset not in DATASETS:
+    # DAY_PARTITIONED, not DATASETS: the Supabase exports are readable here
+    # too, which is the entire point of storing them. `register` still defaults
+    # to the MLB datasets, so no aggregate picks them up by accident.
+    if dataset not in DAY_PARTITIONED:
         raise ValueError(
-            f"unknown dataset {dataset!r}; expected one of {sorted(DATASETS)}")
+            f"unknown dataset {dataset!r}; "
+            f"expected one of {sorted(DAY_PARTITIONED)}")
     if m is None:
         m = manifest.load(store)
     out = (manifest.verified_days(m, dataset) if verified_only

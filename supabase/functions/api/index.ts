@@ -11,6 +11,7 @@
 import { json, svc } from "../_shared/db.ts";
 import { mlbToday } from "../_shared/mlb.ts";
 import * as aggs from "../_shared/aggregates.ts";
+import { DEFAULT_LIMIT, MAX_LIMIT, pitchFeed } from "../_shared/pitchfeed.ts";
 
 const MARKET_LABELS: Record<string, string> = {
   ab_result: "At-Bat Result",
@@ -50,6 +51,10 @@ const TTL: Record<string, number> = {
   // final; the live section inside it is refreshed by the client's own /live
   // poll, so 60s here does not make the live board stale.
   "board": 60, "feed": 60, "coverage": 300,
+  // Per-pitch graded history. 15s matches /edge: during a live game new rows
+  // land every 30s and the Data Feed is the surface watching them arrive, so a
+  // 60s cache would make it visibly lag the board it sits next to.
+  "pitches": 15,
 };
 
 // In-instance memo so even a CDN miss on a warm instance skips Postgres.
@@ -868,6 +873,31 @@ async function recapFor(date: string): Promise<Record<string, unknown> | null> {
   };
 }
 
+// Every prediction made for one day's slate, per pitch, paginated.
+//
+// This is what makes the Data Feed the same for everybody. It used to be built
+// in the browser from whatever pitches that tab happened to observe, so the
+// table depended on when you opened the page.
+async function pitches(url: URL): Promise<Response> {
+  const sp = url.searchParams;
+  // Comma-separated, and every name is validated against the known markets —
+  // an unrecognised one is dropped rather than passed through to the query.
+  const markets = (sp.get("market") ?? "")
+    .split(",").map((m) => m.trim()).filter((m) => ALL_MARKETS.includes(m));
+  try {
+    return json(await pitchFeed(svc(), {
+      date: parseDate(sp.get("date")) ?? mlbToday(),
+      gamePk: posInt(sp.get("game_pk")),
+      markets,
+      status: sp.get("status"),
+      cursor: Number(sp.get("cursor")) > 0 ? Number(sp.get("cursor")) : 0,
+      limit: Math.min(posInt(sp.get("limit")) ?? DEFAULT_LIMIT, MAX_LIMIT),
+    }));
+  } catch (e) {
+    return json({ error: String(e instanceof Error ? e.message : e) }, 500);
+  }
+}
+
 async function board(url: URL): Promise<Response> {
   const date = parseDate(url.searchParams.get("date")) ?? mlbToday();
   const [payloads, recap] = await Promise.all([slatePayloads(date), recapFor(date)]);
@@ -958,6 +988,7 @@ Deno.serve(async (req) => {
       case "board": return await hit("board", TTL["board"], () => board(url));
       case "feed": return await hit("feed", TTL["feed"], () => feed(url));
       case "coverage": return await hit("coverage", TTL["coverage"], () => coverage(url));
+      case "pitches": return await hit("pitches", TTL["pitches"], () => pitches(url));
       case "picks/today": return await hit("picks/today", TTL["picks/today"], picksToday);
       case "odds/today": return await hit("odds/today", TTL["odds/today"], oddsToday);
       case "record": return await hit("record", TTL["record"], record);
