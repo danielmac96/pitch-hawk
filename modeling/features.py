@@ -36,6 +36,23 @@ def cache_root() -> Path:
     return Path(os.environ.get("PITCHHAWK_CACHE", ".cache"))
 
 
+def _sql_str(value: str) -> str:
+    """Single-quoted SQL literal.
+
+    DuckDB refuses prepared parameters inside CREATE VIEW and COPY ("Unexpected
+    prepared parameter. This type of statement can't be prepared!"), so the
+    URI list and the output path have to be inlined. Everything passed here
+    comes from the manifest or our own cache_root(), never from user input, but
+    the quote-doubling is kept so that stays true if the source ever changes.
+    """
+    return "'" + value.replace("'", "''") + "'"
+
+
+def _read_parquet(uris: list[str]) -> str:
+    """`read_parquet([...])` with the file list inlined as literals."""
+    return "read_parquet([" + ", ".join(_sql_str(u) for u in uris) + "])"
+
+
 @dataclass(frozen=True)
 class ScanStats:
     files: int
@@ -111,12 +128,12 @@ def build_form_spine(store, *, seasons=None, con=None) -> tuple[Path, ScanStats]
             "create or replace view pitches as "
             "select pitcher_id, game_date, start_speed, "
             "       case when zone between 1 and 9 then 1 else 0 end as in_zone "
-            "from read_parquet(?)", [uris])
+            f"from {_read_parquet(uris)}")
         con.execute(f"create or replace table form_spine as {FORM_SPINE_SQL}")
         rows = con.execute("select count(*) from form_spine").fetchone()[0]
         out = cache_root() / "form_spine.parquet"
         out.parent.mkdir(parents=True, exist_ok=True)
-        con.execute("copy form_spine to ? (format parquet)", [str(out)])
+        con.execute(f"copy form_spine to {_sql_str(str(out))} (format parquet)")
         stats = ScanStats(files=len(uris), rows=rows, seconds=time.time() - t0)
         print(f"[modeling] form_spine: {stats}")
         return out, stats
@@ -141,7 +158,7 @@ def build_cells(store, spec, *, seasons=None, con=None):  # noqa: ANN001
             "select pitcher_id, batter_id, game_date, balls, strikes, "
             "       start_speed, is_ball, is_in_play, is_strike, pitch_number, "
             "       case when zone between 1 and 9 then 1 else 0 end as in_zone "
-            "from read_parquet(?)", [uris])
+            f"from {_read_parquet(uris)}")
         con.execute(f"create or replace table cells as {spec.cell_sql}")
         rows = con.execute("select count(*) from cells").fetchone()[0]
         if rows == 0:
@@ -151,7 +168,7 @@ def build_cells(store, spec, *, seasons=None, con=None):  # noqa: ANN001
                 f"Check the SQL and the form_spine join.")
         out = cells_path(spec)
         out.parent.mkdir(parents=True, exist_ok=True)
-        con.execute("copy cells to ? (format parquet)", [str(out)])
+        con.execute(f"copy cells to {_sql_str(str(out))} (format parquet)")
         stats = ScanStats(files=len(uris), rows=rows, seconds=time.time() - t0)
         print(f"[modeling] cells[{spec.market}]: {stats}")
         return out, stats
