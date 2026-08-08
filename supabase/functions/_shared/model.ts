@@ -121,7 +121,7 @@ function featureValue(name: string, ctx: ScoreContext): number {
   }
 }
 
-function scoreMultinomial(params: Params, ctx: ScoreContext): Record<string, number> {
+export function scoreMultinomial(params: Params, ctx: ScoreContext): Record<string, number> {
   const feats: string[] = params.features ?? [];
   const x = feats.map((f) => featureValue(f, ctx));
   const zs = (params.classes as string[]).map((_c: string, i: number) => {
