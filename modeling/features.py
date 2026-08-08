@@ -123,3 +123,55 @@ def build_form_spine(store, *, seasons=None, con=None) -> tuple[Path, ScanStats]
     finally:
         if own_con:
             con.close()
+
+
+def cells_path(spec) -> Path:  # noqa: ANN001
+    return cache_root() / "cells" / f"{spec.market}.parquet"
+
+
+def build_cells(store, spec, *, seasons=None, con=None):  # noqa: ANN001
+    """Build one market's weighted cell table. Requires form_spine in `con`."""
+    own_con = con is None
+    con = con or duck.connect(store)
+    try:
+        uris = duck.uris(store, "pitches", seasons)
+        t0 = time.time()
+        con.execute(
+            "create or replace view pitches as "
+            "select pitcher_id, batter_id, game_date, balls, strikes, "
+            "       start_speed, is_ball, is_in_play, is_strike, pitch_number, "
+            "       case when zone between 1 and 9 then 1 else 0 end as in_zone "
+            "from read_parquet(?)", [uris])
+        con.execute(f"create or replace table cells as {spec.cell_sql}")
+        rows = con.execute("select count(*) from cells").fetchone()[0]
+        if rows == 0:
+            raise RuntimeError(
+                f"{spec.market}: cell table is EMPTY. Refusing to continue -- a "
+                f"silent partial train is exactly what froze the v1 trainer. "
+                f"Check the SQL and the form_spine join.")
+        out = cells_path(spec)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        con.execute("copy cells to ? (format parquet)", [str(out)])
+        stats = ScanStats(files=len(uris), rows=rows, seconds=time.time() - t0)
+        print(f"[modeling] cells[{spec.market}]: {stats}")
+        return out, stats
+    finally:
+        if own_con:
+            con.close()
+
+
+def load_cells(spec, seasons=None):  # noqa: ANN001
+    """Read a cached cell table. Never touches R2."""
+    import duckdb
+
+    path = cells_path(spec)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"no cell cache for {spec.market} at {path}. "
+            f"Run: python -m modeling build --market {spec.market}")
+    con = duckdb.connect()
+    q = "select * from read_parquet(?)"
+    args = [str(path)]
+    if seasons:
+        q += " where season in (" + ",".join(str(int(s)) for s in seasons) + ")"
+    return con.execute(q, args).df()
