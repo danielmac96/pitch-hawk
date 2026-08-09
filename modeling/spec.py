@@ -46,6 +46,12 @@ class MarketSpec:
     metric_direction: str
     form_windows: tuple[str, ...]
     to_params: Callable[[Any, str], dict]
+    # Width of one form bucket, in the feature's own units. The cell SQL divides
+    # by it to bucket; _design multiplies by it to recover the delta. It lives
+    # on the spec rather than in the engine because it differs per market
+    # (0.03 zone-rate for pitch_result, 0.035 k-rate for ab_result) -- reading
+    # it from the spec is what keeps _design from branching on market name.
+    bucket_step: float = 0.03
 
     def __post_init__(self) -> None:
         if self.family not in FAMILIES:

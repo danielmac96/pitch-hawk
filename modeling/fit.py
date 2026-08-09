@@ -14,8 +14,6 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from modeling.specs.pitch_result import ZONE_STEP
-
 # Swept by validate.sweep(). None means no decay -- weight purely by count.
 HALF_LIVES: tuple[float | None, ...] = (1.0, 2.0, 3.0, None)
 
@@ -51,19 +49,27 @@ def _design(spec, cells: pd.DataFrame, form_window: str) -> np.ndarray:  # noqa:
         raise ValueError(
             f"unknown form_window {form_window!r}; "
             f"{spec.market} emits {spec.form_windows}")
-    zone = cells[f"{form_window}_zone_bucket"].to_numpy(float) * ZONE_STEP
+    # One generic "form delta" column per market, recovered from the bucket
+    # index at the spec's own step. The column is named *_zone_bucket for every
+    # market for engine-genericity; for ab_result it carries a k-rate delta.
+    form = cells[f"{form_window}_zone_bucket"].to_numpy(float) * spec.bucket_step
     balls = cells["balls"].to_numpy(float)
     strikes = cells["strikes"].to_numpy(float)
+    zeros = np.zeros(len(cells))
     columns = {
         "balls": balls,
         "strikes": strikes,
         "two_strikes": (strikes >= 2).astype(float),
         "three_balls": (balls >= 3).astype(float),
-        "pitcher_zone_delta": zone,
-        # Batter chase deltas are not in the v1 cell grain; folded into the
-        # intercept as zero, exactly as the v1 trainer did for pitcher_bb_delta.
-        # Adding them is a spec change, not an engine change.
-        "batter_chase_delta": np.zeros(len(cells)),
+        "pitcher_zone_delta": form,
+        "pitcher_k_delta": form,
+        # Features the cell grain does not carry are folded into the intercept
+        # as zero, exactly as the v1 trainer did for pitcher_bb_delta. Adding
+        # one is a spec change (a new bucket column), not an engine change.
+        "batter_chase_delta": zeros,
+        "pitcher_bb_delta": zeros,
+        "batter_k_delta": zeros,
+        "platoon_same": zeros,
     }
     missing = [f for f in spec.feature_names if f not in columns]
     if missing:

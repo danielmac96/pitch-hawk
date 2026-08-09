@@ -76,4 +76,5 @@ SPEC = MarketSpec(
     metric_direction="lower",
     form_windows=("career", "d30", "d90"),
     to_params=to_params,
+    bucket_step=ZONE_STEP,
 )

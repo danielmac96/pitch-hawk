@@ -7,8 +7,11 @@ MarketSpec.family -- so adding a market is adding a file here.
 from __future__ import annotations
 
 from modeling.spec import MarketSpec
-from modeling.specs import pitch_result
+from modeling.specs import ab_result, pitch_result
 
 REGISTRY: dict[str, MarketSpec] = {
-    pitch_result.SPEC.market: pitch_result.SPEC,
+    s.market: s for s in (
+        pitch_result.SPEC,
+        ab_result.SPEC,
+    )
 }
