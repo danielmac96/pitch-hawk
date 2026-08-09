@@ -39,9 +39,11 @@ from utils.r2 import CONNECT_ERROR, R2Unavailable
 
 PAGE_TITLE = "ML Pipeline QA Dashboard"
 
-# Nothing is served from cache for longer than this, so a nightly that lands
-# mid-session shows up within half a minute.
-CACHE_TTL_SECONDS = 30
+# 300s, not 30s. Streamlit re-runs the script on every widget interaction, so a
+# 30-second TTL made active browsing re-query R2 roughly twice a minute --
+# a larger Class B consumer than the entire training pipeline. Warehouse data
+# is written once nightly; sub-minute freshness bought nothing.
+CACHE_TTL_SECONDS = 300
 
 # Days shown in the recent-ingestion table — long enough to see a pattern, short
 # enough to read at a glance.
