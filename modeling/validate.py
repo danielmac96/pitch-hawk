@@ -72,7 +72,34 @@ def _evaluate_multinomial(spec, result: FitResult, cells: pd.DataFrame,  # noqa:
     }
 
 
-_EVALUATORS = {"multinomial_logistic": _evaluate_multinomial}
+def predict_linear(spec, result: FitResult, cells: pd.DataFrame,  # noqa: ANN001
+                   form_window: str) -> np.ndarray:
+    from modeling.fit import _design
+
+    X = _design(spec, cells, form_window)
+    return X @ np.asarray(result.coef) + float(result.intercept)
+
+
+def _evaluate_linear(spec, result, cells, form_window) -> dict:  # noqa: ANN001
+    yhat = predict_linear(spec, result, cells, form_window)
+    y = cells["mean_speed"].to_numpy(float)
+    w = cells["n"].to_numpy(float)
+    return {
+        "rmse": round(M.rmse(y, yhat, w), 6),
+        "sigma": round(result.sigma, 4),
+        # Row grain, not cell grain -- see metrics.sigma_coverage_cells. rmse
+        # stays at cell grain because that is the quantity being fit.
+        "sigma_coverage": round(M.sigma_coverage_cells(
+            y, cells["var_speed"].fillna(0.0).to_numpy(float),
+            yhat, result.sigma, w), 5),
+        "n": float(w.sum()),
+    }
+
+
+_EVALUATORS = {
+    "multinomial_logistic": _evaluate_multinomial,
+    "linear": _evaluate_linear,
+}
 
 
 def evaluate(spec, result: FitResult, cells: pd.DataFrame,  # noqa: ANN001

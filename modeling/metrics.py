@@ -39,6 +39,48 @@ def sigma_coverage(y: np.ndarray, yhat: np.ndarray, sigma: float,
     return float(np.average(inside, weights=w))
 
 
+def _std_normal_cdf(x: np.ndarray) -> np.ndarray:
+    """Abramowitz-Stegun normal CDF, vectorised.
+
+    The same approximation normCdf() uses in model.ts -- kept identical so a
+    coverage number here means the same thing as the O/U probabilities
+    production serves. Accurate to ~7.5e-8, far tighter than a diagnostic
+    needs, and it avoids taking a scipy dependency for one function.
+    """
+    x = np.asarray(x, dtype=float)
+    t = 1.0 / (1.0 + 0.2316419 * np.abs(x))
+    d = 0.3989423 * np.exp(-x * x / 2.0)
+    p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478
+                 + t * (-1.821256 + t * 1.330274))))
+    return np.where(x > 0, 1.0 - p, p)
+
+
+def sigma_coverage_cells(cell_mean: np.ndarray, cell_var: np.ndarray,
+                         yhat: np.ndarray, sigma: float,
+                         w: np.ndarray) -> float:
+    """Fraction of INDIVIDUAL rows within +/-1 sigma, from aggregated cells.
+
+    sigma_coverage() above answers the question at row grain. Applying it
+    directly to a cell table silently answers a different question: a cell's
+    `mean_speed` is an average over thousands of pitches, so its residuals are
+    ~3x tighter than a single pitch's, and coverage against a pitch-level sigma
+    reads ~0.98 no matter how badly scaled sigma is. That is not a sigma the
+    band [0.63, 0.73] can police -- it is the wrong measurement.
+
+    Modelling each cell's pitches as N(cell_mean, cell_var) recovers the row
+    grain analytically:
+
+        P(|X - yhat| <= sigma), X ~ N(mean, var)
+
+    which is what the promotion veto in modeling/registry.py needs to see.
+    """
+    sd = np.sqrt(np.maximum(np.asarray(cell_var, dtype=float), 1e-12))
+    hi = (yhat + sigma - cell_mean) / sd
+    lo = (yhat - sigma - cell_mean) / sd
+    inside = _std_normal_cdf(hi) - _std_normal_cdf(lo)
+    return float(np.average(inside, weights=w))
+
+
 def calibration_bins(y: np.ndarray, p: np.ndarray, w: np.ndarray,
                      bins: int = 10, positive_class: int = 1) -> list[dict]:
     """Reliability curve for one class: predicted vs observed, per bin."""

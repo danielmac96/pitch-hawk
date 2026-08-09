@@ -52,6 +52,14 @@ class MarketSpec:
     # (0.03 zone-rate for pitch_result, 0.035 k-rate for ab_result) -- reading
     # it from the spec is what keeps _design from branching on market name.
     bucket_step: float = 0.03
+    # Suffix of the per-window bucket column in the cell table, and the value
+    # the bucket index is centred on. Together with bucket_step these let one
+    # generic _design() serve every family: it recovers the feature as
+    # `bucket_baseline + bucket_index * bucket_step`. Markets whose feature is
+    # a delta leave the baseline at 0; pitch_speed_ou centres on LEAGUE.avg_speed
+    # because model.ts feeds scoreLinear an absolute velocity, not a delta.
+    bucket_col: str = "zone_bucket"
+    bucket_baseline: float = 0.0
 
     def __post_init__(self) -> None:
         if self.family not in FAMILIES:

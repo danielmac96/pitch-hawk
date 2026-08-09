@@ -49,10 +49,12 @@ def _design(spec, cells: pd.DataFrame, form_window: str) -> np.ndarray:  # noqa:
         raise ValueError(
             f"unknown form_window {form_window!r}; "
             f"{spec.market} emits {spec.form_windows}")
-    # One generic "form delta" column per market, recovered from the bucket
-    # index at the spec's own step. The column is named *_zone_bucket for every
-    # market for engine-genericity; for ab_result it carries a k-rate delta.
-    form = cells[f"{form_window}_zone_bucket"].to_numpy(float) * spec.bucket_step
+    # One generic form column per market, recovered from the bucket index as
+    # `baseline + index * step`. Which column, which step and which centre all
+    # come off the spec, which is what keeps this function free of market names.
+    form = (spec.bucket_baseline
+            + cells[f"{form_window}_{spec.bucket_col}"].to_numpy(float)
+            * spec.bucket_step)
     balls = cells["balls"].to_numpy(float)
     strikes = cells["strikes"].to_numpy(float)
     zeros = np.zeros(len(cells))
@@ -61,8 +63,11 @@ def _design(spec, cells: pd.DataFrame, form_window: str) -> np.ndarray:  # noqa:
         "strikes": strikes,
         "two_strikes": (strikes >= 2).astype(float),
         "three_balls": (balls >= 3).astype(float),
+        "pitch_of_pa": (cells["pitch_of_pa"].to_numpy(float)
+                        if "pitch_of_pa" in cells else zeros),
         "pitcher_zone_delta": form,
         "pitcher_k_delta": form,
+        "pitcher_velo": form,
         # Features the cell grain does not carry are folded into the intercept
         # as zero, exactly as the v1 trainer did for pitcher_bb_delta. Adding
         # one is a spec change (a new bucket column), not an engine change.
@@ -109,7 +114,40 @@ def _fit_multinomial(spec, cells, form_window, half_life) -> FitResult:  # noqa:
     )
 
 
-_FITTERS = {"multinomial_logistic": _fit_multinomial}
+def _fit_linear(spec, cells, form_window, half_life) -> FitResult:  # noqa: ANN001
+    """Weighted least squares, with sigma combining both variance components.
+
+    Cells are aggregates, so total variance = between-cell (residuals of the
+    cell means) + within-cell (the var_speed each cell carries). Using only the
+    first understates sigma, and pitch_speed_ou converts sigma to P(over)
+    through a normal CDF -- an understated sigma is confidently wrong output.
+    """
+    from sklearn.linear_model import LinearRegression
+
+    X = _design(spec, cells, form_window)
+    y = cells["mean_speed"].to_numpy(float)
+    w = decay_weights(cells["season"].to_numpy(), cells["n"].to_numpy(), half_life)
+
+    reg = LinearRegression()
+    reg.fit(X, y, sample_weight=w)
+
+    resid = y - reg.predict(X)
+    between = float(np.average(resid ** 2, weights=w))
+    within = float(np.average(cells["var_speed"].fillna(0.0).to_numpy(float),
+                              weights=w))
+    return FitResult(
+        family="linear",
+        feature_names=spec.feature_names,
+        coef=[float(v) for v in reg.coef_],
+        intercept=float(reg.intercept_),
+        sigma=float(np.sqrt(between + within)),
+    )
+
+
+_FITTERS = {
+    "multinomial_logistic": _fit_multinomial,
+    "linear": _fit_linear,
+}
 
 
 def fit(spec, cells: pd.DataFrame, *, form_window: str,  # noqa: ANN001

@@ -12,7 +12,7 @@ import numpy as np
 import pytest
 
 from modeling.metrics import (brier, calibration_bins, ece, logloss, rmse,
-                              sigma_coverage)
+                              sigma_coverage, sigma_coverage_cells)
 
 
 def test_logloss_perfect_prediction_is_zero():
@@ -70,6 +70,47 @@ def test_sigma_coverage_detects_understated_sigma():
     y = rng.normal(0.0, 5.0, 20000)
     cov = sigma_coverage(y, np.zeros(20000), 1.0, np.ones(20000))
     assert cov < 0.30, "an understated sigma must show as low coverage"
+
+
+def test_cell_sigma_coverage_matches_the_row_grain_answer():
+    """Aggregating rows into cells must not change the coverage number.
+
+    Same 20k draws, once as raw rows and once summarised as (mean, var, n)
+    cells. If the cell-grain formula is right the two agree closely.
+    """
+    rng = np.random.default_rng(0)
+    y = rng.normal(92.0, 5.0, 20000)
+    rows = sigma_coverage(y, np.full(20000, 92.0), 5.0, np.ones(20000))
+
+    cells = sigma_coverage_cells(
+        cell_mean=np.array([y.mean()]), cell_var=np.array([y.var()]),
+        yhat=np.array([92.0]), sigma=5.0, w=np.array([20000.0]))
+    assert cells == pytest.approx(rows, abs=0.01)
+    assert 0.66 < cells < 0.70
+
+
+def test_cell_sigma_coverage_still_detects_understated_sigma():
+    """The veto must keep working at cell grain, or it is decoration.
+
+    A pitch-level sd of 5 with sigma claimed as 1 has to read far below the
+    [0.63, 0.73] band -- this is the exact case a naive cell-grain coverage
+    misses, because the cell MEAN sits right on the prediction.
+    """
+    cov = sigma_coverage_cells(
+        cell_mean=np.array([92.0]), cell_var=np.array([25.0]),
+        yhat=np.array([92.0]), sigma=1.0, w=np.array([20000.0]))
+    assert cov < 0.30, f"understated sigma read as {cov} -- veto is blind"
+
+
+def test_naive_row_metric_on_cell_means_would_be_blind():
+    """Documents why sigma_coverage_cells exists at all.
+
+    Applied to cell means, the row-grain metric reports ~1.0 for a sigma that
+    is five times too large -- indistinguishable from a correct one.
+    """
+    means = np.array([92.0, 93.0, 91.0])
+    blind = sigma_coverage(means, np.full(3, 92.0), 25.0, np.ones(3))
+    assert blind == pytest.approx(1.0)
 
 
 def test_ece_perfectly_calibrated_is_near_zero():
