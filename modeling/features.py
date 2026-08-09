@@ -193,7 +193,8 @@ def build_form_spine_ab(store, *, seasons=None, con=None) -> tuple[Path, ScanSta
         t0 = time.time()
         con.execute(
             "create or replace view at_bats as "
-            "select pitcher_id, batter_id, game_date, result, pitch_count "
+            "select game_pk, at_bat_index, pitcher_id, batter_id, game_date, "
+            "       result, pitch_count "
             f"from {_read_parquet(uris)}")
         con.execute(
             f"create or replace table form_spine_ab as {FORM_SPINE_AB_SQL}")
@@ -209,6 +210,26 @@ def build_form_spine_ab(store, *, seasons=None, con=None) -> tuple[Path, ScanSta
             con.close()
 
 
+# Column projections for the R2 datasets a cell_sql may read. Narrow on
+# purpose: Parquet is columnar, so naming only what the specs use keeps each
+# scan reading a fraction of the file bytes.
+_DATASET_VIEWS = {
+    "pitches": (
+        "select game_pk, at_bat_index, pitcher_id, batter_id, game_date, "
+        "       balls, strikes, start_speed, is_ball, is_in_play, "
+        "       is_strike, pitch_number, "
+        "       case when zone between 1 and 9 then 1 else 0 end as in_zone"
+    ),
+    "at_bats": (
+        "select game_pk, at_bat_index, pitcher_id, batter_id, game_date, "
+        "       result, pitch_count"
+    ),
+    "games": (
+        "select game_pk, game_date, season, home_score, away_score"
+    ),
+}
+
+
 def cells_path(spec) -> Path:  # noqa: ANN001
     return cache_root() / "cells" / f"{spec.market}.parquet"
 
@@ -218,14 +239,19 @@ def build_cells(store, spec, *, seasons=None, con=None):  # noqa: ANN001
     own_con = con is None
     con = con or duck.connect(store)
     try:
-        uris = duck.uris(store, "pitches", seasons)
         t0 = time.time()
-        con.execute(
-            "create or replace view pitches as "
-            "select pitcher_id, batter_id, game_date, balls, strikes, "
-            "       start_speed, is_ball, is_in_play, is_strike, pitch_number, "
-            "       case when zone between 1 and 9 then 1 else 0 end as in_zone "
-            f"from {_read_parquet(uris)}")
+        files = 0
+        for dataset in spec.datasets:
+            uris = duck.uris(store, dataset, seasons)
+            if not uris:
+                raise RuntimeError(
+                    f"{spec.market}: manifest returned no {dataset} files -- "
+                    f"check R2_BUCKET is 'pitch-hawk-warehouse' (the typo'd "
+                    f"value fails silently)")
+            files += len(uris)
+            con.execute(f"create or replace view {dataset} as "
+                        f"{_DATASET_VIEWS[dataset]} "
+                        f"from {_read_parquet(uris)}")
         con.execute(f"create or replace table cells as {spec.cell_sql}")
         rows = con.execute("select count(*) from cells").fetchone()[0]
         if rows == 0:
@@ -236,7 +262,7 @@ def build_cells(store, spec, *, seasons=None, con=None):  # noqa: ANN001
         out = cells_path(spec)
         out.parent.mkdir(parents=True, exist_ok=True)
         con.execute(f"copy cells to {_sql_str(str(out))} (format parquet)")
-        stats = ScanStats(files=len(uris), rows=rows, seconds=time.time() - t0)
+        stats = ScanStats(files=files, rows=rows, seconds=time.time() - t0)
         print(f"[modeling] cells[{spec.market}]: {stats}")
         return out, stats
     finally:

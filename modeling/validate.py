@@ -96,9 +96,41 @@ def _evaluate_linear(spec, result, cells, form_window) -> dict:  # noqa: ANN001
     }
 
 
+def _evaluate_remaining_table(spec, result, cells, form_window) -> dict:  # noqa: ANN001
+    """Log-loss of the fitted discrete distribution against held-out cells."""
+    probs, weights = [], []
+    for balls, strikes, remaining, n in zip(
+            cells["balls"], cells["strikes"], cells["remaining"], cells["n"]):
+        entry = (result.table or {}).get(f"{int(balls)}-{int(strikes)}")
+        dist = (entry or {}).get("dist", {})
+        probs.append(float(dist.get(str(int(remaining)), 0.0)))
+        weights.append(float(n))
+    p = np.clip(np.array(probs), 1e-12, 1.0)
+    w = np.array(weights)
+    return {
+        "logloss": round(float(-np.average(np.log(p), weights=w)), 6),
+        "states": len(result.table or {}),
+        "n": float(w.sum()),
+    }
+
+
+def _evaluate_log5(spec, result, cells, form_window) -> dict:  # noqa: ANN001
+    """Brier score of the constant home-advantage rate against held-out games."""
+    p = float(result.intercept)
+    y = cells["home_win"].to_numpy(float)
+    w = cells["n"].to_numpy(float)
+    return {
+        "brier": round(float(np.average((p - y) ** 2, weights=w)), 6),
+        "home_adv": round(p, 4),
+        "n": float(w.sum()),
+    }
+
+
 _EVALUATORS = {
     "multinomial_logistic": _evaluate_multinomial,
     "linear": _evaluate_linear,
+    "remaining_table": _evaluate_remaining_table,
+    "log5": _evaluate_log5,
 }
 
 

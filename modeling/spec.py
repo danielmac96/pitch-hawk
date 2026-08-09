@@ -60,6 +60,10 @@ class MarketSpec:
     # because model.ts feeds scoreLinear an absolute velocity, not a delta.
     bucket_col: str = "zone_bucket"
     bucket_baseline: float = 0.0
+    # R2 datasets cell_sql reads. build_cells creates a view per entry and
+    # counts only these files in its scan stats, so the reported cost is the
+    # cost this market actually incurred rather than a flat guess.
+    datasets: tuple[str, ...] = ("pitches",)
 
     def __post_init__(self) -> None:
         if self.family not in FAMILIES:

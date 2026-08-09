@@ -144,9 +144,49 @@ def _fit_linear(spec, cells, form_window, half_life) -> FitResult:  # noqa: ANN0
     )
 
 
+def _fit_remaining_table(spec, cells, form_window, half_life) -> FitResult:  # noqa: ANN001
+    """Empirical distribution of REMAINING pitches, keyed 'balls-strikes'.
+
+    No coefficients -- this family is a weighted histogram. Recency decay still
+    applies, so recent seasons shape the distribution more.
+    """
+    w = decay_weights(cells["season"].to_numpy(), cells["n"].to_numpy(), half_life)
+    grouped: dict[str, dict[int, float]] = {}
+    for (balls, strikes, remaining), weight in zip(
+            zip(cells["balls"], cells["strikes"], cells["remaining"]), w):
+        state = f"{int(balls)}-{int(strikes)}"
+        dist = grouped.setdefault(state, {})
+        key = int(remaining)
+        dist[key] = dist.get(key, 0.0) + float(weight)
+
+    table = {}
+    for state, dist in grouped.items():
+        total = sum(dist.values())
+        table[state] = {
+            "mean": round(sum(k * v for k, v in dist.items()) / total, 3),
+            "dist": {str(k): round(v / total, 5) for k, v in sorted(dist.items())},
+        }
+    return FitResult(family="remaining_table",
+                     feature_names=spec.feature_names, table=table)
+
+
+def _fit_log5(spec, cells, form_window, half_life) -> FitResult:  # noqa: ANN001
+    """Home-field advantage as a single weighted rate.
+
+    One parameter. It is in the workbench anyway so every market goes through
+    the same validation, recording and promotion path -- a market that skips
+    the loop is a market whose regressions nobody notices.
+    """
+    w = decay_weights(cells["season"].to_numpy(), cells["n"].to_numpy(), half_life)
+    home_adv = float(np.average(cells["home_win"].to_numpy(float), weights=w))
+    return FitResult(family="log5", feature_names=(), intercept=home_adv)
+
+
 _FITTERS = {
     "multinomial_logistic": _fit_multinomial,
     "linear": _fit_linear,
+    "remaining_table": _fit_remaining_table,
+    "log5": _fit_log5,
 }
 
 

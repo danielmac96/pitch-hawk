@@ -68,4 +68,5 @@ SPEC = MarketSpec(
     form_windows=("career", "d30", "d90"),
     to_params=to_params,
     bucket_step=K_STEP,
+    datasets=("at_bats",),
 )

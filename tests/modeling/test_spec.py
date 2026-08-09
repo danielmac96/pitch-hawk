@@ -58,8 +58,6 @@ def test_get_spec_unknown_market_lists_valid_ones():
         get_spec("not_a_market")
 
 
-@pytest.mark.xfail(reason="markets land in Phase 2 (pitch_result) and Phase 7 (rest)",
-                   strict=False)
 def test_all_five_markets_registered():
     assert set(all_markets()) == {
         "pitch_result", "ab_result", "pitch_speed_ou",
