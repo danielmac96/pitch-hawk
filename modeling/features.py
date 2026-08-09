@@ -142,6 +142,73 @@ def build_form_spine(store, *, seasons=None, con=None) -> tuple[Path, ScanStats]
             con.close()
 
 
+# The plate-appearance spine. Structurally identical to FORM_SPINE_SQL -- the
+# window clauses are copied verbatim, including the exclusive
+# `interval 1 day preceding` bound. tests/modeling/test_features.py asserts the
+# two agree clause for clause, so relaxing the bound in one and not the other
+# cannot slip through.
+FORM_SPINE_AB_SQL = """
+with daily as (
+    select
+        pitcher_id,
+        game_date,
+        count(*)                                                  as n,
+        avg(case when result = 'strikeout' then 1.0 else 0.0 end) as k_rate
+    from at_bats
+    group by 1, 2
+)
+select
+    pitcher_id,
+    game_date,
+    coalesce(sum(n) over w_career, 0)                                as career_n,
+    sum(k_rate * n) over w_career / nullif(sum(n) over w_career, 0)  as career_k_rate,
+    coalesce(sum(n) over w_d30, 0)                                   as d30_n,
+    sum(k_rate * n) over w_d30 / nullif(sum(n) over w_d30, 0)        as d30_k_rate,
+    coalesce(sum(n) over w_d90, 0)                                   as d90_n,
+    sum(k_rate * n) over w_d90 / nullif(sum(n) over w_d90, 0)        as d90_k_rate
+from daily
+window
+    w_career as (partition by pitcher_id order by game_date
+                 range between unbounded preceding
+                           and interval 1 day preceding),
+    w_d30    as (partition by pitcher_id order by game_date
+                 range between interval 30 days preceding
+                           and interval 1 day preceding),
+    w_d90    as (partition by pitcher_id order by game_date
+                 range between interval 90 days preceding
+                           and interval 1 day preceding)
+"""
+
+
+def build_form_spine_ab(store, *, seasons=None, con=None) -> tuple[Path, ScanStats]:
+    """Materialize the (pitcher, day) plate-appearance form spine."""
+    own_con = con is None
+    con = con or duck.connect(store)
+    try:
+        uris = duck.uris(store, "at_bats", seasons)
+        if not uris:
+            raise RuntimeError(
+                "manifest returned no at_bats files -- check R2_BUCKET is "
+                "'pitch-hawk-warehouse' (the typo'd value fails silently)")
+        t0 = time.time()
+        con.execute(
+            "create or replace view at_bats as "
+            "select pitcher_id, batter_id, game_date, result, pitch_count "
+            f"from {_read_parquet(uris)}")
+        con.execute(
+            f"create or replace table form_spine_ab as {FORM_SPINE_AB_SQL}")
+        rows = con.execute("select count(*) from form_spine_ab").fetchone()[0]
+        out = cache_root() / "form_spine_ab.parquet"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        con.execute(f"copy form_spine_ab to {_sql_str(str(out))} (format parquet)")
+        stats = ScanStats(files=len(uris), rows=rows, seconds=time.time() - t0)
+        print(f"[modeling] form_spine_ab: {stats}")
+        return out, stats
+    finally:
+        if own_con:
+            con.close()
+
+
 def cells_path(spec) -> Path:  # noqa: ANN001
     return cache_root() / "cells" / f"{spec.market}.parquet"
 

@@ -12,7 +12,7 @@ import datetime
 import duckdb
 import pytest
 
-from modeling.features import FORM_SPINE_SQL
+from modeling.features import FORM_SPINE_AB_SQL, FORM_SPINE_SQL
 
 
 @pytest.fixture()
@@ -59,6 +59,41 @@ def test_window_excludes_the_current_day(con):
     assert day3[2] == pytest.approx(100.0), \
         f"day 3 velo {day3[2]} reflects day 3 -- LEAK"
     assert day3[3] == 4, "day 3 should see exactly the 4 prior pitches"
+
+
+def _window_clauses(sql: str) -> str:
+    """The `window ... as (...)` tail, whitespace-normalised."""
+    return " ".join(sql.rsplit("\nwindow\n", 1)[1].split())
+
+
+def test_both_spines_share_one_leakage_bound():
+    """The pitch and plate-appearance spines must not drift apart.
+
+    They are separate SQL strings over different tables, so nothing but this
+    test stops someone relaxing `interval 1 day preceding` in one of them. A
+    leak in either is a leak in the markets built on it.
+    """
+    assert _window_clauses(FORM_SPINE_SQL) == _window_clauses(FORM_SPINE_AB_SQL)
+    assert _window_clauses(FORM_SPINE_SQL).count("interval 1 day preceding") == 3
+
+
+def test_ab_spine_excludes_the_current_day():
+    c = duckdb.connect()
+    c.execute("""
+        create table at_bats as
+        select * from (values
+            (1, date '2024-04-01', 'strikeout'),
+            (1, date '2024-04-02', 'strikeout'),
+            (1, date '2024-04-03', 'hit'),
+            (1, date '2024-04-03', 'hit')
+        ) as t(pitcher_id, game_date, result)
+    """)
+    c.execute(f"create table spine as {FORM_SPINE_AB_SQL}")
+    row = c.execute("select career_k_rate, career_n from spine "
+                    "where game_date = date '2024-04-03'").fetchone()
+    assert row[0] == pytest.approx(1.0), \
+        f"day 3 k_rate {row[0]} reflects day 3's hits -- LEAK"
+    assert row[1] == 2
 
 
 def test_trailing_window_is_bounded(con):
