@@ -21,7 +21,13 @@ jobs:
           # import pyarrow, so without it they are unimportable and silently
           # uncovered. That is how the manifest self-certification defect
           # survived to 2026-08-02.
-          pip install -r requirements.txt -r requirements-warehouse.txt pytest
+          # requirements-modeling.txt adds numpy/scikit-learn/pandas for
+          # modeling/. Without it tests/modeling/ collects but every test that
+          # reaches a fitter dies on `No module named 'sklearn'` -- the fitter,
+          # the walk-forward and the sigma are then completely uncovered while
+          # the rest of the suite still looks green.
+          pip install -r requirements.txt -r requirements-warehouse.txt \
+            -r requirements-modeling.txt pytest
       - name: Run tests
         run: pytest tests/ -q
 
@@ -45,8 +51,12 @@ jobs:
       # The aggregate read handlers ship in the edge function, so pytest
       # cannot reach them -- backend/ is a parallel dev implementation. These
       # cover the same cases the plan asked for in tests/api/test_routes.py.
+      # --allow-read/--allow-env are for scorer_golden_test.ts, which reads the
+      # committed golden fixtures and checks them against what model.ts
+      # computes. Read-only on purpose: granting --allow-write here would let
+      # CI regenerate the very fixtures it is meant to be verifying.
       - name: Test edge function handlers
-        run: deno test --allow-net supabase/functions/tests/
+        run: deno test --allow-net --allow-read --allow-env supabase/functions/tests/
 
   migrations:
     runs-on: ubuntu-latest

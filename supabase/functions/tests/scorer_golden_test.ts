@@ -1,6 +1,12 @@
-// Emits tests/fixtures/scorer_golden.json -- the contract between model.ts and
-// modeling/score.py. Regenerate whenever model.ts scoring changes:
-//   deno test --allow-write --allow-read supabase/functions/tests/scorer_golden_test.ts
+// Guards tests/fixtures/scorer_golden.json -- the contract between model.ts and
+// modeling/score.py.
+//
+// By default this VERIFIES that the committed fixtures still match what
+// model.ts computes, and fails if they do not. To regenerate after an
+// intentional scoring change:
+//
+//   UPDATE_GOLDEN=1 deno test --allow-write --allow-read --allow-env \
+//     supabase/functions/tests/scorer_golden_test.ts
 //
 // tests/modeling/test_parity.py asserts the Python reference scorer matches
 // these outputs to 1e-9. Editing model.ts without regenerating turns CI red,
@@ -60,9 +66,57 @@ for (const balls of [0, 1, 2, 3]) {
   }
 }
 
-Deno.test("emit golden fixtures", () => {
-  Deno.writeTextFileSync(
-    "tests/fixtures/scorer_golden.json",
-    JSON.stringify({ generated_by: "scorer_golden_test.ts", cases }, null, 2),
-  );
+// Resolved from this file, not the process cwd, so the check behaves the same
+// from the repo root and from supabase/functions/.
+const GOLDEN = new URL("../../../tests/fixtures/scorer_golden.json", import.meta.url);
+const payload = JSON.stringify(
+  { generated_by: "scorer_golden_test.ts", cases },
+  null,
+  2,
+);
+
+// Two modes, deliberately:
+//
+//   default        VERIFY the committed fixtures still match what model.ts
+//                  computes. Read-only, so CI needs no write permission.
+//   UPDATE_GOLDEN=1  rewrite them (needs --allow-write).
+//
+// The first version of this file only ever wrote, which meant CI regenerated
+// the fixtures it was supposed to be checking against -- a change to model.ts
+// scoring would have silently rewritten the contract instead of failing. It
+// also broke CI outright, because `deno test --allow-net` grants no write
+// access. Verifying by default is what makes the comment at the top of this
+// file true.
+Deno.test("golden fixtures match model.ts", () => {
+  if (Deno.env.get("UPDATE_GOLDEN") === "1") {
+    Deno.writeTextFileSync(GOLDEN, payload);
+    console.log(`wrote ${cases.length} cases to ${GOLDEN.pathname}`);
+    return;
+  }
+
+  let committed: string;
+  try {
+    committed = Deno.readTextFileSync(GOLDEN);
+  } catch {
+    throw new Error(
+      `${GOLDEN.pathname} is missing. Regenerate it with:\n` +
+        `  UPDATE_GOLDEN=1 deno test --allow-write --allow-read --allow-env ` +
+        `supabase/functions/tests/scorer_golden_test.ts`,
+    );
+  }
+
+  // Compare parsed, not raw text: line endings differ between platforms and a
+  // CRLF checkout must not read as a scoring change.
+  const got = JSON.parse(payload);
+  const want = JSON.parse(committed);
+  if (JSON.stringify(got) !== JSON.stringify(want)) {
+    throw new Error(
+      "model.ts scoring no longer matches tests/fixtures/scorer_golden.json.\n" +
+        "If the change to model.ts was intended, regenerate the fixtures:\n" +
+        "  UPDATE_GOLDEN=1 deno test --allow-write --allow-read --allow-env " +
+        "supabase/functions/tests/scorer_golden_test.ts\n" +
+        "then re-run tests/modeling/test_parity.py, which pins the Python " +
+        "reference scorer to these same numbers.",
+    );
+  }
 });
