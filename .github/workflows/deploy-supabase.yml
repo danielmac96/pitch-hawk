@@ -94,5 +94,5 @@ jobs:
             echo "- Set the frontend: \`PITCH_EDGE_API = https://$REF.supabase.co/functions/v1/api\`"
             echo "- Live board polls every 30s; odds every 5m; settle every 10m."
             echo "- Backfill drains automatically (watch \`select * from backfill_progress;\`)."
-            echo "- After it has data, run \`python scripts/train_models.py\` (or the train job)."
+            echo "- After it has data, run \`python -m modeling build\` then \`python -m modeling train <market>\` (or the train job)."
           } >> "$GITHUB_STEP_SUMMARY"

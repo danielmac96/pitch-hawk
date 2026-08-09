@@ -72,11 +72,13 @@ is preconfigured) and set env var `SUPABASE_FUNCTIONS_URL` =
    Progress is visible in `backfill_progress` and `ingest_runs`.
 5. **Train models** once the backfill has data:
    ```
-   pip install -r requirements-train.txt
-   SUPABASE_URL=... SUPABASE_KEY=... python scripts/train_models.py
+   pip install -r requirements-modeling.txt
+   python -m modeling build
+   SUPABASE_URL=... SUPABASE_KEY=... python -m modeling train pitch_result --promote
    ```
-   (Re-run weekly, or wire it into CI. Until it runs, live predictions
-   fall back to a league-average heuristic and are labeled as such.)
+   (Repeat per market. Until a model is active, live predictions fall back to a
+   league-average heuristic and are labeled as such. `--promote` is what changes
+   production; without it the run is only recorded to `model_runs`.)
 6. **(Optional) demo seed** — for off-hours investor demos when no games
    are live, load a small labeled sample so the board and record render
    populated: `supabase db query < supabase/seed_demo.sql` (or run
