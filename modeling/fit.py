@@ -38,13 +38,23 @@ def decay_weights(seasons: np.ndarray, n: np.ndarray,
     return np.asarray(n, dtype=float) * (0.5 ** (age / float(half_life)))
 
 
-def _design(spec, cells: pd.DataFrame, form_window: str) -> np.ndarray:  # noqa: ANN001
-    """Feature matrix in spec.feature_names order.
+def _design(spec, cells: pd.DataFrame, form_window: str,  # noqa: ANN001
+            feature_names: tuple[str, ...] | None = None) -> np.ndarray:
+    """Feature matrix, column order given by `feature_names`.
 
     The bucket column for the selected form window is chosen here -- this is
     the entire cost of a form-window sweep step, because build_cells emitted
     all three windows in the single R2 pass.
+
+    `feature_names` defaults to the spec's order, which is right when fitting.
+    When SCORING stored params it must be the order those params were fit in:
+    pitch_speed_ou's live v1 lists ('pitcher_velo', 'balls', 'strikes',
+    'pitch_of_pa') while the spec lists velo last, so assuming spec order
+    applied v1's 0.901 velocity coefficient to `balls` and its 0.059
+    pitch-of-PA coefficient to a ~92.8 mph velocity -- an RMSE of 79 mph
+    reported as if it were a baseline.
     """
+    feature_names = feature_names or spec.feature_names
     if form_window not in spec.form_windows:
         raise ValueError(
             f"unknown form_window {form_window!r}; "
@@ -76,10 +86,10 @@ def _design(spec, cells: pd.DataFrame, form_window: str) -> np.ndarray:  # noqa:
         "batter_k_delta": zeros,
         "platoon_same": zeros,
     }
-    missing = [f for f in spec.feature_names if f not in columns]
+    missing = [f for f in feature_names if f not in columns]
     if missing:
         raise ValueError(f"{spec.market}: no column built for {missing}")
-    return np.column_stack([columns[f] for f in spec.feature_names])
+    return np.column_stack([columns[f] for f in feature_names])
 
 
 def _fit_multinomial(spec, cells, form_window, half_life) -> FitResult:  # noqa: ANN001
@@ -188,6 +198,57 @@ _FITTERS = {
     "remaining_table": _fit_remaining_table,
     "log5": _fit_log5,
 }
+
+
+# What each family needs present in a params dict before it can be scored.
+# Used by from_params to refuse a stand-in that would silently evaluate to
+# nonsense rather than raising.
+_REQUIRED_PARAMS = {
+    "multinomial_logistic": ("classes", "coef", "intercept"),
+    "linear": ("coef", "intercept"),
+    "remaining_table": ("table",),
+    "log5": ("home_adv",),
+}
+
+
+def from_params(params: dict, spec) -> FitResult:  # noqa: ANN001
+    """Rebuild a FitResult from stored model_params -- the inverse of to_params.
+
+    This exists for `modeling baseline`, which scores the live version through
+    the walk-forward harness without refitting it.
+
+    The missing-key check is the point. An earlier version of this dropped
+    `table` for remaining_table and looked for `intercept` where log5 stores
+    `home_adv`; the result was not a crash but a *plausible-looking* baseline
+    of logloss 27.63 (every probability zero, clipped). Recorded as a baseline,
+    that number would make any new model look infinitely better and sail
+    through the gate. A baseline that cannot be computed must fail loudly.
+    """
+    kind = params.get("type")
+    required = _REQUIRED_PARAMS.get(kind)
+    if required is None:
+        raise ValueError(
+            f"{spec.market}: active params have type={kind!r}, which no family "
+            f"here can score. Expected one of {sorted(_REQUIRED_PARAMS)}.")
+    missing = [k for k in required if params.get(k) is None]
+    if missing:
+        raise ValueError(
+            f"{spec.market}: active params (type={kind!r}) are missing "
+            f"{missing}. Refusing to score a partial baseline -- an empty "
+            f"table or a null intercept evaluates to a garbage metric that "
+            f"the promotion gate would treat as a real number.")
+
+    return FitResult(
+        family=kind,
+        feature_names=tuple(params.get("features") or ()),
+        classes=tuple(params["classes"]) if kind == "multinomial_logistic" else None,
+        coef=params.get("coef"),
+        # log5 stores its single parameter as home_adv, not intercept.
+        intercept=(params["home_adv"] if kind == "log5"
+                   else params.get("intercept")),
+        sigma=params.get("sigma"),
+        table=params.get("table"),
+    )
 
 
 def fit(spec, cells: pd.DataFrame, *, form_window: str,  # noqa: ANN001

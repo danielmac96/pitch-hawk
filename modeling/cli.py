@@ -118,14 +118,15 @@ def cmd_baseline(args) -> int:
             print(f"[modeling] {market}: no active version, skipping")
             continue
         cells = features.load_cells(spec)
-        from modeling.fit import FitResult
+        from modeling.fit import from_params
         params = row["params"]
-        stand_in = FitResult(family=params["type"],
-                             feature_names=tuple(params.get("features", ())),
-                             classes=tuple(params.get("classes", ())) or None,
-                             coef=params.get("coef"),
-                             intercept=params.get("intercept"),
-                             sigma=params.get("sigma"))
+        try:
+            stand_in = from_params(params, spec)
+        except ValueError as exc:
+            # Skip loudly. Recording an uncomputable baseline is worse than
+            # having none: the gate would compare against it.
+            print(f"[modeling] {market}: SKIPPED -- {exc}")
+            continue
         window = params.get("form_window", spec.form_windows[0])
         folds = [validate.FoldResult(
             season, 0.0, float(cells[cells["season"] == season]["n"].sum()),

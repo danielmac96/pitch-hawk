@@ -51,7 +51,9 @@ def predict(spec, result: FitResult, cells: pd.DataFrame,  # noqa: ANN001
             form_window: str) -> np.ndarray:
     from modeling.fit import _design
 
-    X = _design(spec, cells, form_window)
+    # result.feature_names, not spec's: a stand-in rebuilt from stored params
+    # carries the order those coefficients were actually fit in.
+    X = _design(spec, cells, form_window, result.feature_names)
     logits = X @ np.asarray(result.coef).T + np.asarray(result.intercept)
     logits -= logits.max(axis=1, keepdims=True)
     exp = np.exp(logits)
@@ -76,7 +78,7 @@ def predict_linear(spec, result: FitResult, cells: pd.DataFrame,  # noqa: ANN001
                    form_window: str) -> np.ndarray:
     from modeling.fit import _design
 
-    X = _design(spec, cells, form_window)
+    X = _design(spec, cells, form_window, result.feature_names)
     return X @ np.asarray(result.coef) + float(result.intercept)
 
 

@@ -37,7 +37,13 @@ states as (
         pa.season,
         p.balls,
         p.strikes,
-        least(pa.pitch_count - p.pitch_number, {max_remaining}) as remaining
+        -- +1 because `remaining` is counted from BEFORE the pitch at this
+        -- count state is thrown. model.ts computes
+        -- `mean = ctx.pitch_count_pa + cell.mean`, where pitch_count_pa is
+        -- pitches already thrown; at 0-0 nothing has been thrown, so the 0-0
+        -- mean must equal the full PA length (~3.85, and v1 stores 3.882).
+        -- Dropping the +1 shifts every served O/U line down by one pitch.
+        least(pa.pitch_count - p.pitch_number + 1, {max_remaining}) as remaining
     from pa
     join pitches p
       on p.game_pk = pa.game_pk and p.at_bat_index = pa.at_bat_index
