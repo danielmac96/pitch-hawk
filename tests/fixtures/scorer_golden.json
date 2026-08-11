@@ -1,0 +1,2417 @@
+{
+  "generated_by": "scorer_golden_test.ts",
+  "cases": [
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.3702475008358651,
+        "ball": 0.31361675130105615,
+        "in_play": 0.3161357478630787
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.38498088900295413,
+        "ball": 0.2998234178230263,
+        "in_play": 0.3151956931740196
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.3998224852490474,
+        "ball": 0.28629440278206264,
+        "in_play": 0.31388311196888985
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 1,
+        "pitch_count_pa": 1,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.4921307634198505,
+        "ball": 0.2176187025458149,
+        "in_play": 0.29025053403433476
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 1,
+        "pitch_count_pa": 1,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5070749381157976,
+        "ball": 0.20616128505272519,
+        "in_play": 0.2867637768314771
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 1,
+        "pitch_count_pa": 1,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5218993926882193,
+        "ball": 0.19509270093128955,
+        "in_play": 0.28300790638049117
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 2,
+        "pitch_count_pa": 2,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.672786728868152,
+        "ball": 0.10944568329718811,
+        "in_play": 0.21776758783465983
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 2,
+        "pitch_count_pa": 2,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.6849617387671936,
+        "ball": 0.1024487814877444,
+        "in_play": 0.21258947974506207
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 2,
+        "pitch_count_pa": 2,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.6968060632740357,
+        "ball": 0.09582342041767836,
+        "in_play": 0.20737051630828587
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 1,
+        "strikes": 0,
+        "pitch_count_pa": 1,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.4098840554777673,
+        "ball": 0.25720523042716326,
+        "in_play": 0.33291071409506934
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 1,
+        "strikes": 0,
+        "pitch_count_pa": 1,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.4244931542327219,
+        "ball": 0.24491124484238358,
+        "in_play": 0.3305956009248945
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 1,
+        "strikes": 0,
+        "pitch_count_pa": 1,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.4391291809573565,
+        "ball": 0.23294296347593893,
+        "in_play": 0.3279278555667045
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 1,
+        "strikes": 1,
+        "pitch_count_pa": 2,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5294908363042435,
+        "ball": 0.17345459391135773,
+        "in_play": 0.2970545697843987
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 1,
+        "strikes": 1,
+        "pitch_count_pa": 2,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5437327959303816,
+        "ball": 0.16376917096106944,
+        "in_play": 0.292498033108549
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 1,
+        "strikes": 1,
+        "pitch_count_pa": 2,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5578034920312075,
+        "ball": 0.1544710554680654,
+        "in_play": 0.2877254525007272
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 1,
+        "strikes": 2,
+        "pitch_count_pa": 3,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.7000807617898583,
+        "ball": 0.0843686344147947,
+        "in_play": 0.21555060379534696
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 1,
+        "strikes": 2,
+        "pitch_count_pa": 3,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.7112206958511053,
+        "ball": 0.0788054993929593,
+        "in_play": 0.20997380475593536
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 1,
+        "strikes": 2,
+        "pitch_count_pa": 3,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.722040859925236,
+        "ball": 0.07355855310739304,
+        "in_play": 0.2044005869673708
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 2,
+        "strikes": 0,
+        "pitch_count_pa": 2,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.4469345528716424,
+        "ball": 0.207765942515885,
+        "in_play": 0.34529950461247266
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 2,
+        "strikes": 0,
+        "pitch_count_pa": 2,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.46120501330164876,
+        "ball": 0.19712590937473579,
+        "in_play": 0.34166907732361546
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 2,
+        "strikes": 0,
+        "pitch_count_pa": 2,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.4754372810998128,
+        "ball": 0.18683669981912265,
+        "in_play": 0.3377260190810645
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 2,
+        "strikes": 1,
+        "pitch_count_pa": 3,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5629550176168124,
+        "ball": 0.13661950516092267,
+        "in_play": 0.30042547722226487
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 2,
+        "strikes": 1,
+        "pitch_count_pa": 3,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5764224524928053,
+        "ball": 0.12861723413787032,
+        "in_play": 0.29496031336932427
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 2,
+        "strikes": 1,
+        "pitch_count_pa": 3,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5896870567826965,
+        "ball": 0.12097597642574835,
+        "in_play": 0.28933696679155513
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 2,
+        "strikes": 2,
+        "pitch_count_pa": 4,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.7235074555276302,
+        "ball": 0.06459331037275685,
+        "in_play": 0.21189923409961298
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 2,
+        "strikes": 2,
+        "pitch_count_pa": 4,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.7337205996540271,
+        "ball": 0.06022745441292702,
+        "in_play": 0.2060519459330458
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 2,
+        "strikes": 2,
+        "pitch_count_pa": 4,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.743631280175624,
+        "ball": 0.05612297811999233,
+        "in_play": 0.2002457417043837
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 3,
+        "strikes": 0,
+        "pitch_count_pa": 3,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.43383791611797307,
+        "ball": 0.23431608610593768,
+        "in_play": 0.3318459977760892
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 3,
+        "strikes": 0,
+        "pitch_count_pa": 3,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.4484240062038207,
+        "ball": 0.22268077134808517,
+        "in_play": 0.3288952224480941
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 3,
+        "strikes": 0,
+        "pitch_count_pa": 3,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.462993792433581,
+        "ball": 0.21139187674944132,
+        "in_play": 0.32561433081697755
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 3,
+        "strikes": 1,
+        "pitch_count_pa": 4,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5523930250536678,
+        "ball": 0.15575118949302885,
+        "in_play": 0.29185578545330326
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 3,
+        "strikes": 1,
+        "pitch_count_pa": 4,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5662971898179237,
+        "ball": 0.14680703109143442,
+        "in_play": 0.2868957790906419
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 3,
+        "strikes": 1,
+        "pitch_count_pa": 4,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.5800015502209633,
+        "ball": 0.13824545661687115,
+        "in_play": 0.2817529931621655
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 3,
+        "strikes": 2,
+        "pitch_count_pa": 5,
+        "pitcher": {
+          "zone_rate": 0.42
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.7175197696520195,
+        "ball": 0.07442563960184485,
+        "in_play": 0.20805459074613575
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 3,
+        "strikes": 2,
+        "pitch_count_pa": 5,
+        "pitcher": {
+          "zone_rate": 0.48
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.7281165679509352,
+        "ball": 0.06943986708074203,
+        "in_play": 0.20244356496832275
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "strike_foul",
+          "ball",
+          "in_play"
+        ],
+        "features": [
+          "balls",
+          "strikes",
+          "two_strikes",
+          "three_balls",
+          "pitcher_zone_delta",
+          "batter_chase_delta"
+        ],
+        "coef": [
+          [
+            0.1,
+            0.35,
+            0.2,
+            -0.05,
+            0.8,
+            -0.1
+          ],
+          [
+            -0.2,
+            -0.3,
+            -0.15,
+            0.4,
+            -0.6,
+            0.05
+          ],
+          [
+            0.05,
+            -0.02,
+            -0.03,
+            -0.01,
+            0.1,
+            0.15
+          ]
+        ],
+        "intercept": [
+          0.15,
+          -0.1,
+          -0.05
+        ]
+      },
+      "context": {
+        "balls": 3,
+        "strikes": 2,
+        "pitch_count_pa": 5,
+        "pitcher": {
+          "zone_rate": 0.54
+        },
+        "batter": {
+          "chase_rate": 0.28
+        },
+        "pitcher_info": null,
+        "batter_info": null
+      },
+      "expected": {
+        "strike_foul": 0.7383959486069448,
+        "ball": 0.06474653570060288,
+        "in_play": 0.19685751569245247
+      }
+    }
+  ]
+}

@@ -46,3 +46,7 @@ verify-gate-*.log
 
 # supabase CLI scratch (written by `supabase functions deploy`)
 supabase/.temp/
+
+# Local feature cache for the modeling workbench. Rebuilding costs ~50k R2
+# reads, so this is deliberately kept on disk between runs.
+.cache/

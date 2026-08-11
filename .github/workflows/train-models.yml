@@ -1,24 +1,24 @@
 name: Train models
 
-# Fits v1 models from the backfilled dataset and writes them to model_params
-# (is_active=true). Runs on GitHub's runners, which can reach Supabase.
+# Builds feature cells from the R2 Parquet warehouse and runs the offline
+# workbench (modeling/) over all five markets, recording every run to
+# model_runs.
 #
 # Setup (once): add repository secrets
 #   SUPABASE_URL   https://<ref>.supabase.co
-#   SUPABASE_KEY   service_role key (Project Settings → API)  [kept secret]
+#   SUPABASE_KEY   service_role key (Project Settings -> API)  [kept secret]
+#   R2_ACCOUNT_ID / R2_ACCESS_KEY_ID / R2_SECRET_ACCESS_KEY / R2_BUCKET
 #
-# Run manually after the backfill has data, or on the weekly schedule below.
+# CI RECORDS, HUMANS PROMOTE. There is deliberately no --promote below: a run
+# here writes a model_runs row and nothing else, so what production serves
+# never changes without someone running
+#   python -m modeling train <market> --promote
+# at a terminal and reading the gate's verdict.
+#
+# workflow_dispatch only -- no schedule. `build` scans the whole corpus
+# (~2,000 Parquet files per dataset), so it costs real R2 Class B operations
+# and should be an intentional act.
 
-# DISABLED 2026-08-02 (Phase 3). The schedule is removed, not commented out
-# inside an active `on:`, so there is no chance of it firing. scripts/
-# train_models.py now exits 2 with an explanation: the train_*_cells() RPCs it
-# reads were dropped in 20260802000002 because the hot-window swap cut pitches
-# and at_bats to 35 days. workflow_dispatch is kept so the job can still be
-# invoked deliberately once the deferred model layer re-points it at DuckDB
-# over R2 -- until then it will exit 2 by design.
-#
-#  schedule:
-#    - cron: "0 12 * * 1"   # Mondays 12:00 UTC
 on:
   workflow_dispatch:
 
@@ -37,9 +37,19 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-train.txt
-      - name: Train
+          pip install -r requirements-modeling.txt
+      - name: Build features
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: python -m modeling build
+      - name: Train (records runs, does not promote)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-        run: python scripts/train_models.py
+        run: |
+          for m in pitch_result ab_result pitch_speed_ou ab_pitches_ou game_moneyline; do
+            python -m modeling train "$m"
+          done

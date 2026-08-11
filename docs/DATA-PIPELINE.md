@@ -120,7 +120,7 @@ flowchart TB
 
     R2 -.-> DUCK -.-> AGG -.-> API
     VER -.gate.-> PRUNE -.-> PG
-    DUCK -.->|training cells| TRAIN["scripts/train_models.py"]
+    DUCK -.->|feature cells| TRAIN["python -m modeling"]
     TRAIN -.-> PG
 
     style TODO stroke-dasharray: 5 5

@@ -316,8 +316,10 @@ the cron secret + functions URL in `app_secrets`, deploys all six functions
 Details and the manual CLI alternative: [`docs/DEPLOY.md`](docs/DEPLOY.md).
 
 Train models once the backfill has data (or use the **Train models** workflow,
-weekly by default): `python scripts/train_models.py`. Registry operations
-(activate/rollback/quality gate): [`docs/MODELS.md`](docs/MODELS.md).
+**workflow_dispatch** only): `python -m modeling build` then
+`python -m modeling train <market>`. Promotion is a separate, deliberate step
+(`--promote`) gated on out-of-sample metrics. Registry operations and the
+validation method: [`docs/MODELS.md`](docs/MODELS.md).
 
 ### Vercel (frontend)
 
@@ -440,7 +442,9 @@ directory holds everything:
 |---|---|
 | `bash scripts/build_frontend.sh` | copy `frontend/` → `dist/`, substitute the API URL into `config.js` (Vercel build command) |
 | `bash scripts/provision.sh` | one-command Supabase provisioning: link, push migrations, store secrets, deploy functions, seed backfill (`SEED_DEMO=1` loads the demo seed) |
-| `python scripts/train_models.py` | fit v1 models from the `train_*_cells` RPCs → `model_params`; `--dry-run` (never activate), `--force` (skip quality gate), `--emit <dir>` (write JSON artifacts instead of DB) |
+| `python -m modeling build` | build feature cells from the R2 Parquet warehouse into `.cache/` (the only command that touches R2) |
+| `python -m modeling train <market>` | walk-forward sweep + 2026 holdout → records a row in `model_runs`; add `--promote` to gate on out-of-sample metrics and activate. No `--force` |
+| `python -m modeling list \| status \| show \| activate \| rollback` | registry operations; `status` compares the registry against what live scoring stamps |
 | `python scripts/backfill.py [start end]` | local Statcast backfill via pybaseball, weekly chunks |
 | `python scripts/backfill_phase2.py` | populate rolling stats, matchup history, player info (`--skip-*` flags) |
 | `python scripts/verify_feeds.py` | smoke-test the MLB Stats API feed |
