@@ -10,7 +10,9 @@
 //
 // tests/modeling/test_parity.py asserts the Python reference scorer matches
 // these outputs to 1e-9. Editing model.ts without regenerating turns CI red,
-// which is the point.
+// which is the point. Probabilities are compared to GOLDEN_TOL rather than
+// bit-for-bit -- see the note on that constant for why exact equality was the
+// wrong contract.
 //
 // Two things the plan's sketch of this file got wrong about the real model.ts,
 // both corrected here because the TypeScript is the production truth:
@@ -69,6 +71,59 @@ for (const balls of [0, 1, 2, 3]) {
 // Resolved from this file, not the process cwd, so the check behaves the same
 // from the repo root and from supabase/functions/.
 const GOLDEN = new URL("../../../tests/fixtures/scorer_golden.json", import.meta.url);
+
+// These fixtures pin scoring *behaviour*, not the last bit of a double.
+// ECMAScript does not require Math.exp() to be correctly rounded, and V8 has
+// changed its result by 1 ULP between versions: fixtures generated under one
+// Deno and verified under another drifted on 4 of these 36 cases by ~5.5e-17,
+// all in softmax's `ball` class. CI tracks `deno-version: v2.x` -- a moving
+// target -- so an exact comparison goes red on an engine bump that changed no
+// scoring code at all, and red for any contributor whose Deno differs from
+// whoever last regenerated.
+//
+// So: inputs are compared exactly, probabilities within GOLDEN_TOL. 1e-12 is
+// three orders tighter than the 1e-9 tests/modeling/test_parity.py pins the
+// Python scorer to -- any real scoring change still fails here first -- and
+// four orders looser than the ~1e-16 engine noise this exists to ignore.
+const GOLDEN_TOL = 1e-12;
+
+interface GoldenCase {
+  params: unknown;
+  context: unknown;
+  expected: Record<string, number>;
+}
+
+function differences(got: { cases: GoldenCase[] }, want: { cases: GoldenCase[] }): string[] {
+  const out: string[] = [];
+  if (got.cases.length !== want.cases.length) {
+    return [`case count: generated ${got.cases.length}, committed ${want.cases.length}`];
+  }
+  for (let i = 0; i < got.cases.length; i++) {
+    const g = got.cases[i], w = want.cases[i];
+    // The inputs are the contract's identity, so they must match exactly: a
+    // changed case grid or context is a changed contract, not numeric drift.
+    for (const field of ["params", "context"] as const) {
+      const a = JSON.stringify(g[field]), b = JSON.stringify(w[field]);
+      if (a !== b) out.push(`case ${i} ${field}:\n      generated ${a}\n      committed ${b}`);
+    }
+    const gk = Object.keys(g.expected), wk = Object.keys(w.expected);
+    if (JSON.stringify(gk) !== JSON.stringify(wk)) {
+      out.push(`case ${i} classes: generated [${gk}], committed [${wk}]`);
+      continue;
+    }
+    for (const k of gk) {
+      // Negated so a NaN on either side is a failure rather than a pass.
+      const d = Math.abs(g.expected[k] - w.expected[k]);
+      if (!(d <= GOLDEN_TOL)) {
+        out.push(
+          `case ${i} ${k}: generated ${g.expected[k]}, committed ${w.expected[k]} ` +
+            `(|delta| ${d.toExponential(3)} > ${GOLDEN_TOL})`,
+        );
+      }
+    }
+  }
+  return out;
+}
 const payload = JSON.stringify(
   { generated_by: "scorer_golden_test.ts", cases },
   null,
@@ -109,9 +164,13 @@ Deno.test("golden fixtures match model.ts", () => {
   // CRLF checkout must not read as a scoring change.
   const got = JSON.parse(payload);
   const want = JSON.parse(committed);
-  if (JSON.stringify(got) !== JSON.stringify(want)) {
+  const problems = differences(got, want);
+  if (problems.length > 0) {
+    const shown = problems.slice(0, 10).map((p) => `  - ${p}`).join("\n");
+    const rest = problems.length > 10 ? `\n  ... and ${problems.length - 10} more` : "";
     throw new Error(
-      "model.ts scoring no longer matches tests/fixtures/scorer_golden.json.\n" +
+      `model.ts scoring no longer matches tests/fixtures/scorer_golden.json ` +
+        `(beyond the ${GOLDEN_TOL} tolerance):\n${shown}${rest}\n` +
         "If the change to model.ts was intended, regenerate the fixtures:\n" +
         "  UPDATE_GOLDEN=1 deno test --allow-write --allow-read --allow-env " +
         "supabase/functions/tests/scorer_golden_test.ts\n" +
