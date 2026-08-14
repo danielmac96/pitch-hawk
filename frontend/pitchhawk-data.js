@@ -24,6 +24,20 @@ window.PITCHHAWK = (function () {
   };
   const calcEdge = (model, implied) => +(model - implied).toFixed(4);
 
+  // ── MLB calendar dates ────────────────────────────────────────────────
+  // The server keys every prediction off `games.official_date`, which is an
+  // America/New_York date (see _shared/mlb.ts `mlbToday`). The browser's own
+  // toISOString() is UTC, and the two disagree for the whole evening: at
+  // 21:00 ET the UTC date has already rolled over, so a UTC-derived "today"
+  // asks for tomorrow's slate and gets nothing back — during exactly the
+  // hours games are being played. Everything that talks dates to the API
+  // goes through here instead.
+  //
+  // en-CA formats as YYYY-MM-DD, matching the server helper it mirrors.
+  const ET_DATE = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York" });
+  const mlbDate = (offsetDays = 0) =>
+    ET_DATE.format(new Date(Date.now() + offsetDays * 864e5));
+
   // ── sources ───────────────────────────────────────────────────────────
   const SOURCES = {
     draftkings: { key: "draftkings", name: "DraftKings", short: "DK",   type: "book",
@@ -729,6 +743,7 @@ window.PITCHHAWK = (function () {
     SOURCES, MARKETS, OUTCOME_LABEL, RECENT: [], RECORD: null,
     games, edges: [], buildEdges,
     tick, impliedFromAmerican, americanFromImplied, calcEdge,
+    mlbDate,
     loadLive, loadBoard, loadFeed, loadPitches,
     buildGames, enrichUpcoming, enrichPitchPredictions,
   };

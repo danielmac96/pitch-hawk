@@ -670,7 +670,17 @@ function summarize(rows: any[]): Record<string, unknown> {
 // ── /api/coverage ──────────────────────────────────────────────────────────
 async function coverage(url: URL): Promise<Response> {
   const { from, to } = windowParams(url, 60);
-  const { data, error } = await svc().rpc("prediction_coverage", { p_from: from, p_to: to });
+  const db = svc();
+  // Two different questions, and the second is the one that used to be
+  // unanswerable. prediction_coverage() asks "did this game get all six
+  // markets at least once" — a game scored in the 3rd inning and never again
+  // still passes it. prediction_coverage_pitch() asks "did every pitch thrown
+  // get a velocity and a result call", which is what actually broke while the
+  // per-game number read as healthy. See 20260814000001_pitch_coverage.sql.
+  const [{ data, error }, pitchCov] = await Promise.all([
+    db.rpc("prediction_coverage", { p_from: from, p_to: to }),
+    db.rpc("prediction_coverage_pitch", { p_from: from, p_to: to }),
+  ]);
   if (error) return json({ error: error.message }, 500);
   const days = (data ?? []).map((d: any) => ({
     date: d.official_date,
@@ -683,8 +693,41 @@ async function coverage(url: URL): Promise<Response> {
   }));
   const sum = (k: string) => days.reduce((a: number, d: any) => a + (d[k] ?? 0), 0);
   const games = sum("games");
+
+  // Non-fatal: a failure here must not take down the per-game numbers, which
+  // are what the QA dashboard has always read.
+  const pitchDays = (pitchCov.error ? [] : pitchCov.data ?? []).map((d: any) => ({
+    date: d.official_date,
+    games: Number(d.games),
+    pitches_thrown: Number(d.pitches_thrown),
+    velo_called: Number(d.velo_called),
+    result_called: Number(d.result_called),
+    both_called: Number(d.both_called),
+    uncalled: Number(d.uncalled),
+    both_rate: d.both_rate != null ? Number(d.both_rate) : null,
+  }));
+  const pSum = (k: string) => pitchDays.reduce((a: number, d: any) => a + (d[k] ?? 0), 0);
+  const thrown = pSum("pitches_thrown");
+
   return json({
     from, to, markets_expected: ALL_MARKETS.length, days,
+    // The window is clamped server-side to the 21-day raw-prediction
+    // retention horizon: past it the calls are pruned and every day would
+    // read as a total failure rather than as unmeasurable.
+    per_pitch: {
+      days: pitchDays,
+      error: pitchCov.error ? pitchCov.error.message : null,
+      totals: {
+        pitches_thrown: thrown,
+        velo_called: pSum("velo_called"),
+        result_called: pSum("result_called"),
+        both_called: pSum("both_called"),
+        uncalled: pSum("uncalled"),
+        // The headline: fraction of pitches actually thrown carrying both a
+        // velocity and a result call.
+        both_rate: thrown ? Math.round((pSum("both_called") / thrown) * 1000) / 1000 : null,
+      },
+    },
     totals: {
       games,
       full: sum("full"),
