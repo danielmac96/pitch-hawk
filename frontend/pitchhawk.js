@@ -113,6 +113,12 @@
       this.state = {
         view: "home", feedGame: null,
         focusGame: null, dfGame: "all", mkt: "all", openLog: null,
+        // Which slate the graded log is showing, as an America/New_York
+        // date. null means today; the Yesterday chip sets the prior date.
+        dfDate: null,
+        // How many graded-log rows are revealed. Bumped by the "show more"
+        // control so a full slate is reachable rather than truncated.
+        dfShow: 60,
         liveGames: {}, liveSources: { draftkings: true, fanduel: true, kalshi: true, polymarket: true },
         edgeThreshold: 0.03,
         dark: initialDark(), t: 0,
@@ -121,7 +127,13 @@
         scout: { seed: null, ctx: null, profile: null, fatigue: null, matchup: null, loaded: false },
         // Durable prediction history from /api/feed.
         feed: { rows: [], players: [], summary: null, loaded: false, err: false },
-        feedF: { days: 30, market: "all", team: "", pitcher_id: "", batter_id: "" },
+        // `phase` is a real filter, not cosmetic: game_predictions holds a
+        // pregame row and a live row per (game, market), so leaving it open
+        // shows every game twice — the call made before first pitch and the
+        // one it finished on.
+        feedF: { days: 30, market: "all", phase: "all", team: "", pitcher_id: "", batter_id: "" },
+        // How many history rows are revealed, raised by "show more".
+        feedShow: 120,
         // Per-pitch graded predictions for today, from /api/pitches. This
         // replaced a session-accumulated array: the server has been making and
         // grading these all along, so the table is now identical for every
@@ -354,16 +366,28 @@
         case "goLive": return this.setState({ view: "live" });
         case "feedDays": {
           this.state.feedF.days = Number(arg) || 30;
+          this.state.feedShow = 120;
           this.syncFeed();
           return this.render();
         }
         case "feedMarket": {
           this.state.feedF.market = arg;
+          this.state.feedShow = 120;
           this.syncFeed();
           return this.render();
         }
+        case "feedPhase": {
+          this.state.feedF.phase = arg;
+          this.state.feedShow = 120;
+          this.syncFeed();
+          return this.render();
+        }
+        case "feedMore": return this.setState({ feedShow: (this.state.feedShow || 120) + 240 });
         case "feedClear": {
-          this.state.feedF = { days: 30, market: "all", team: "", pitcher_id: "", batter_id: "" };
+          this.state.feedF = {
+            days: 30, market: "all", phase: "all", team: "", pitcher_id: "", batter_id: "",
+          };
+          this.state.feedShow = 120;
           this.syncFeed();
           return this.render();
         }
@@ -380,7 +404,7 @@
         case "feedGame": return this.setState({ feedGame: Number(arg) });
         case "focusGame": return this.setState({ focusGame: Number(arg) });
         case "dfGame": {
-          this.setState({ dfGame: arg === "all" ? "all" : Number(arg) });
+          this.setState({ dfGame: arg === "all" ? "all" : Number(arg), dfShow: 60 });
           // Scope is applied server-side, so the chip needs a refetch. Render
           // immediately off the old rows (filtered by the guard in dfRows) and
           // again when the new page lands.
@@ -389,12 +413,30 @@
             .catch(() => {});
           return;
         }
+        case "dfDate": {
+          // "today" -> null so the request omits `date` and the server applies
+          // its own America/New_York today, which is the authority.
+          this.setState({ dfDate: arg === "today" ? null : arg, dfShow: 60 });
+          this.loadPitchFeed()
+            .then((changed) => { if (changed) this.render(); })
+            .catch(() => {});
+          return;
+        }
+        case "dfMore": {
+          // Revealing more can outrun what has been fetched, so this pulls the
+          // next page in behind the reveal rather than showing a short table.
+          this.setState({ dfShow: this.state.dfShow + 120 });
+          this.loadPitchFeed()
+            .then((changed) => { if (changed) this.render(); })
+            .catch(() => {});
+          return;
+        }
         case "mkt": {
-          // The market is now a server-side filter too, so narrowing to one
-          // refills the page with 300 rows of it rather than filtering a mixed
+          // The market is a server-side filter too, so narrowing to one
+          // refills the pages with rows of it rather than filtering a mixed
           // page down. The client-side filter in the renderer still applies
           // and covers the tick before this lands.
-          this.setState({ mkt: arg });
+          this.setState({ mkt: arg, dfShow: 60 });
           this.loadPitchFeed()
             .then((changed) => { if (changed) this.render(); })
             .catch(() => {});
@@ -1170,22 +1212,89 @@
     // without asking for the rows, and /api/pitches is CDN-cached for 15s
     // against an ~8s poll, so roughly half of these never reach the origin.
     async loadPitchFeed() {
+      // A full slate is several thousand prediction rows and the endpoint
+      // pages at MAX_LIMIT=1000, so one request is never the whole day.
+      //
+      // Paging is demand-driven, not exhaustive. This runs on the 8s poll as
+      // well as on every chip, so walking a whole slate to the end each time
+      // would put a dozen requests on the wire every 8 seconds. Instead it
+      // fetches until it holds more display rows than the table is currently
+      // revealing (`dfShow`, which the "show more" control raises), plus one
+      // page of headroom so the next reveal is instant. Rows come back newest
+      // first, so page one is always the part a live viewer is looking at.
+      //
+      // PAGE_CAP is a backstop, not an expected limit — it stops a server-side
+      // cursor bug from spinning the browser forever.
+      const PAGE_LIMIT = 1000;
+      const PAGE_CAP = 12;
+      const want = Math.max(Number(this.state.dfShow) || 60, 60) + PAGE_LIMIT;
+      const date = this.state.dfDate;
+      const seq = (this._pitchSeq = (this._pitchSeq || 0) + 1);
       try {
         // Only the two per-pitch markets render here; asking for the rest
         // would ship at-bat and game-level rows the mapper throws away.
         const wanted = { VELO: "pitch_speed_ou", CLASS: "pitch_result" };
-        const res = await PH.loadPitches(API_BASE, {
+        const params = {
           game_pk: this.state.dfGame === "all" ? null : this.state.dfGame,
           market: wanted[this.state.mkt] || "pitch_speed_ou,pitch_result",
-          status: "graded",
-          limit: 300,
-        });
-        this.state.pitchFeed = {
-          rows: (res.rows || []).map((r) => this.dfRow(r)).filter(Boolean),
-          summary: res.summary || null, loaded: true, err: false,
+          limit: PAGE_LIMIT,
         };
+        // Graded only, deliberately. The velo mapper needs an actual to
+        // render a row at all and dfStats averages the error across them, so
+        // ungraded rows would cost page budget and skew the KPIs without
+        // showing anything. The lag they represent is small: settle is chained
+        // off live-poll whenever a game advances, so a call is graded within
+        // ~30s rather than on the old 10-minute timer.
+        params.status = "graded";
+        // Omitted for today so the server applies its own America/New_York
+        // date, which is the authority on which slate "today" is.
+        if (date) params.date = date;
+
+        let cursor = 0;
+        let rows = [];
+        let summary = null;
+        for (let page = 0; page < PAGE_CAP; page += 1) {
+          const res = await PH.loadPitches(
+            API_BASE, Object.assign({}, params, cursor ? { cursor } : {}),
+          );
+          // A newer request started while this one was in flight (the chips
+          // refetch, and the poll runs every 8s). Its pages belong to a
+          // different filter set, so drop ours rather than interleaving.
+          if (seq !== this._pitchSeq) return false;
+          // The endpoint's summary counts the page, not the day, so the
+          // tallies accumulate across pages. `games` is a property of the
+          // slate and is identical on every page.
+          const ps = res.summary || {};
+          summary = summary
+            ? {
+              n: summary.n + (ps.n || 0),
+              graded: summary.graded + (ps.graded || 0),
+              wins: summary.wins + (ps.wins || 0),
+              losses: summary.losses + (ps.losses || 0),
+              pushes: summary.pushes + (ps.pushes || 0),
+              games: summary.games,
+              // False once paging stops early, which it does by design.
+              complete: false,
+            }
+            : {
+              n: ps.n || 0, graded: ps.graded || 0, wins: ps.wins || 0,
+              losses: ps.losses || 0, pushes: ps.pushes || 0,
+              games: ps.games || 0, complete: true,
+            };
+          rows = rows.concat((res.rows || []).map((r) => this.dfRow(r)).filter(Boolean));
+          // Paint the first page immediately; the rest stream in behind it.
+          if (page === 0) {
+            this.state.pitchFeed = { rows, summary, loaded: true, err: false };
+            this.render();
+          }
+          if (!res.next_cursor) { summary.complete = true; break; }
+          if (rows.length >= want) { summary.complete = false; break; }
+          cursor = res.next_cursor;
+        }
+        this.state.pitchFeed = { rows, summary, loaded: true, err: false };
         return true;
       } catch (_e) {
+        if (seq !== this._pitchSeq) return false;
         // Keep whatever we had and flag it, so the panel says "couldn't reach"
         // rather than implying the model made no predictions.
         this.state.pitchFeed = Object.assign({}, this.state.pitchFeed, {
@@ -1266,12 +1375,11 @@
 
     // ══ DATA FEED (1e mobile · 1d desktop) ═══════════════════════════════
     // ══ WAREHOUSE SCOUTING (durable — survives a reload) ══════════════════
-    // The graded log above is session-only and stays that way: nothing stores
-    // per-pitch prediction history, and the holdout store that would is
-    // explicitly deferred. These panels instead come from the Phase 4 nightly
-    // aggregates in R2, so the Data Feed has real content on a cold load for
-    // the first time. Everything here degrades to a note — a warehouse outage
-    // must never blank the live board.
+    // These panels come from the Phase 4 nightly aggregates in R2 and sit
+    // alongside the graded log, which has been server-backed since 2026-08-08
+    // (/api/pitches) and is itself durable — the "session-only" caveat that
+    // used to live here no longer applies. Everything here degrades to a note:
+    // a warehouse outage must never blank the live board.
     scoutSeed() {
       try {
         return JSON.parse(window.localStorage.getItem(SCOUT_KEY) || "null");
@@ -1424,6 +1532,8 @@
 
       const dayChips = [[1, "Today"], [7, "7 days"], [30, "30 days"]]
         .map(([d, l]) => chip("feedDays", d, l, Number(f.days) === d)).join("");
+      const phaseChips = [["all", "Both"], ["pregame", "Pregame"], ["live", "Live"]]
+        .map(([k, l]) => chip("feedPhase", k, l, (f.phase || "all") === k)).join("");
       const mktChips = [["all", "All markets"], ["game_moneyline", "Moneyline"], ["game_total", "Total"],
         ["pitch_speed_ou", "Pitch velo"], ["pitch_result", "Pitch result"],
         ["ab_result", "AB result"], ["ab_pitches_ou", "AB pitches"]]
@@ -1432,7 +1542,8 @@
       const input = (key, ph, val) =>
         `<input data-feedfilter="${key}" value="${esc(val || "")}" placeholder="${esc(ph)}" style="border:1px solid ${C.bd};background:${C.panel};color:${C.txt};font-family:inherit;font-size:11.5px;padding:5px 9px;border-radius:8px;width:${mobile ? 96 : 118}px;" />`;
 
-      const anyFilter = f.market !== "all" || f.team || f.pitcher_id || f.batter_id || Number(f.days) !== 30;
+      const anyFilter = f.market !== "all" || (f.phase || "all") !== "all" || f.team
+        || f.pitcher_id || f.batter_id || Number(f.days) !== 30;
 
       const filters = `<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px;">
         ${dayChips}
@@ -1442,7 +1553,12 @@
         ${input("batter_id", "Batter id", f.batter_id)}
         ${anyFilter ? chip("feedClear", "", "Clear", false) : ""}
       </div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">${mktChips}</div>`;
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">
+        ${mktChips}
+        <span style="width:1px;height:16px;background:${C.bd2};"></span>
+        <span style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">Phase</span>
+        ${phaseChips}
+      </div>`;
 
       let body;
       if (!fd.loaded) {
@@ -1459,7 +1575,8 @@
         const tone = (r) => r.result === "win" ? this.GRD.good.fg
           : r.result === "loss" ? this.GRD.bad.fg
           : r.result ? C.dim : C.faint;
-        const rows = fd.rows.slice(0, 120).map((r) => {
+        const feedShown = Math.max(Number(this.state.feedShow) || 120, 120);
+        const rows = fd.rows.slice(0, feedShown).map((r) => {
           const meta = PH.MARKETS[r.market] || { short: r.market };
           const game = `${r.away_abbr || "AWY"} @ ${r.home_abbr || "HOM"}`;
           const call = r.recommendation
@@ -1483,8 +1600,8 @@
             <span style="text-align:center;font-weight:700;color:${tone(r)};">${esc(res)}</span>
           </div>`;
         }).join("");
-        const more = fd.rows.length > 120
-          ? `<div style="padding:8px 13px;border-top:1px solid ${C.bd};font-size:11.5px;color:${C.faint};">Showing 120 of ${fd.rows.length} rows — narrow the filters to see the rest.</div>`
+        const more = fd.rows.length > feedShown
+          ? `<div style="padding:8px 13px;border-top:1px solid ${C.bd};font-size:11.5px;color:${C.faint};display:flex;align-items:center;gap:10px;flex-wrap:wrap;">Showing ${feedShown} of ${fd.rows.length} rows${chip("feedMore", "", "Show 240 more", false)}</div>`
           : "";
         body = head + rows + more;
       }
@@ -1580,12 +1697,34 @@
         const on = mkt === k;
         return `<button data-act="mkt" data-arg="${k}" style="border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${on ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;">${label}</button>`;
       }).join("");
+      // Which slate the log is showing. `dfDate` is an America/New_York date
+      // so it lines up with games.official_date, which is what the server
+      // filters on — a UTC-derived date is a different day all evening.
+      const today = PH.mlbDate(0);
+      const yesterday = PH.mlbDate(-1);
+      const dfDate = this.state.dfDate;
+      const dayChips = [["today", "Today", today], ["yesterday", "Yesterday", yesterday]]
+        .map(([k, label, d]) => {
+          const on = k === "today" ? dfDate == null : dfDate === d;
+          const arg = k === "today" ? "today" : d;
+          return `<button data-act="dfDate" data-arg="${esc(arg)}" style="border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${on ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;">${label}</button>`;
+        }).join("");
+
+      // Reveal in pages rather than truncating at a fixed cap. A full slate
+      // runs to thousands of rows and the old hard slice (60 desktop / 40
+      // mobile) put yesterday's out of reach entirely.
+      const shown = Math.max(Number(this.state.dfShow) || 60, 60);
+      const moreCount = Math.max(logRows.length - shown, 0);
+      const moreBtn = moreCount
+        ? `<div style="padding:11px 14px;border-top:1px solid ${C.row};text-align:center;"><button data-act="dfMore" style="border:1px solid ${C.bd};background:${C.chip};color:${C.dim};font-family:inherit;font-weight:600;font-size:11.5px;padding:6px 14px;border-radius:999px;cursor:pointer;">Show 120 more · ${moreCount} remaining</button></div>`
+        : "";
+
       const mktTag = (m) => m === "VELO"
         ? `background:rgba(106,162,255,.16);color:#6aa2ff;`
         : `background:rgba(164,123,255,.16);color:#a37bff;`;
 
       const logCols = "66px 92px minmax(0,1.25fr) 44px minmax(0,1.15fr) minmax(0,1.35fr)";
-      const desktopLog = logRows.slice(0, 60).map((r) => {
+      const desktopLog = logRows.slice(0, shown).map((r) => {
         const gr = this.grd(r.band);
         return `<div style="display:grid;grid-template-columns:${logCols};gap:10px;align-items:center;padding:8px 14px;border-bottom:1px solid ${C.row};font-size:12.5px;">
           <span style="font-family:'IBM Plex Mono',monospace;color:${C.faint};">${esc(this.fmtTime(r.t))}</span>
@@ -1600,7 +1739,7 @@
         </div>`;
       }).join("");
 
-      const mobileLog = logRows.slice(0, 40).map((r) => {
+      const mobileLog = logRows.slice(0, shown).map((r) => {
         const gr = this.grd(r.band);
         const open = this.state.openLog === r.id;
         const kv = (k, v) => `<div style="display:flex;justify-content:space-between;gap:10px;"><span style="color:${C.faint};">${k}</span><span>${esc(v)}</span></div>`;
@@ -1622,7 +1761,9 @@
         </div>`;
       }).join("");
 
-      const logEmpty = `<div style="padding:16px 14px;font-size:12.5px;color:${C.faint};font-style:italic;line-height:1.55;">No pitches graded in this tab yet — a row lands as soon as one arrives with a prediction attached. The stored 30-day history above is unaffected by a reload.</div>`;
+      const logEmpty = `<div style="padding:16px 14px;font-size:12.5px;color:${C.faint};font-style:italic;line-height:1.55;">${dfDate
+        ? `No per-pitch predictions stored for ${esc(dfDate)}. Raw predictions are kept for 21 days; older slates survive only as the game-level history above.`
+        : "No pitches predicted yet today — a row lands as soon as one arrives. Switch to Yesterday for the last completed slate."}</div>`;
 
       // ── analytics modules (computed from the session log) ───────────────
       const modCard = (title, body, note, right) => `<div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};padding:15px 16px;">
@@ -1814,7 +1955,8 @@
             <span style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">Graded log</span>
             <span style="font-size:11px;color:${C.faint};">tap a row for raw values</span>
           </div>
-          <div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;margin-bottom:16px;">${mobileLog || logEmpty}</div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px;">${dayChips}</div>
+          <div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;margin-bottom:16px;">${mobileLog || logEmpty}${moreBtn}</div>
 
           <div style="display:flex;flex-direction:column;gap:12px;">${calib}${veloTrend}${confCard}</div>
         </div>`;
@@ -1824,7 +1966,7 @@
         <div style="display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px;">
           <h1 style="margin:0;font-size:27px;font-weight:800;letter-spacing:-.02em;">${esc(COPY.dataTitle)}</h1>
           <p style="margin:0;font-size:13.5px;color:${C.mut};">${esc(COPY.dataSub)}</p>
-          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">30-day stored history · today graded per pitch</span>
+          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">30-day stored history · today and yesterday graded per pitch</span>
         </div>
 
         ${this.feedHtml(true)}
@@ -1843,6 +1985,9 @@
         <div style="display:grid;grid-template-columns:${this.narrow() ? "minmax(0,1fr)" : "minmax(0,1fr) 400px"};gap:16px;align-items:start;">
           <div style="min-width:0;">
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
+              <span style="font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};margin-right:2px;">Day</span>
+              ${dayChips}
+              <span style="width:1px;height:16px;background:${C.bd2};"></span>
               <span style="font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};margin-right:2px;">Market</span>
               ${mktChips}
               <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">${logRows.length} rows</span>
@@ -1852,6 +1997,7 @@
                 <span>Time</span><span>Game</span><span>Matchup</span><span>Cnt</span><span>Prediction</span><span>Actual · error</span>
               </div>
               ${desktopLog || logEmpty}
+              ${moreBtn}
               ${desktopLog ? `<div style="padding:11px 14px;font-size:11.5px;color:${C.faint};line-height:1.5;">Streaming — a row lands the moment a pitch arrives with a prediction attached. Errors are signed: called minus actual. Shading grades the call — green within 1.5 mph, amber ≤3, red beyond; class calls green when right, red when wrong.</div>` : ""}
             </div>
           </div>
@@ -1898,18 +2044,38 @@
       const sig = JSON.stringify(f);
       if (!force && sig === this._feedSig) return;
       this._feedSig = sig;
-      const to = new Date();
-      const from = new Date(to.getTime() - (Number(f.days) - 1) * 864e5);
-      const iso = (d) => d.toISOString().slice(0, 10);
+      // The window is expressed in America/New_York because the server filters
+      // on games.official_date, which is an Eastern date. Deriving it from
+      // toISOString() (UTC) asked for tomorrow's slate from 20:00 ET onward —
+      // so the "Today" chip went blank during exactly the hours games are
+      // being played, and every window was shifted a day forward.
+      const to = PH.mlbDate(0);
+      const from = PH.mlbDate(-(Number(f.days) - 1));
+      const PAGE_LIMIT = 1000;
+      const PAGE_CAP = 8;
       try {
-        const res = await PH.loadFeed(API_BASE, {
-          from: iso(from), to: iso(to), limit: 300,
-          market: f.market, team: f.team,
-          pitcher_id: f.pitcher_id, batter_id: f.batter_id,
-        });
+        // `next_cursor` was previously returned and ignored, which capped the
+        // panel at one page. A 30-day window runs to thousands of rows.
+        let cursor = 0;
+        let games = [];
+        let players = [];
+        let summary = null;
+        for (let page = 0; page < PAGE_CAP; page += 1) {
+          const res = await PH.loadFeed(API_BASE, Object.assign({
+            from, to, limit: PAGE_LIMIT,
+            market: f.market, phase: f.phase, team: f.team,
+            pitcher_id: f.pitcher_id, batter_id: f.batter_id,
+          }, cursor ? { cursor } : {}));
+          if (summary == null) summary = res.summary || null;
+          // Player rollups are not cursor-paged — they come back whole on the
+          // first request and repeat identically after it.
+          if (page === 0) players = res.players || [];
+          games = games.concat(res.games || []);
+          if (!res.next_cursor) break;
+          cursor = res.next_cursor;
+        }
         this.state.feed = {
-          rows: res.games || [], players: res.players || [],
-          summary: res.summary || null, loaded: true, err: false,
+          rows: games, players, summary, loaded: true, err: false,
         };
       } catch (_e) {
         // Keep whatever we had; flag it so the panel says "couldn't reach"

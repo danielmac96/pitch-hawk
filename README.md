@@ -379,7 +379,9 @@ Key RPCs: `refresh_*_rolling_stats`, `refresh_matchup_history` (daily),
 `train_*_cells` (weighted training aggregates), `pick_record` (record page
 aggregate), `activate_model` / `rollback_model` (registry),
 `prune_ingest_runs` / `prune_odds` (retention), `call_edge_function`
-(pg_cron dispatcher).
+(pg_cron dispatcher), `prediction_coverage` (per-game market coverage) and
+`prediction_coverage_pitch` (per-pitch velocity/result coverage — the per-game
+number cannot see a game that was scored once and then stopped).
 
 ## Application Workflow
 
@@ -391,18 +393,30 @@ End to end for one live game:
    play-by-play, upserts `pitches`/`at_bats`, refreshes `live_state` (with the
    current-PA pitch list cached in `raw_json`). If nothing new happened since
    `last_pitch_ts`, it stops there.
-3. On a new pitch state it loads rolling stats + player info, scores the four
-   micro-markets with the active `model_params` row (or the labeled heuristic),
-   joins each over/under to the freshest odds (or a model-fair line at even
-   money, tagged `model_fair`), fetches MLB's live win probability for the
-   moneyline, inserts a `predictions` batch, and publishes threshold-crossing
-   `picks` (deduped by unique constraint).
+3. On a new pitch state it loads rolling stats + player info, then scores
+   **every unscored pitch position in the current at-bat**, not just the one
+   the poll happened to land on. A prediction is a call made INTO a position
+   (`predictions.pitch_number` = k means "k pitches thrown, here is the call on
+   the next one"); at a 30s poll and 15-20s between pitches, writing one batch
+   per poll silently dropped any pitch that shared an interval with another.
+   Missed positions are reconstructed from the play-by-play, which stores
+   balls/strikes post-pitch, so the count left by pitch *k* is the count faced
+   going into position *k* (`_shared/livepitch.ts`). Each position is scored
+   against the active `model_params` row (or the labeled heuristic), with each
+   over/under joined to the freshest odds (or a model-fair line at even money,
+   tagged `model_fair`). `ab_pitches_ou` stays a once-per-PA call and
+   `game_moneyline` is written once per poll from MLB's live win probability —
+   neither is per-pitch. Threshold-crossing `picks` are published from the live
+   position only (deduped by unique constraint).
 4. **odds-ingest** (5m) snapshots ESPN/Kalshi (and The Odds API if keyed),
    de-vigs two-sided quotes into `novig_prob`, and publishes pregame log5
    moneyline picks with edge ≥ 5%.
-5. **settle** (10m) grades pending `predictions` and `picks` against the next
+5. **settle** grades pending `predictions` and `picks` against the next
    pitch / finished at-bat / final score, writing `result`/`status` and
-   `profit_units`.
+   `profit_units`. It is chained directly from `live-poll` whenever a game
+   advanced, so a result is graded within ~30s rather than on a timer; the
+   `np-settle-sweep` job at 03:00 ET is a catch-all for anything a failed chain
+   left behind.
 6. **The browser** polls `GET /api/live` (~8s, jittered, paused when the tab is
    hidden) and `GET /api/edge/{game_pk}`; the Home tab pulls `/sportsbooks`,
    `/picks/today`, `/record`. Responses are CDN-cached (10–60s) and

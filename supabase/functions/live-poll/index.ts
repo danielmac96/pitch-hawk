@@ -11,6 +11,7 @@ import {
   invokeFunction, json, logRun, requireCronSecret, svc, upsertChunked,
 } from "../_shared/db.ts";
 import { ensurePlayers, upsertGames } from "../_shared/ingest.ts";
+import { pendingPositions } from "../_shared/livepitch.ts";
 import {
   currentPaPitches, deriveLiveState, getPlayByPlay, getSchedule, isLive,
   liveHomeWinProb, mlbToday,
@@ -77,6 +78,10 @@ Deno.serve(async (req) => {
 
     const models = await loadActiveModels();
     let newPitchStates = 0, predictionsWritten = 0, picksWritten = 0;
+    // Positions recovered that a single-batch-per-poll writer would have
+    // dropped. Non-zero is normal and expected — it is the size of the hole
+    // this writer closes, and worth watching rather than hiding.
+    let pitchesBackfilled = 0;
 
     for (const g of liveGames) {
       try {
@@ -141,41 +146,87 @@ Deno.serve(async (req) => {
           batterId ? db.from("player_info").select("*").eq("player_id", batterId).maybeSingle() : Promise.resolve({ data: null }),
         ]);
 
-        const ctx: ScoreContext = {
-          balls: Number(state.balls ?? 0), strikes: Number(state.strikes ?? 0),
-          pitch_count_pa: Number(state.pitch_count_pa ?? 0),
-          pitcher: (pRoll as any).data, batter: (bRoll as any).data,
-          pitcher_info: (pInfo as any).data, batter_info: (bInfo as any).data,
-        };
-
         const odds = await latestOdds(g.game_pk);
         // Predictions belong to the PA the state describes — after a roll
         // that is the NEW batter's at-bat (which may have no pitches yet).
         const abi = currentPlay?.at_bat_index ?? latestAbIndex(pitches);
-        const speed = predictPitchSpeed(models, ctx);
-        const pres = predictPitchResult(models, ctx);
-        const abr = predictAbResult(models, ctx);
 
-        const marketRows = [
-          ouJoin(speed, (line) => speedOverProb(speed.predicted_value!, speed.sigma, line), odds["pitch_speed_ou"], true),
-          {
-            market: "pitch_result", predicted_value: pres.predicted_value,
-            confidence: pres.confidence, probs: pres.probs,
-            recommendation: topClass(pres.probs), line: null, price: null,
-            edge: null, model_version: pres.model_version,
-          },
-          {
-            market: "ab_result", predicted_value: abr.predicted_value,
-            confidence: abr.confidence, probs: abr.probs,
-            recommendation: topClass(abr.probs), line: null, price: null,
-            edge: null, model_version: abr.model_version,
-          },
-        ];
+        // ── every pitch, not every poll ────────────────────────────────────
+        //
+        // See _shared/livepitch.ts for what this recovers and why. Short
+        // version: one batch per poll meant any pitch that shared a 30-second
+        // interval with another was ingested and never scored.
+        const abPitches = pitches
+          .filter((p) => p.at_bat_index === abi && p.pitch_number != null);
+        const curKRaw = Number(state.pitch_count_pa);
+        const curK = Number.isFinite(curKRaw) ? curKRaw : 0;
+
+        // What this at-bat already has, so a re-poll, a retry, or a game
+        // picked up mid-PA never writes a position twice. pitch_result is the
+        // probe because it is written at every position, unconditionally.
+        let done = new Set<number>();
+        if (abi != null) {
+          const { data: havePos } = await db.from("predictions")
+            .select("pitch_number")
+            .eq("game_pk", g.game_pk).eq("market", "pitch_result")
+            .eq("at_bat_index", abi);
+          done = new Set((havePos ?? []).map((r: any) => Number(r.pitch_number)));
+        }
+
+        const positions = pendingPositions({
+          abPitches: abPitches as any, curK, done,
+          curBalls: state.balls as number | null,
+          curStrikes: state.strikes as number | null,
+        });
+        // Everything this at-bat needs is already stored: nothing new to do.
+        if (!positions.length) continue;
+        pitchesBackfilled += Math.max(positions.length - 1, 0);
+
+        const ctxAt = (pos: { k: number; balls: number; strikes: number }): ScoreContext => ({
+          balls: pos.balls, strikes: pos.strikes, pitch_count_pa: pos.k,
+          pitcher: (pRoll as any).data, batter: (bRoll as any).data,
+          pitcher_info: (pInfo as any).data, batter_info: (bInfo as any).data,
+        });
+
+        // The three markets that are genuinely per-pitch. ab_pitches_ou and
+        // game_moneyline are not, and are handled once, below.
+        const perPitchMarkets = (c: ScoreContext) => {
+          const speed = predictPitchSpeed(models, c);
+          const pres = predictPitchResult(models, c);
+          const abr = predictAbResult(models, c);
+          return {
+            abr,
+            rows: [
+              ouJoin(speed, (line) => speedOverProb(speed.predicted_value!, speed.sigma, line), odds["pitch_speed_ou"], true),
+              {
+                market: "pitch_result", predicted_value: pres.predicted_value,
+                confidence: pres.confidence, probs: pres.probs,
+                recommendation: topClass(pres.probs), line: null, price: null,
+                edge: null, model_version: pres.model_version,
+              },
+              {
+                market: "ab_result", predicted_value: abr.predicted_value,
+                confidence: abr.confidence, probs: abr.probs,
+                recommendation: topClass(abr.probs), line: null, price: null,
+                edge: null, model_version: abr.model_version,
+              },
+            ],
+          };
+        };
+
+        const scored = positions.map((pos) => ({ k: pos.k, ...perPitchMarkets(ctxAt(pos)) }));
+        // The live position drives the game-level mirror, the picks and the
+        // game-wide markets: those describe now, not a pitch already thrown.
+        const cur = scored[scored.length - 1];
+        const ctx = ctxAt(positions[positions.length - 1]);
+        const abr = cur.abr;
+        const marketRows = cur.rows;
 
         // Total-pitches is a PRE-at-bat call: write it once per PA (at 0-0)
         // so the projection shown during the at-bat never drifts from the call
         // made before it. The existence probe covers games picked up mid-PA.
-        let writeAbp = ctx.pitch_count_pa === 0;
+        const first = scored[0];
+        let writeAbp = first.k === 0;
         if (!writeAbp && abi != null) {
           const { data: abpExisting } = await db.from("predictions").select("id")
             .eq("game_pk", g.game_pk).eq("market", "ab_pitches_ou")
@@ -183,10 +234,14 @@ Deno.serve(async (req) => {
           writeAbp = !abpExisting?.length;
         }
         if (writeAbp) {
-          const abp = predictAbPitches(models, ctx);
-          marketRows.push(ouJoin(
+          // Priced from the position it is a call about, which is where the
+          // row is stamped — the start of the PA when we saw it from the
+          // start, otherwise the earliest position we are writing.
+          const abpCtx = ctxAt(positions[0]);
+          const abp = predictAbPitches(models, abpCtx);
+          first.rows.push(ouJoin(
             abp,
-            (line) => pitchesOverProb(ctx.pitch_count_pa, abp.dist, abp.predicted_value!, line),
+            (line) => pitchesOverProb(abpCtx.pitch_count_pa, abp.dist, abp.predicted_value!, line),
             odds["ab_pitches_ou"], true,
           ));
         }
@@ -223,14 +278,16 @@ Deno.serve(async (req) => {
           }
         }
 
-        // Persist the prediction batch at this PA position.
-        // Keep 0 (`|| null` would drop it): position 0 = the call on a PA's
-        // first pitch, which the board matches by exact pitch position.
-        const pnRaw = Number(state.pitch_count_pa);
-        const pn = Number.isFinite(pnRaw) ? pnRaw : null;
-        const predRows = marketRows.map((m) => ({
-          game_pk: g.game_pk, at_bat_index: abi, pitch_number: pn, ...m,
-        }));
+        // Persist every position scored above, each stamped with the pitch it
+        // is a call about. Keep 0 (`|| null` would drop it): position 0 = the
+        // call on a PA's first pitch, which the board matches by exact
+        // position.
+        const pn = Number.isFinite(curKRaw) ? curKRaw : null;
+        const predRows = scored.flatMap((sc) =>
+          sc.rows.map((m) => ({
+            game_pk: g.game_pk, at_bat_index: abi, pitch_number: sc.k, ...m,
+          }))
+        );
         const { error: predErr } = await db.from("predictions").insert(predRows);
         if (predErr) errors.push(`pred ${g.game_pk}: ${predErr.message}`);
         else predictionsWritten += predRows.length;
@@ -330,6 +387,7 @@ Deno.serve(async (req) => {
 
     detail.new_pitch_states = newPitchStates;
     detail.predictions = predictionsWritten;
+    detail.pitches_backfilled = pitchesBackfilled;
     detail.picks = picksWritten;
     detail.errors = errors.slice(0, 10);
     await logRun("live-poll", startedAt, errors.length === 0, detail);
