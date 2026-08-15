@@ -11,7 +11,7 @@ import {
   invokeFunction, json, logRun, requireCronSecret, svc, upsertChunked,
 } from "../_shared/db.ts";
 import { ensurePlayers, upsertGames } from "../_shared/ingest.ts";
-import { pendingPositions } from "../_shared/livepitch.ts";
+import { pendingAtBats, posKey } from "../_shared/livepitch.ts";
 import {
   currentPaPitches, deriveLiveState, getPlayByPlay, getSchedule, isLive,
   liveHomeWinProb, mlbToday,
@@ -32,6 +32,13 @@ import { americanToProb, probToAmerican } from "../_shared/vocab.ts";
 // prob clearing 0.5 with a small buffer. See docs/MODELS.md.
 const AB_PICK_MIN_PROB = 0.52;
 const ML_PICK_EDGE = 0.04;     // model win prob vs market implied
+
+// How many at-bats back each poll sweeps for unscored positions. A plate
+// appearance runs ~90 seconds, so four covers any gap the poll cadence can open
+// (including a completed PA whose last position is only reachable after the
+// fact) while bounding the work per tick. Anything older than this is a job for
+// the backfill, not the poller.
+const AB_LOOKBACK = 4;
 
 Deno.serve(async (req) => {
   const denied = await requireCronSecret(req);
@@ -128,24 +135,6 @@ Deno.serve(async (req) => {
         await upsertChunked("pitches", pitchRows as any, "game_pk,at_bat_index,pitch_number");
         await upsertChunked("at_bats", atBats.filter((a) => a.at_bat_index != null) as any, "game_pk,at_bat_index");
 
-        // The at-bat just ended (strikeout / walk / ball in play) and MLB has
-        // not posted the next play yet: there is no next pitch to predict for
-        // this PA, and the next batter is unknown. Ingest is done above; the
-        // first-pitch prediction for the new PA is written once its play
-        // appears (the changed-check fires on the batter/pitch-count reset).
-        if (currentPlay?.is_complete) continue;
-
-        const pitcherId = state.pitcher_id as number | null;
-        const batterId = state.batter_id as number | null;
-        await ensurePlayers([pitcherId, batterId].filter(Boolean) as number[]);
-
-        const [pRoll, bRoll, pInfo, bInfo] = await Promise.all([
-          pitcherId ? db.from("pitcher_rolling_stats").select("*").eq("pitcher_id", pitcherId).maybeSingle() : Promise.resolve({ data: null }),
-          batterId ? db.from("batter_rolling_stats").select("*").eq("batter_id", batterId).maybeSingle() : Promise.resolve({ data: null }),
-          pitcherId ? db.from("player_info").select("*").eq("player_id", pitcherId).maybeSingle() : Promise.resolve({ data: null }),
-          batterId ? db.from("player_info").select("*").eq("player_id", batterId).maybeSingle() : Promise.resolve({ data: null }),
-        ]);
-
         const odds = await latestOdds(g.game_pk);
         // Predictions belong to the PA the state describes — after a roll
         // that is the NEW batter's at-bat (which may have no pitches yet).
@@ -156,37 +145,86 @@ Deno.serve(async (req) => {
         // See _shared/livepitch.ts for what this recovers and why. Short
         // version: one batch per poll meant any pitch that shared a 30-second
         // interval with another was ingested and never scored.
-        const abPitches = pitches
-          .filter((p) => p.at_bat_index === abi && p.pitch_number != null);
-        const curKRaw = Number(state.pitch_count_pa);
-        const curK = Number.isFinite(curKRaw) ? curKRaw : 0;
+        //
+        // The sweep spans at-bats rather than only the one batting, because
+        // scoping it to the live PA left two holes it could not reach: a PA's
+        // LAST position (only visible while the PA is live, so it needed a poll
+        // between the final two pitches — 38.8% of them had no call on
+        // 2026-08-14) and a PA that began and ended inside one interval, which
+        // nothing ever looked at again (93 at-bats that day).
+        //
+        // A completed at-bat is still worth scoring: every one of its positions
+        // is a call about a pitch that was actually thrown. Only picks are
+        // withheld from it — see below.
+        const openAbi = currentPlay && !currentPlay.is_complete
+          ? currentPlay.at_bat_index
+          : null;
+        const minAbi = Math.max((abi ?? 0) - AB_LOOKBACK, 0);
 
-        // What this at-bat already has, so a re-poll, a retry, or a game
-        // picked up mid-PA never writes a position twice. pitch_result is the
-        // probe because it is written at every position, unconditionally.
-        let done = new Set<number>();
-        if (abi != null) {
-          const { data: havePos } = await db.from("predictions")
-            .select("pitch_number")
-            .eq("game_pk", g.game_pk).eq("market", "pitch_result")
-            .eq("at_bat_index", abi);
-          done = new Set((havePos ?? []).map((r: any) => Number(r.pitch_number)));
-        }
+        // What this game already has, so a re-poll, a retry, or a game picked
+        // up mid-PA never writes a position twice. pitch_result is the probe
+        // because it is written at every position, unconditionally.
+        const { data: havePos } = await db.from("predictions")
+          .select("at_bat_index,pitch_number")
+          .eq("game_pk", g.game_pk).eq("market", "pitch_result")
+          .gte("at_bat_index", minAbi);
+        const done = new Set<string>(
+          (havePos ?? [])
+            .filter((r: any) => r.at_bat_index != null && r.pitch_number != null)
+            .map((r: any) => posKey(Number(r.at_bat_index), Number(r.pitch_number))),
+        );
 
-        const positions = pendingPositions({
-          abPitches: abPitches as any, curK, done,
-          curBalls: state.balls as number | null,
-          curStrikes: state.strikes as number | null,
+        const work = pendingAtBats({
+          pitches: pitches as any,
+          openAbi,
+          openBalls: currentPlay?.balls ?? (state.balls as number | null),
+          openStrikes: currentPlay?.strikes ?? (state.strikes as number | null),
+          done,
+          lookback: AB_LOOKBACK,
         });
-        // Everything this at-bat needs is already stored: nothing new to do.
-        if (!positions.length) continue;
-        pitchesBackfilled += Math.max(positions.length - 1, 0);
+        // Everything this game needs is already stored: nothing new to do.
+        if (!work.length) continue;
 
-        const ctxAt = (pos: { k: number; balls: number; strikes: number }): ScoreContext => ({
-          balls: pos.balls, strikes: pos.strikes, pitch_count_pa: pos.k,
-          pitcher: (pRoll as any).data, batter: (bRoll as any).data,
-          pitcher_info: (pInfo as any).data, batter_info: (bInfo as any).data,
-        });
+        // ab_pitches_ou is a pre-at-bat call, one per PA. Probed for the whole
+        // lookback window in one query rather than per at-bat.
+        const { data: abpHave } = await db.from("predictions")
+          .select("at_bat_index")
+          .eq("game_pk", g.game_pk).eq("market", "ab_pitches_ou")
+          .gte("at_bat_index", minAbi);
+        const abpDone = new Set(
+          (abpHave ?? []).map((r: any) => Number(r.at_bat_index)),
+        );
+
+        await ensurePlayers(
+          work.flatMap((w) => [
+            w.pitcher_id ?? currentPlay?.pitcher_id ?? null,
+            w.batter_id ?? currentPlay?.batter_id ?? null,
+          ]).filter(Boolean) as number[],
+        );
+
+        // Rolling stats and player_info are constant across a plate
+        // appearance, so they are fetched once per matchup rather than once
+        // per position: a 7-pitch catch-up costs 4 queries, not 28.
+        const statsCache = new Map<string, {
+          pitcher: any; batter: any; pitcher_info: any; batter_info: any;
+        }>();
+        const statsFor = async (pitcherId: number | null, batterId: number | null) => {
+          const ck = `${pitcherId ?? 0}:${batterId ?? 0}`;
+          const hit = statsCache.get(ck);
+          if (hit) return hit;
+          const [pRoll, bRoll, pInfo, bInfo] = await Promise.all([
+            pitcherId ? db.from("pitcher_rolling_stats").select("*").eq("pitcher_id", pitcherId).maybeSingle() : Promise.resolve({ data: null }),
+            batterId ? db.from("batter_rolling_stats").select("*").eq("batter_id", batterId).maybeSingle() : Promise.resolve({ data: null }),
+            pitcherId ? db.from("player_info").select("*").eq("player_id", pitcherId).maybeSingle() : Promise.resolve({ data: null }),
+            batterId ? db.from("player_info").select("*").eq("player_id", batterId).maybeSingle() : Promise.resolve({ data: null }),
+          ]);
+          const val = {
+            pitcher: (pRoll as any).data, batter: (bRoll as any).data,
+            pitcher_info: (pInfo as any).data, batter_info: (bInfo as any).data,
+          };
+          statsCache.set(ck, val);
+          return val;
+        };
 
         // The three markets that are genuinely per-pitch. ab_pitches_ou and
         // game_moneyline are not, and are handled once, below.
@@ -214,67 +252,109 @@ Deno.serve(async (req) => {
           };
         };
 
-        const scored = positions.map((pos) => ({ k: pos.k, ...perPitchMarkets(ctxAt(pos)) }));
-        // The live position drives the game-level mirror, the picks and the
-        // game-wide markets: those describe now, not a pitch already thrown.
-        const cur = scored[scored.length - 1];
-        const ctx = ctxAt(positions[positions.length - 1]);
-        const abr = cur.abr;
-        const marketRows = cur.rows;
+        // Score every outstanding position, oldest at-bat first so rows land in
+        // the order the pitches did.
+        const predRows: Record<string, unknown>[] = [];
+        let liveBatch:
+          | { abi: number; ctx: ScoreContext; abr: any; rows: any[]; k: number; stats: any }
+          | null = null;
 
-        // Total-pitches is a PRE-at-bat call: write it once per PA (at 0-0)
-        // so the projection shown during the at-bat never drifts from the call
-        // made before it. The existence probe covers games picked up mid-PA.
-        const first = scored[0];
-        let writeAbp = first.k === 0;
-        if (!writeAbp && abi != null) {
-          const { data: abpExisting } = await db.from("predictions").select("id")
-            .eq("game_pk", g.game_pk).eq("market", "ab_pitches_ou")
-            .eq("at_bat_index", abi).limit(1);
-          writeAbp = !abpExisting?.length;
-        }
-        if (writeAbp) {
-          // Priced from the position it is a call about, which is where the
-          // row is stamped — the start of the PA when we saw it from the
-          // start, otherwise the earliest position we are writing.
-          const abpCtx = ctxAt(positions[0]);
-          const abp = predictAbPitches(models, abpCtx);
-          first.rows.push(ouJoin(
-            abp,
-            (line) => pitchesOverProb(abpCtx.pitch_count_pa, abp.dist, abp.predicted_value!, line),
-            odds["ab_pitches_ou"], true,
-          ));
-        }
-
-        // Moneyline: MLB live win prob vs freshest market quote.
-        const homeProb = await liveHomeWinProb(g.game_pk);
-        if (homeProb != null) {
-          const mlQuotes = odds["game_moneyline"] ?? [];
-          const homeQ = mlQuotes.find((q) => q.outcome === "home");
-          const awayQ = mlQuotes.find((q) => q.outcome === "away");
-          const side = homeProb >= 0.5 ? "home" : "away";
-          const pSide = side === "home" ? homeProb : 1 - homeProb;
-          const q = side === "home" ? homeQ : awayQ;
-          const implied = q?.implied_prob != null ? Number(q.implied_prob) : americanToProb(q?.price_american);
-          const edge = implied != null ? Math.round((pSide - implied) * 10000) / 10000 : null;
-          marketRows.push({
-            market: "game_moneyline",
-            predicted_value: Math.round(homeProb * 10000) / 10000,
-            confidence: Math.round(pSide * 10000) / 10000,
-            probs: { home: Math.round(homeProb * 10000) / 10000, away: Math.round((1 - homeProb) * 10000) / 10000 },
-            recommendation: side, line: null,
-            price: q?.price_american ?? probToAmerican(implied),
-            edge, model_version: "mlb_winprob_v1",
+        for (const w of work) {
+          const stats = await statsFor(
+            w.pitcher_id ?? currentPlay?.pitcher_id ?? null,
+            w.batter_id ?? currentPlay?.batter_id ?? null,
+          );
+          const ctxAt = (pos: { k: number; balls: number; strikes: number }): ScoreContext => ({
+            balls: pos.balls, strikes: pos.strikes, pitch_count_pa: pos.k,
+            pitcher: stats.pitcher, batter: stats.batter,
+            pitcher_info: stats.pitcher_info, batter_info: stats.batter_info,
           });
 
-          if (edge != null && edge >= ML_PICK_EDGE) {
-            picksWritten += await publishPick(g, {
-              market: "game_moneyline", recommendation: side,
-              label: `${side === "home" ? g.home_team : g.away_team} ML (live)`,
-              price: q?.price_american ?? null, confidence: pSide, edge,
-              source: q?.source ?? null, model_version: "mlb_winprob_v1",
-              at_bat_index: null,
+          const scored = w.positions.map((pos) => ({ k: pos.k, ...perPitchMarkets(ctxAt(pos)) }));
+          // Positions recovered beyond the one a single-batch writer would have
+          // produced for this at-bat.
+          pitchesBackfilled += Math.max(scored.length - 1, 0);
+
+          // Total-pitches is a PRE-at-bat call: written once per PA so the
+          // projection shown during the at-bat never drifts from the call made
+          // before it. Priced from the earliest position we are writing, which
+          // is where the row is stamped.
+          if (!abpDone.has(w.at_bat_index)) {
+            const abpCtx = ctxAt(w.positions[0]);
+            const abp = predictAbPitches(models, abpCtx);
+            scored[0].rows.push(ouJoin(
+              abp,
+              (line) => pitchesOverProb(abpCtx.pitch_count_pa, abp.dist, abp.predicted_value!, line),
+              odds["ab_pitches_ou"], true,
+            ));
+          }
+
+          for (const sc of scored) {
+            for (const m of sc.rows) {
+              predRows.push({
+                game_pk: g.game_pk, at_bat_index: w.at_bat_index,
+                pitch_number: sc.k, ...m,
+              });
+            }
+          }
+
+          // The live batch drives the game-level mirror, the picks and the
+          // game-wide markets: those describe now, not a pitch already thrown.
+          // Only the open at-bat qualifies — a call reconstructed after its
+          // pitch landed is not something anyone could have bet.
+          if (w.open) {
+            const last = scored[scored.length - 1];
+            liveBatch = {
+              abi: w.at_bat_index, k: last.k, stats,
+              ctx: ctxAt(w.positions[w.positions.length - 1]),
+              abr: last.abr, rows: last.rows,
+            };
+          }
+        }
+
+        // Game-wide markets and picks hang off the live batch. On a poll that
+        // only recovered finished at-bats there is no live position, so they
+        // are correctly skipped this tick.
+        const marketRows = liveBatch?.rows ?? [];
+
+        // Moneyline: MLB live win prob vs freshest market quote. Game-wide
+        // rather than per-pitch, so it is written once per poll at the live
+        // position instead of at every position recovered above.
+        if (liveBatch) {
+          const homeProb = await liveHomeWinProb(g.game_pk);
+          if (homeProb != null) {
+            const mlQuotes = odds["game_moneyline"] ?? [];
+            const homeQ = mlQuotes.find((q) => q.outcome === "home");
+            const awayQ = mlQuotes.find((q) => q.outcome === "away");
+            const side = homeProb >= 0.5 ? "home" : "away";
+            const pSide = side === "home" ? homeProb : 1 - homeProb;
+            const q = side === "home" ? homeQ : awayQ;
+            const implied = q?.implied_prob != null ? Number(q.implied_prob) : americanToProb(q?.price_american);
+            const edge = implied != null ? Math.round((pSide - implied) * 10000) / 10000 : null;
+            const mlRow = {
+              market: "game_moneyline",
+              predicted_value: Math.round(homeProb * 10000) / 10000,
+              confidence: Math.round(pSide * 10000) / 10000,
+              probs: { home: Math.round(homeProb * 10000) / 10000, away: Math.round((1 - homeProb) * 10000) / 10000 },
+              recommendation: side, line: null,
+              price: q?.price_american ?? probToAmerican(implied),
+              edge, model_version: "mlb_winprob_v1",
+            };
+            marketRows.push(mlRow);
+            predRows.push({
+              game_pk: g.game_pk, at_bat_index: liveBatch.abi,
+              pitch_number: liveBatch.k, ...mlRow,
             });
+
+            if (edge != null && edge >= ML_PICK_EDGE) {
+              picksWritten += await publishPick(g, {
+                market: "game_moneyline", recommendation: side,
+                label: `${side === "home" ? g.home_team : g.away_team} ML (live)`,
+                price: q?.price_american ?? null, confidence: pSide, edge,
+                source: q?.source ?? null, model_version: "mlb_winprob_v1",
+                at_bat_index: null,
+              });
+            }
           }
         }
 
@@ -282,12 +362,6 @@ Deno.serve(async (req) => {
         // is a call about. Keep 0 (`|| null` would drop it): position 0 = the
         // call on a PA's first pitch, which the board matches by exact
         // position.
-        const pn = Number.isFinite(curKRaw) ? curKRaw : null;
-        const predRows = scored.flatMap((sc) =>
-          sc.rows.map((m) => ({
-            game_pk: g.game_pk, at_bat_index: abi, pitch_number: sc.k, ...m,
-          }))
-        );
         const { error: predErr } = await db.from("predictions").insert(predRows);
         if (predErr) errors.push(`pred ${g.game_pk}: ${predErr.message}`);
         else predictionsWritten += predRows.length;
@@ -299,73 +373,92 @@ Deno.serve(async (req) => {
         // 30s intervals still leaves 6 rows. The per-pitch rows above are
         // untouched and remain the live board's source; these are what survives
         // the 21-day prune and backs the 30-day feed.
-        const nowIso = new Date().toISOString();
-        const liveGameRows = marketRows.map((m) => ({
-          game_pk: g.game_pk,
-          // official_date is NOT NULL on the table; the schedule always
-          // supplies it, but a null here would fail the whole batch.
-          official_date: g.official_date ?? mlbToday(),
-          phase: "live",
-          home_team_id: g.home_team_id ?? null,
-          away_team_id: g.away_team_id ?? null,
-          home_abbr: g.home_abbr ?? null,
-          away_abbr: g.away_abbr ?? null,
-          n_pitch_predictions: pn ?? 0,
-          updated_at: nowIso,
-          ...m,
-        }));
-        const { error: gpErr } = await db.from("game_predictions")
-          .upsert(liveGameRows, { onConflict: "game_pk,market,phase" });
-        // Non-fatal: the per-pitch write above already succeeded, and the live
-        // board reads that. A failure here costs feed history, not the board.
-        if (gpErr) errors.push(`game_pred ${g.game_pk}: ${gpErr.message}`);
-
-        // Publish an at-bat pick once, at the start of the PA (first pitch just
-        // landed — the earliest live_state we ever observe for a new batter),
-        // when the calibrated win prob clears the even-money break-even (these
-        // grade flat ±1 with no real prop price). The unique constraint on
-        // (date, game, market, at_bat_index, rec) dedupes. edge is vs the 0.5
-        // implied of an even-money bet, matching every other market's edge.
-        const abProbs = abr.probs ?? {};
-        for (const cls of ["strikeout", "walk", "hit"]) {
-          const p = abProbs[cls];
-          if (p != null && p >= AB_PICK_MIN_PROB && ctx.pitch_count_pa <= 1) {
-            const batterName = (bInfo as any).data?.full_name ?? "Batter";
-            picksWritten += await publishPick(g, {
-              market: "ab_result", recommendation: cls,
-              label: `${batterName} — ${cls[0].toUpperCase()}${cls.slice(1)}`,
-              price: null, confidence: p,
-              edge: Math.round((p - 0.5) * 10000) / 10000,
-              source: "model", model_version: abr.model_version,
-              at_bat_index: abi,
-              extraPayload: {
-                pitcher: { name: (pInfo as any).data?.full_name, hand: (pInfo as any).data?.pitch_hand },
-                batter: { name: batterName, hand: (bInfo as any).data?.bat_side },
-              },
-            });
-          }
+        //
+        // Mirrors the LIVE batch only. A poll that recovered nothing but
+        // finished at-bats has no "now" to mirror, and stamping one of those
+        // reconstructed calls here would make the game-level row describe a
+        // pitch already thrown.
+        if (liveBatch && marketRows.length) {
+          const nowIso = new Date().toISOString();
+          const liveGameRows = marketRows.map((m) => ({
+            game_pk: g.game_pk,
+            // official_date is NOT NULL on the table; the schedule always
+            // supplies it, but a null here would fail the whole batch.
+            official_date: g.official_date ?? mlbToday(),
+            phase: "live",
+            home_team_id: g.home_team_id ?? null,
+            away_team_id: g.away_team_id ?? null,
+            home_abbr: g.home_abbr ?? null,
+            away_abbr: g.away_abbr ?? null,
+            n_pitch_predictions: liveBatch.k,
+            updated_at: nowIso,
+            ...m,
+          }));
+          const { error: gpErr } = await db.from("game_predictions")
+            .upsert(liveGameRows, { onConflict: "game_pk,market,phase" });
+          // Non-fatal: the per-pitch write above already succeeded, and the live
+          // board reads that. A failure here costs feed history, not the board.
+          if (gpErr) errors.push(`game_pred ${g.game_pk}: ${gpErr.message}`);
         }
 
-        // Model-fair micro-market picks (pitch speed / AB pitches): even money
-        // vs the model's own fair line, tagged book "model_fair" so the record
-        // never reads as beating a real sportsbook. Published only when the
-        // model is meaningfully off a coin flip.
-        for (const mr of marketRows) {
-          const mkt = mr.market as string;
-          if ((mkt === "pitch_speed_ou" || mkt === "ab_pitches_ou") &&
-              mr.book === "model_fair" && mr.recommendation != null &&
-              Number(mr.confidence) >= 0.58) {
-            const isSpeed = mkt === "pitch_speed_ou";
-            const side = String(mr.recommendation);
-            picksWritten += await publishPick(g, {
-              market: mkt, recommendation: side,
-              label: `${isSpeed ? "Next pitch" : "AB pitches"} ${side} ${mr.line} ${isSpeed ? "mph" : ""}`.trim(),
-              line: mr.line as number, price: 100,
-              confidence: Number(mr.confidence),
-              edge: mr.edge != null ? Number(mr.edge) : null,
-              source: "model_fair", model_version: String(mr.model_version),
-              at_bat_index: abi,
-            });
+        // ── picks ──────────────────────────────────────────────────────────
+        //
+        // Picks come from the LIVE position only. Every position recovered by
+        // the sweep above is a legitimate prediction — it was scored from the
+        // count as it stood, with no knowledge of the pitch that followed — but
+        // it is written after that pitch landed, so it is not something anyone
+        // could have wagered on. Publishing it would put bets into the record
+        // that were never available, which is the one way this change could
+        // corrupt the track record.
+        if (liveBatch) {
+          const info = liveBatch.stats;
+          // Publish an at-bat pick once, at the start of the PA (first pitch just
+          // landed — the earliest live_state we ever observe for a new batter),
+          // when the calibrated win prob clears the even-money break-even (these
+          // grade flat ±1 with no real prop price). The unique constraint on
+          // (date, game, market, at_bat_index, rec) dedupes. edge is vs the 0.5
+          // implied of an even-money bet, matching every other market's edge.
+          const abProbs = liveBatch.abr.probs ?? {};
+          for (const cls of ["strikeout", "walk", "hit"]) {
+            const p = abProbs[cls];
+            if (p != null && p >= AB_PICK_MIN_PROB && liveBatch.ctx.pitch_count_pa <= 1) {
+              const batterName = info.batter_info?.full_name ?? "Batter";
+              picksWritten += await publishPick(g, {
+                market: "ab_result", recommendation: cls,
+                label: `${batterName} — ${cls[0].toUpperCase()}${cls.slice(1)}`,
+                price: null, confidence: p,
+                edge: Math.round((p - 0.5) * 10000) / 10000,
+                source: "model", model_version: liveBatch.abr.model_version,
+                at_bat_index: liveBatch.abi,
+                extraPayload: {
+                  pitcher: { name: info.pitcher_info?.full_name, hand: info.pitcher_info?.pitch_hand },
+                  batter: { name: batterName, hand: info.batter_info?.bat_side },
+                },
+              });
+            }
+          }
+
+          // Model-fair micro-market picks (pitch speed / AB pitches): even money
+          // vs the model's own fair line, tagged book "model_fair" so the record
+          // never reads as beating a real sportsbook. Published only when the
+          // model is meaningfully off a coin flip.
+          for (const mr of marketRows) {
+            const mkt = mr.market as string;
+            if ((mkt === "pitch_speed_ou" || mkt === "ab_pitches_ou") &&
+                mr.book === "model_fair" && mr.recommendation != null &&
+                Number(mr.confidence) >= 0.58) {
+              const isSpeed = mkt === "pitch_speed_ou";
+              const side = String(mr.recommendation);
+              picksWritten += await publishPick(g, {
+                market: mkt, recommendation: side,
+                label: `${isSpeed ? "Next pitch" : "AB pitches"} ${side} ${mr.line} ${isSpeed ? "mph" : ""}`.trim(),
+                line: mr.line as number, price: 100,
+                confidence: Number(mr.confidence),
+                edge: mr.edge != null ? Number(mr.edge) : null,
+                source: "model_fair", model_version: String(mr.model_version),
+                at_bat_index: liveBatch.abi,
+              });
+            }
           }
         }
       } catch (e) {
