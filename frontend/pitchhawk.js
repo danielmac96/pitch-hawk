@@ -142,10 +142,11 @@
         pitchFeed: { rows: [], summary: null, loaded: false, err: false },
       };
       this._pollIv = null;
-      // Client-side plate-appearance history (see trackAtBats): /live only
-      // carries the current PA, so finished at-bats are archived here.
+      // Per-game plate-appearance history, keyed by game_pk and filled from
+      // /api/pitches (see syncPaHistory). `_paSig` gates the refetch so it runs
+      // when the at-bat turns over, not on every 8s poll.
       this.paHist = {};
-      this.paWatch = {};
+      this._paSig = null;
       // Warehouse-backed scouting panels. `_scoutSigs` gates re-fetching per
       // panel, so a new batter does not re-request the pitcher profile or the
       // game context.
@@ -296,60 +297,55 @@
       return lp.cat === "in_play" || lp.desc === "hit_by_pitch" ||
         (lp.balls || 0) >= 4 || (lp.strikes || 0) >= 3;
     }
-    // ── at-bat history (accumulated client-side) ─────────────────────────
-    // The backend exposes only the CURRENT plate appearance, so the "Earlier
-    // at-bats" strip is built by watching the live PA each poll and archiving a
-    // graded one-line summary when the batter changes. Rows therefore fill in
-    // while the tab is open (and reset on reload) until a per-game PA history
-    // endpoint exists — see notes in github.md.
-    trackAtBats(games) {
-      (games || []).forEach((g) => {
-        const w = this.paWatch[g.gamePk];
-        const sig = `${g.batter.name}|${g.inning}${g.half}`;
-        if (w && w.sig !== sig && w.pitches.length) {
-          const hist = this.paHist[g.gamePk] || (this.paHist[g.gamePk] = []);
-          hist.unshift(this.summarizePa(w));
-          if (hist.length > 8) hist.pop();
-        }
-        if (!w || w.sig !== sig) {
-          const abp = g.m.ab_pitches_ou || {}, abr = g.m.ab_result || {};
-          this.paWatch[g.gamePk] = {
-            sig, batter: g.batter.name, pitches: g.pitches.slice(),
-            projPitches: abp.predictedValue != null ? +abp.predictedValue : null,
-            call: abr.recommendation || null,
-            callProb: abr.modelProb != null ? abr.modelProb : null,
-          };
-        } else if (g.pitches.length >= w.pitches.length) {
-          w.pitches = g.pitches.slice();
-        }
-      });
+    // ── at-bat history (server-backed) ───────────────────────────────────
+    //
+    // Until 2026-08-15 this strip was accumulated in the browser: /live carries
+    // only the CURRENT plate appearance, so the board watched each poll and
+    // archived a summary when the batter changed. That meant it was empty on
+    // first paint, two people watching the same game saw different rows, and a
+    // reload wiped it — someone joining in the 6th inning saw one at-bat of a
+    // game the server had been scoring and grading since the 1st.
+    //
+    // /api/pitches has served every one of those rows all along, per game and
+    // paginated. This reads them, so the strip is complete from first paint and
+    // identical for everybody.
+    //
+    // Fetched for the focused game only, and only when its at-bat has actually
+    // moved — the board polls every 8s and this is a multi-page read.
+    async syncPaHistory(games) {
+      const g = (games || []).find((x) => x.gamePk === this.state.feedGame)
+        || (games || [])[0];
+      if (!g) return false;
+      // The at-bat index is not on the live payload, so the batter plus the
+      // half-inning is the signature that a PA has turned over.
+      const sig = `${g.gamePk}|${g.batter.name}|${g.inning}${g.half}`;
+      if (this._paSig === sig) return false;
+      this._paSig = sig;
+      try {
+        // Eastern, because the server resolves the slate through
+        // games.official_date — see the note in syncFeed().
+        const rows = await PH.loadGamePitches(API_BASE, g.gamePk, PH.mlbDate(0));
+        const all = PH.paSummaries(rows); // newest at-bat first
+        // The at-bat in progress is the one the main panel is already showing,
+        // so the strip starts at the one before it. On a finished game there is
+        // nothing live and every at-bat belongs in the history.
+        const earlier = g.phase === "live" ? all.slice(1) : all;
+        this.paHist[g.gamePk] = earlier.slice(0, 12).map((s) => this.bandPa(s));
+        return true;
+      } catch (_e) {
+        // Keep whatever we had; the strip is history, not the live read.
+        this._paSig = null;
+        return false;
+      }
     }
-    // Only what a finished PA's pitches can honestly tell us: a ball in play is
-    // resolvable to hit vs out by the settle job, not here, so it stays ungraded.
-    summarizePa(w) {
-      const ps = w.pitches;
-      const last = ps[ps.length - 1] || {};
-      const outcome = last.desc === "hit_by_pitch" ? null
-        : last.cat === "in_play" ? "in_play"
-          : last.cat === "ball" && (last.balls || 0) >= 3 ? "walk"
-            : last.cat === "strike_foul" && last.desc !== "foul" && (last.strikes || 0) >= 2 ? "strikeout"
-              : null;
-      const graded = ps.filter((p) => p.pred && p.pred.resultOk != null);
-      const right = graded.filter((p) => p.pred.resultOk).length;
-      const errs = ps.filter((p) => p.pred && p.pred.speed != null && p.speed != null)
-        .map((p) => p.pred.speed - p.speed);
-      const avgErr = errs.length ? errs.reduce((a, b) => a + b, 0) / errs.length : null;
-      const ratio = graded.length ? right / graded.length : null;
-      return {
-        batter: w.batter, pitches: ps.length, projPitches: w.projPitches,
-        pitchBand: w.projPitches == null ? null : this.countBand(w.projPitches - ps.length),
-        outcomeLabel: outcome ? (PH.OUTCOME_LABEL[outcome] || outcome) : "Unresolved",
-        call: w.call, callProb: w.callProb,
-        callOk: outcome == null || outcome === "in_play" ? null : w.call === outcome,
-        avgErr, veloBand: this.veloBand(avgErr),
-        right, gradedN: graded.length,
-        pickBand: ratio == null ? null : ratio >= 0.6 ? "good" : ratio >= 0.4 ? "amber" : "bad",
-      };
+    // Display bands are a presentation concern, so they stay here rather than
+    // in the data layer that shapes the server rows.
+    bandPa(s) {
+      return Object.assign({}, s, {
+        pitchBand: s.projPitches == null ? null : this.countBand(s.projPitches - s.pitches),
+        veloBand: this.veloBand(s.avgErr),
+        pickBand: s.ratio == null ? null : s.ratio >= 0.6 ? "good" : s.ratio >= 0.4 ? "amber" : "bad",
+      });
     }
     liveGameOn(pk) { return this.state.liveGames[pk] !== false; }
     selLiveSourceSet() { const s = this.state.liveSources; return new Set(Object.keys(s).filter((k) => s[k])); }
@@ -936,7 +932,7 @@
       return head + (rows || empty);
     }
 
-    // ── Live Board · earlier at-bats (client-accumulated) ─────────────────
+    // ── Live Board · earlier at-bats (server-backed) ──────────────────────
     earlierRows(g, mobile) {
       const C = this.C;
       const hist = this.paHist[g.gamePk] || [];
@@ -2099,7 +2095,12 @@
         if (Array.isArray(games)) {
           PH.games = games;
           const live = this.liveGames();
-          this.trackAtBats(live);
+          // Not awaited: the board must never wait on at-bat history. It
+          // re-renders itself when the rows land, and no-ops unless the PA
+          // actually turned over.
+          this.syncPaHistory(live)
+            .then((changed) => { if (changed) this.render(); })
+            .catch(() => {});
           // Not awaited: the board must never wait on the graded feed. It
           // re-renders itself when the rows land.
           this.loadPitchFeed()

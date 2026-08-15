@@ -25,6 +25,13 @@ export interface AbPitch {
   strikes?: number | null;
 }
 
+/** A pitch anywhere in the game, for the cross-at-bat sweep below. */
+export interface GamePitch extends AbPitch {
+  at_bat_index?: number | null;
+  pitcher_id?: number | null;
+  batter_id?: number | null;
+}
+
 export interface PitchPosition {
   /** Pitches thrown before the one being predicted. */
   k: number;
@@ -91,6 +98,112 @@ export function pendingPositions(p: PositionParams): PitchPosition[] {
     out.push(k === curK && (p.curBalls != null || p.curStrikes != null)
       ? { k, balls: int(p.curBalls), strikes: int(p.curStrikes) }
       : { k, ...countInto(p.abPitches, k) });
+  }
+  return out;
+}
+
+/** One at-bat's outstanding work. */
+export interface AtBatWork {
+  at_bat_index: number;
+  pitcher_id: number | null;
+  batter_id: number | null;
+  /** True for the plate appearance still in progress. */
+  open: boolean;
+  positions: PitchPosition[];
+}
+
+export interface SweepParams {
+  /** Every pitch of the game, any order. */
+  pitches: GamePitch[];
+  /** The at-bat still in progress, or null when the last play is complete. */
+  openAbi?: number | null;
+  /** Live count in the open at-bat, which currentPlay reports authoritatively. */
+  openBalls?: number | null;
+  openStrikes?: number | null;
+  /** Positions already stored, keyed `at_bat_index:k`. */
+  done: Set<string>;
+  /**
+   * How many at-bats back to sweep, counting from the newest. Bounds the work
+   * per poll; anything older is the backfill's job, not the poller's.
+   */
+  lookback?: number;
+  /** Per-at-bat position cap, passed through to pendingPositions. */
+  cap?: number;
+}
+
+/** Key for a position in `SweepParams.done`. */
+export const posKey = (abi: number, k: number) => `${abi}:${k}`;
+
+/**
+ * Outstanding positions across the recent at-bats, oldest at-bat first.
+ *
+ * pendingPositions() alone only ever looked at the at-bat currently batting,
+ * and live-poll skipped the poll entirely when the last play was complete. Two
+ * holes survived that:
+ *
+ *   - A plate appearance's LAST position. It is only reachable while the PA is
+ *     live, so it needs a poll landing between the second-to-last and last
+ *     pitch. On 2026-08-14 38.8% of last positions had no call — and last
+ *     positions are 22.6% of all of them.
+ *   - A plate appearance that began and ended between two polls. Nothing ever
+ *     looked at it again, so all of its positions stayed empty: 93 at-bats on
+ *     2026-08-14 carried no prediction at all.
+ *
+ * A completed at-bat is scored to `pitchCount - 1`, not `pitchCount`: every
+ * position must be a call about a pitch that was actually thrown, and a
+ * completed PA has no next pitch. The open at-bat keeps its forward position,
+ * which is the live read the board displays.
+ */
+export function pendingAtBats(p: SweepParams): AtBatWork[] {
+  const lookback = p.lookback ?? 4;
+  const byAb = new Map<number, GamePitch[]>();
+  for (const pitch of p.pitches) {
+    const abi = Number(pitch.at_bat_index);
+    if (!Number.isFinite(abi) || pitch.pitch_number == null) continue;
+    const arr = byAb.get(abi);
+    if (arr) arr.push(pitch);
+    else byAb.set(abi, [pitch]);
+  }
+
+  // The open at-bat may have no pitches yet: MLB posts the next play (count
+  // 0-0, new matchup) before its first pitch, and that is exactly when the
+  // first-pitch call for the new batter is supposed to be made.
+  if (p.openAbi != null && !byAb.has(p.openAbi)) byAb.set(p.openAbi, []);
+
+  const newest = Math.max(...[...byAb.keys()], p.openAbi ?? -1);
+  const out: AtBatWork[] = [];
+
+  for (const abi of [...byAb.keys()].sort((a, b) => a - b)) {
+    if (abi <= newest - lookback) continue;
+    const abPitches = byAb.get(abi)!;
+    const open = p.openAbi != null && abi === p.openAbi;
+    // An open PA is scored through its forward position; a finished one stops
+    // at the last pitch it actually threw.
+    const curK = open ? abPitches.length : abPitches.length - 1;
+    if (curK < 0) continue;
+
+    const done = new Set<number>();
+    for (let k = 0; k <= curK; k += 1) if (p.done.has(posKey(abi, k))) done.add(k);
+
+    const positions = pendingPositions({
+      abPitches,
+      curK,
+      done,
+      // The live count is only authoritative for the at-bat actually batting.
+      curBalls: open ? p.openBalls : null,
+      curStrikes: open ? p.openStrikes : null,
+      cap: p.cap,
+    });
+    if (!positions.length) continue;
+
+    const first = abPitches.find((x) => Number(x.pitch_number) === 1) ?? abPitches[0];
+    out.push({
+      at_bat_index: abi,
+      pitcher_id: first?.pitcher_id ?? null,
+      batter_id: first?.batter_id ?? null,
+      open,
+      positions,
+    });
   }
   return out;
 }

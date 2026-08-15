@@ -68,7 +68,7 @@ jobs:
 
       - name: Deploy edge functions
         run: |
-          for fn in api backfill daily-ingest game-predict live-poll odds-ingest settle; do
+          for fn in api backfill backfill-predictions daily-ingest game-predict live-poll odds-ingest settle; do
             echo "== deploying $fn"
             supabase functions deploy "$fn" --no-verify-jwt --project-ref "$REF"
           done
@@ -92,7 +92,7 @@ jobs:
             echo ""
             echo "- Functions live at \`https://$REF.supabase.co/functions/v1\`"
             echo "- Set the frontend: \`PITCH_EDGE_API = https://$REF.supabase.co/functions/v1/api\`"
-            echo "- Live board polls every 30s; odds every 5m; settle every 10m."
+            echo "- Live board polls every 15s; odds every 5m; settle every 10m."
             echo "- Backfill drains automatically (watch \`select * from backfill_progress;\`)."
             echo "- After it has data, run \`python -m modeling build\` then \`python -m modeling train <market>\` (or the train job)."
           } >> "$GITHUB_STEP_SUMMARY"

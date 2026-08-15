@@ -44,7 +44,7 @@ jobs:
           # absent from here but present there between 2026-08-06 and
           # 2026-08-08, so it deployed to production with a type error nothing
           # ever ran deno check against.
-          for fn in api backfill daily-ingest game-predict live-poll odds-ingest settle; do
+          for fn in api backfill backfill-predictions daily-ingest game-predict live-poll odds-ingest settle; do
             echo "== $fn"
             deno check "supabase/functions/$fn/index.ts"
           done

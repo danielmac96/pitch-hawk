@@ -734,6 +734,95 @@ window.PITCHHAWK = (function () {
     return await res.json();
   }
 
+  // Every prediction made in ONE game, all at-bats, newest first.
+  //
+  // /live only ever carries the current plate appearance, so the board used to
+  // rebuild earlier at-bats in the browser by watching each poll — which meant
+  // the strip was empty on first paint, disagreed between two people watching
+  // the same game, and was wiped by a reload. The server has had every one of
+  // these rows all along.
+  //
+  // Ungraded rows are included deliberately (no `status` filter): the at-bat in
+  // progress has not been settled yet and is exactly the one the board is
+  // showing.
+  async function loadGamePitches(apiBase, gamePk, date, fetchImpl) {
+    const f = fetchImpl || ((...a) => fetch(...a));
+    const rows = [];
+    let cursor = 0;
+    // A single game is ~1,200 rows at full per-pitch coverage; 1000 is the
+    // server's page ceiling, so this is bounded at a handful of round trips.
+    for (let page = 0; page < 8; page += 1) {
+      const qs = new URLSearchParams({ game_pk: String(gamePk), limit: "1000" });
+      if (date) qs.set("date", date);
+      if (cursor) qs.set("cursor", String(cursor));
+      const res = await f(`${apiBase}/pitches?${qs.toString()}`);
+      if (!res.ok) throw new Error(`/pitches ${res.status}`);
+      const body = await res.json();
+      rows.push(...(body.rows || []));
+      if (!body.next_cursor) break;
+      cursor = body.next_cursor;
+    }
+    return rows;
+  }
+
+  // Server rows -> the per-at-bat summaries the board's "Earlier at-bats" strip
+  // renders. One entry per plate appearance, newest first.
+  //
+  // Everything here was already computed server-side: `result` is set by the
+  // settle job, so a call's correctness is read rather than re-derived in the
+  // browser. That is what makes two people watching the same game see the same
+  // numbers.
+  function paSummaries(rows) {
+    const byAb = new Map();
+    (rows || []).forEach((r) => {
+      if (r == null || r.at_bat_index == null) return;
+      let g = byAb.get(r.at_bat_index);
+      if (!g) { g = { abi: r.at_bat_index, rows: [] }; byAb.set(r.at_bat_index, g); }
+      g.rows.push(r);
+    });
+
+    const out = [];
+    [...byAb.keys()].sort((a, b) => b - a).forEach((abi) => {
+      const rs = byAb.get(abi).rows;
+      const of = (m) => rs.filter((r) => r.market === m);
+      const cls = of("pitch_result");
+      const velo = of("pitch_speed_ou");
+      const abr = of("ab_result")[0] || null;
+      const abp = of("ab_pitches_ou")[0] || null;
+
+      // Positions are 0-based and one per thrown pitch, so the count is the
+      // highest position seen plus one.
+      const positions = cls.map((r) => r.pitch_number).filter((n) => n != null);
+      const pitches = positions.length ? Math.max.apply(null, positions) + 1 : rs.length;
+
+      const graded = cls.filter((r) => r.result != null);
+      const right = graded.filter((r) => r.result === "win").length;
+      const errs = velo
+        .filter((r) => r.error != null)
+        .map((r) => +r.error);
+      const avgErr = errs.length ? errs.reduce((a, b) => a + b, 0) / errs.length : null;
+      const ratio = graded.length ? right / graded.length : null;
+
+      out.push({
+        abi,
+        batter: (abr && abr.batter_name) || (cls[0] && cls[0].batter_name) || "—",
+        pitches,
+        projPitches: abp && abp.predicted_value != null ? +abp.predicted_value : null,
+        outcomeLabel: (abr && abr.actual_label) || "Unresolved",
+        call: abr ? abr.recommendation : null,
+        callProb: abr && abr.confidence != null ? +abr.confidence : null,
+        // Null, not false, while the at-bat is still unsettled — an ungraded
+        // call must never render as a miss.
+        callOk: abr && abr.result != null ? abr.result === "win" : null,
+        avgErr,
+        right,
+        gradedN: graded.length,
+        ratio,
+      });
+    });
+    return out;
+  }
+
   // Live-only boot: the board starts empty and fills from loadLive(). The
   // sample generators above are kept for local demos (call buildGames() +
   // enrichUpcoming/enrichPitchPredictions by hand); RECENT/RECORD sample
@@ -744,7 +833,7 @@ window.PITCHHAWK = (function () {
     games, edges: [], buildEdges,
     tick, impliedFromAmerican, americanFromImplied, calcEdge,
     mlbDate,
-    loadLive, loadBoard, loadFeed, loadPitches,
+    loadLive, loadBoard, loadFeed, loadPitches, loadGamePitches, paSummaries,
     buildGames, enrichUpcoming, enrichPitchPredictions,
   };
 })();
