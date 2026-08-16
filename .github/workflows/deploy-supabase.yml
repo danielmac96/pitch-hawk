@@ -65,7 +65,8 @@ jobs:
         run: |
           CRON_SECRET="$(openssl rand -hex 24)"
           FUNCTIONS_URL="https://$REF.supabase.co/functions/v1"
-          supabase db query "insert into app_secrets(key,value) values
+          supabase db query --linked --project-ref "$REF" \
+            "insert into app_secrets(key,value) values
             ('cron_secret','$CRON_SECRET'),
             ('functions_base_url','$FUNCTIONS_URL')
             on conflict (key) do update set value=excluded.value;"
@@ -80,14 +81,15 @@ jobs:
       - name: Seed backfill window
         if: ${{ inputs.run_backfill }}
         run: |
-          supabase db query "insert into backfill_progress(id,start_date,end_date,cursor_date)
+          supabase db query --linked --project-ref "$REF" \
+            "insert into backfill_progress(id,start_date,end_date,cursor_date)
             values(1,'${{ inputs.backfill_start }}',current_date-1,current_date-1)
             on conflict (id) do update set start_date=excluded.start_date,
               end_date=excluded.end_date, cursor_date=excluded.cursor_date, done=false;"
 
       - name: Load demo seed
         if: ${{ inputs.seed_demo }}
-        run: supabase db query < supabase/seed_demo.sql
+        run: supabase db query --linked --project-ref "$REF" --file supabase/seed_demo.sql
 
       - name: Summary
         run: |
