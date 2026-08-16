@@ -54,8 +54,12 @@ jobs:
       - name: Link project
         run: supabase link --project-ref "$REF" --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
 
+      # --include-all applies migrations that sort before the last one already
+      # recorded on remote. Needed because some migrations were historically
+      # applied out of order (via the dashboard/MCP), leaving earlier versions
+      # unapplied behind a later one. All migrations here are idempotent.
       - name: Push migrations
-        run: supabase db push --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
+        run: supabase db push --include-all --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
 
       - name: Store cron secret + functions base URL
         run: |
