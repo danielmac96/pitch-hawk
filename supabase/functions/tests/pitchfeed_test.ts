@@ -83,6 +83,7 @@ function pred(over: Record<string, unknown> = {}) {
     profit_units: 0.91, model_version: "v1_20260707",
     created_at: "2026-08-06T23:05:00+00:00",
     graded_at: "2026-08-06T23:06:00+00:00",
+    backfilled_at: null,
     ...over,
   };
 }
@@ -141,6 +142,35 @@ Deno.test("a row with no recorded actual has a null error, not a zero", async ()
   );
   assertEquals(res.rows[0].actual_value, null);
   assertEquals(res.rows[0].error, null);
+});
+
+Deno.test("carries backfilled_at through so reconstructed calls stay distinguishable", async () => {
+  // backfill-predictions scores a past pitch with today's models. The row is a
+  // real call about a real pitch and counts in the record, but it was never one
+  // anyone could have acted on. If the flag does not survive the trip the
+  // client cannot tell the two apart, which is how a backfilled slate starts
+  // reading as a live track record.
+  const res = await pitchFeed(
+    db([
+      pred({ id: 1 }),
+      pred({ id: 2, backfilled_at: "2026-08-16T04:00:00+00:00" }),
+    ]),
+    { date: DAY },
+  );
+  const byId = new Map(res.rows.map((r) => [r.id, r]));
+  assertEquals(byId.get(1)?.backfilled_at, null);
+  assertEquals(byId.get(2)?.backfilled_at, "2026-08-16T04:00:00+00:00");
+  // Counted, not excluded -- and reported, so the mix is visible.
+  assertEquals(res.summary.backfilled, 1);
+  assertEquals(res.summary.n, 2);
+  assertEquals(res.summary.wins, 2);
+});
+
+Deno.test("an empty slate reports the same summary shape as a populated one", async () => {
+  // A client reading summary.backfilled should get 0 on a quiet day, not
+  // undefined -- the two render very differently.
+  const res = await pitchFeed(db([]), { date: "2026-01-01" });
+  assertEquals(res.summary.backfilled, 0);
 });
 
 Deno.test("joins pitcher and batter identity from at_bats", async () => {

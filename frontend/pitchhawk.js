@@ -1313,6 +1313,10 @@
         count: r.count || "—", outs: r.outs == null ? "—" : r.outs,
         type: r.actual_pitch_type, model: r.model_version || "—",
         conf: r.confidence,
+        // Reconstructed after the fact by backfill-predictions, with whatever
+        // models were current at backfill time — not a call anyone could have
+        // acted on. Badged in the log; still counted in the record.
+        back: r.backfilled_at != null,
       };
       if (r.market === "pitch_speed_ou") {
         // `error` is computed server-side so every client renders the same
@@ -1706,6 +1710,32 @@
           return `<button data-act="dfDate" data-arg="${esc(arg)}" style="border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${on ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;">${label}</button>`;
         }).join("");
 
+      // Two chips only ever reached two of the twenty-one days that survive in
+      // `predictions`, so the rest of the retained window was stored but
+      // unreachable. The stepper walks it a day at a time. It emits the same
+      // dfDate action the chips do — that handler already accepts an arbitrary
+      // YYYY-MM-DD — so nothing new is needed on the state side.
+      //
+      // Movement is by offset from today rather than by date arithmetic on the
+      // string: PH.mlbDate resolves through America/New_York, and adding 86400s
+      // to a naive date crosses the wrong boundary on DST days.
+      const DF_RETAIN_DAYS = 20;
+      const curDate = dfDate || today;
+      const dayOff = Math.round(
+        (Date.parse(today + "T00:00:00Z") - Date.parse(curDate + "T00:00:00Z")) / 86400000,
+      );
+      const stepBtn = (target, glyph, title) => {
+        const live = target != null;
+        return `<button ${live ? `data-act="dfDate" data-arg="${esc(target)}"` : "disabled"} title="${title}" style="border:1px solid ${C.bd};background:${C.chip};color:${live ? C.dim : C.faint};font-family:inherit;font-weight:700;font-size:12px;padding:6px 10px;border-radius:999px;cursor:${live ? "pointer" : "default"};opacity:${live ? 1 : .45};">${glyph}</button>`;
+      };
+      // Older is further back, so it clamps at the retention edge; newer clamps
+      // at today, where the "Today" chip takes over as the live view.
+      const olderArg = dayOff < DF_RETAIN_DAYS ? PH.mlbDate(-(dayOff + 1)) : null;
+      const newerArg = dayOff > 0
+        ? (dayOff === 1 ? "today" : PH.mlbDate(-(dayOff - 1)))
+        : null;
+      const dayStepper = `${stepBtn(olderArg, "◀", "Older slate")}<span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.mut};min-width:74px;text-align:center;">${esc(curDate)}</span>${stepBtn(newerArg, "▶", "Newer slate")}`;
+
       // Reveal in pages rather than truncating at a fixed cap. A full slate
       // runs to thousands of rows and the old hard slice (60 desktop / 40
       // mobile) put yesterday's out of reach entirely.
@@ -1719,6 +1749,13 @@
         ? `background:rgba(106,162,255,.16);color:#6aa2ff;`
         : `background:rgba(164,123,255,.16);color:#a37bff;`;
 
+      // Reconstructed rows sit in the same table as live ones and count the
+      // same way, so the only thing separating them is this mark. Muted rather
+      // than alarming — the call is real, it just wasn't made at the time.
+      const backTag = (on) => on
+        ? `<span title="Reconstructed after the fact — not a live call" style="font-size:9.5px;font-weight:800;letter-spacing:.04em;background:rgba(160,160,160,.16);color:${C.mut};padding:2px 5px;border-radius:4px;margin-right:6px;">BF</span>`
+        : "";
+
       const logCols = "66px 92px minmax(0,1.25fr) 44px minmax(0,1.15fr) minmax(0,1.35fr)";
       const desktopLog = logRows.slice(0, shown).map((r) => {
         const gr = this.grd(r.band);
@@ -1727,7 +1764,7 @@
           <span style="font-weight:700;font-size:12px;">${esc(r.game)}</span>
           <span style="color:${C.dim};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.matchup)}</span>
           <span style="font-family:'IBM Plex Mono',monospace;color:${C.mut};">${esc(r.count)}</span>
-          <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><span style="font-size:9.5px;font-weight:800;letter-spacing:.04em;${mktTag(r.mkt)}padding:2px 5px;border-radius:4px;margin-right:6px;">${r.mkt}</span><b style="font-family:'IBM Plex Mono',monospace;font-weight:600;">${esc(r.pred)}</b></span>
+          <span style="min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><span style="font-size:9.5px;font-weight:800;letter-spacing:.04em;${mktTag(r.mkt)}padding:2px 5px;border-radius:4px;margin-right:6px;">${r.mkt}</span>${backTag(r.back)}<b style="font-family:'IBM Plex Mono',monospace;font-weight:600;">${esc(r.pred)}</b></span>
           <span style="display:flex;align-items:baseline;gap:9px;border-radius:8px;background:${gr.bg};padding:5px 10px;min-width:0;">
             <b style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:${gr.fg};white-space:nowrap;">${esc(r.actual)}</b>
             <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.mut};white-space:nowrap;">${esc(r.err)}</span>
@@ -1743,7 +1780,7 @@
           <div data-act="logRow" data-arg="${esc(r.id)}" style="display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:9px;align-items:center;padding:10px 12px;cursor:pointer;">
             <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};">${esc(this.fmtTime(r.t))}</span>
             <span style="min-width:0;">
-              <span style="display:block;font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.game)} · ${r.mkt}</span>
+              <span style="display:block;font-size:12.5px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(r.game)} · ${r.mkt}${r.back ? ` <span style="font-weight:800;font-size:9.5px;letter-spacing:.04em;color:${C.mut};">BF</span>` : ""}</span>
               <span style="display:block;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.mut};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">called ${esc(r.pred)}</span>
             </span>
             <span style="display:block;border-radius:7px;background:${gr.bg};padding:4px 8px;text-align:right;">
@@ -1752,7 +1789,7 @@
             </span>
           </div>
           ${open ? `<div style="padding:0 12px 12px;display:flex;flex-direction:column;gap:6px;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.dim};">
-            ${kv("matchup", r.matchup)}${kv("count · outs", `${r.count} · ${r.outs}`)}${kv("predicted", r.predRaw)}${kv("actual", r.actualRaw)}${kv("error", r.err)}${kv("model", r.model)}${kv("graded", this.fmtTime(r.t))}
+            ${kv("matchup", r.matchup)}${kv("count · outs", `${r.count} · ${r.outs}`)}${kv("predicted", r.predRaw)}${kv("actual", r.actualRaw)}${kv("error", r.err)}${kv("model", r.model)}${kv("graded", this.fmtTime(r.t))}${r.back ? kv("source", "reconstructed") : ""}
           </div>` : ""}
         </div>`;
       }).join("");
@@ -1983,6 +2020,7 @@
             <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">
               <span style="font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};margin-right:2px;">Day</span>
               ${dayChips}
+              <span style="display:inline-flex;align-items:center;gap:5px;">${dayStepper}</span>
               <span style="width:1px;height:16px;background:${C.bd2};"></span>
               <span style="font-size:10.5px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};margin-right:2px;">Market</span>
               ${mktChips}
@@ -1994,7 +2032,7 @@
               </div>
               ${desktopLog || logEmpty}
               ${moreBtn}
-              ${desktopLog ? `<div style="padding:11px 14px;font-size:11.5px;color:${C.faint};line-height:1.5;">Streaming — a row lands the moment a pitch arrives with a prediction attached. Errors are signed: called minus actual. Shading grades the call — green within 1.5 mph, amber ≤3, red beyond; class calls green when right, red when wrong.</div>` : ""}
+              ${desktopLog ? `<div style="padding:11px 14px;font-size:11.5px;color:${C.faint};line-height:1.5;">Streaming — a row lands the moment a pitch arrives with a prediction attached. Errors are signed: called minus actual. Shading grades the call — green within 1.5 mph, amber ≤3, red beyond; class calls green when right, red when wrong.${logRows.some((r) => r.back) ? ` <b style="color:${C.mut};">BF</b> marks a call reconstructed after the fact, with the models current at backfill time rather than at the pitch — it counts in the record, but nobody could have acted on it.` : ""}</div>` : ""}
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:14px;">${calib}${veloTrend}${mixCard}${confCard}</div>
