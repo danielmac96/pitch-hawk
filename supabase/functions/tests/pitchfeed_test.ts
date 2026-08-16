@@ -27,7 +27,11 @@ function stubDb(tables: Record<string, Record<string, unknown>[]>) {
           return q;
         },
         in: (col: string, vals: unknown[]) => {
-          rows = rows.filter((r) => vals.includes(r[col]));
+          // Set rather than Array.includes: the pitch-paging test filters
+          // thousands of rows against a thousand keys, and the quadratic form
+          // made it slow enough to look hung.
+          const want = new Set(vals);
+          rows = rows.filter((r) => want.has(r[col]));
           return q;
         },
         not: (col: string, _op: string, _val: unknown) => {
@@ -91,6 +95,14 @@ function pred(over: Record<string, unknown> = {}) {
 // Pitch 2 is the one already thrown (its post-pitch count is what the model
 // predicted into); pitch 3 is what was actually thrown next.
 const PITCHES = [
+  // Pitch 1 is what the pitch_number 0 prediction is about — a plate
+  // appearance's opening call. Its post-pitch count (1-0) is deliberately not
+  // 0-0, so a test asserting "0-0" for the opener proves the count comes from
+  // the definition of a PA start rather than from reading this row.
+  {
+    game_pk: 1, at_bat_index: 3, pitch_number: 1, balls: 1, strikes: 0,
+    outs: 1, inning: 4, top_inning: true, pitch_type: "CH",
+  },
   {
     game_pk: 1, at_bat_index: 3, pitch_number: 2, balls: 1, strikes: 2,
     outs: 1, inning: 4, top_inning: true, pitch_type: "SL",
@@ -200,6 +212,67 @@ Deno.test("an unknown pitch leaves the count null rather than inventing 0-0", as
   assertEquals(res.rows[0].count, null);
   assertEquals(res.rows[0].outs, null);
   assertEquals(res.rows[0].actual_pitch_type, null);
+});
+
+Deno.test("the pre-first-pitch call of a plate appearance carries a situation", async () => {
+  // pitch_number 0 is the call made before anything is thrown, so there is no
+  // already-thrown pitch to read: pitches.pitch_number starts at 1, and
+  // (at_bat_index, 0) can never match. That nulled the inning, half, count and
+  // outs of one row per plate appearance -- 114 of 478 on a real game -- and a
+  // null inning was enough to crash the client outright. The pitch being
+  // predicted is in the same half-inning, and a PA starts 0-0 by definition.
+  const res = await pitchFeed(
+    db([pred({ pitch_number: 0 })]), { date: DAY },
+  );
+  assertEquals(res.rows[0].count, "0-0");
+  assertEquals(res.rows[0].inning, 4);
+  assertEquals(res.rows[0].half, "▲");
+  assertEquals(res.rows[0].outs, 1);
+  // ...and the pitch it predicts is pitch 1, whose own post-pitch count is 1-0.
+  assertEquals(res.rows[0].actual_pitch_type, "CH");
+});
+
+Deno.test("an opener with no pitch on record still refuses to invent 0-0", async () => {
+  const res = await pitchFeed(
+    db([pred({ pitch_number: 0, at_bat_index: 99 })]), { date: DAY },
+  );
+  assertEquals(res.rows[0].count, null);
+  assertEquals(res.rows[0].inning, null);
+});
+
+Deno.test("every row keeps its situation when the pitch join spans several pages", async () => {
+  // The pitch lookup was one un-ordered `.limit(MAX_LIMIT * 4)`. Because it
+  // filters `game_pk IN (…) AND at_bat_index IN (…)` -- close to a cross
+  // product -- a full prediction page selected more pitch rows than that
+  // ceiling and got an arbitrary slice of them. Every prediction outside the
+  // slice silently lost its inning, count and outs: 54% of a 1,000-row page in
+  // production, against 24% of a 200-row one.
+  const PA = 1000, PER_PA = 5;
+  const atBats = [], pitches = [], preds = [];
+  for (let ab = 0; ab < PA; ab += 1) {
+    atBats.push({ game_pk: 1, at_bat_index: ab, pitcher_id: 600, batter_id: 700 });
+    for (let pn = 1; pn <= PER_PA; pn += 1) {
+      pitches.push({
+        game_pk: 1, at_bat_index: ab, pitch_number: pn,
+        balls: 0, strikes: pn - 1, outs: 0, inning: 1 + (ab % 9),
+        top_inning: ab % 2 === 0, pitch_type: "FF",
+      });
+    }
+    preds.push(pred({ id: ab + 1, at_bat_index: ab, pitch_number: PER_PA - 1 }));
+  }
+  const res = await pitchFeed(
+    stubDb({
+      games: GAMES, at_bats: atBats, player_info: PLAYERS,
+      pitches, predictions: preds,
+    }),
+    { date: DAY, limit: 1000 },
+  );
+  assertEquals(res.rows.length, 1000);
+  // 5,000 pitch rows against a 1,000-row page: the read has to page to see the
+  // last of them, and nothing may go missing in the process.
+  assertEquals(res.rows.filter((r) => r.inning == null).length, 0);
+  assertEquals(res.rows.filter((r) => r.count == null).length, 0);
+  assertEquals(res.rows.filter((r) => r.actual_pitch_type == null).length, 0);
 });
 
 Deno.test("game_pk filters to that game", async () => {

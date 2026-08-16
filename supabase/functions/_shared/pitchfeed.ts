@@ -188,20 +188,45 @@ export async function pitchFeed(
   //   (at_bat_index, pitch_number + 1)  the pitch actually thrown next, which
   //                                     is what the prediction was about.
   //
-  // Scoped to the at-bats on this page, not the whole day.
+  // Scoped to the at-bats on this page, not the whole day — and paged.
+  //
+  // This was a single `.limit(MAX_LIMIT * 4)` with no ordering until
+  // 2026-08-16. `game_pk IN (…10 games) AND at_bat_index IN (…100 indexes)` is
+  // close to a cross product, so a 1,000-row prediction page selects far more
+  // than 4,000 pitch rows and the ceiling handed back an arbitrary 4,000 of
+  // them. Every prediction whose pitch fell outside that slice lost its inning,
+  // count and outs — measured at 54% of a 1,000-row page against 24% of a
+  // 200-row one, which is the signature of a truncation rather than of missing
+  // data. The client rendered those as "—", and one of them was enough to crash
+  // the Data Feed outright.
   const abIdx = [...new Set(
     preds.map((r: PitchFeedRow) => r.at_bat_index).filter((v: number | null) => v != null),
   )];
+  const PITCH_PAGE = MAX_LIMIT;
+  // Backstop, not an expected limit: a full slate page matches roughly 5,000
+  // pitch rows. It stops a bad range from spinning the function forever.
+  const PITCH_PAGE_CAP = 24;
   // deno-lint-ignore no-explicit-any
   let pitchRows: any[] = [];
   if (abIdx.length) {
-    const { data } = await db.from("pitches")
-      .select("game_pk,at_bat_index,pitch_number,balls,strikes,outs,inning," +
-        "top_inning,pitch_type")
-      .in("game_pk", [...new Set(preds.map((r: PitchFeedRow) => r.game_pk))])
-      .in("at_bat_index", abIdx)
-      .limit(MAX_LIMIT * 4);
-    pitchRows = data ?? [];
+    const pks = [...new Set(preds.map((r: PitchFeedRow) => r.game_pk))];
+    for (let page = 0; page < PITCH_PAGE_CAP; page += 1) {
+      const from = page * PITCH_PAGE;
+      const { data } = await db.from("pitches")
+        .select("game_pk,at_bat_index,pitch_number,balls,strikes,outs,inning," +
+          "top_inning,pitch_type")
+        .in("game_pk", pks)
+        .in("at_bat_index", abIdx)
+        // Ordered on the natural key so the pages partition the set. Without an
+        // order the ranges may overlap and leave rows unreachable.
+        .order("game_pk", { ascending: true })
+        .order("at_bat_index", { ascending: true })
+        .order("pitch_number", { ascending: true })
+        .range(from, from + PITCH_PAGE - 1);
+      const batch = data ?? [];
+      pitchRows = pitchRows.concat(batch);
+      if (batch.length < PITCH_PAGE) break;
+    }
   }
   const pitchBy = new Map<string, Record<string, number | string | boolean>>(
     // deno-lint-ignore no-explicit-any
@@ -218,6 +243,17 @@ export async function pitchFeed(
     const next: any = pitchBy.get(
       `${r.game_pk}:${r.at_bat_index}:${(r.pitch_number ?? 0) + 1}`,
     );
+    // A prediction at pitch_number 0 is the pre-first-pitch call of the plate
+    // appearance, so there is no already-thrown pitch to read the situation
+    // off: `pitches.pitch_number` starts at 1, and (at_bat_index, 0) can never
+    // match. That silently nulled the inning, half, count and outs of every
+    // such row — 114 of 478 for one game on 2026-08-16, and the entire null
+    // population once the truncation above is discounted. The pitch it predicts
+    // is in the same half-inning, and the count at the start of a plate
+    // appearance is 0-0 by definition, so both are read rather than dropped.
+    const opener = r.pitch_number === 0;
+    // deno-lint-ignore no-explicit-any
+    const sit: any = at ?? (opener ? next : null);
     return {
       id: r.id,
       game_pk: r.game_pk,
@@ -243,12 +279,16 @@ export async function pitchFeed(
       pitcher_name: ab?.pitcher_id ? nameBy.get(ab.pitcher_id) ?? null : null,
       batter_id: ab?.batter_id ?? null,
       batter_name: ab?.batter_id ? nameBy.get(ab.batter_id) ?? null : null,
-      inning: at?.inning ?? null,
-      half: at ? (at.top_inning ? "▲" : "▼") : null,
-      // Null, never "0-0", when the pitch is unknown: a fabricated count reads
-      // as a real one.
-      count: at ? `${at.balls ?? 0}-${at.strikes ?? 0}` : null,
-      outs: at?.outs ?? null,
+      inning: sit?.inning ?? null,
+      half: sit ? (sit.top_inning ? "▲" : "▼") : null,
+      // Still null, never "0-0", when the pitch is genuinely unknown: a
+      // fabricated count reads as a real one. The opener is not a fabrication —
+      // a plate appearance starts 0-0 — but it is only claimed when the pitch
+      // it predicts is actually on hand.
+      count: at
+        ? `${at.balls ?? 0}-${at.strikes ?? 0}`
+        : (opener && next ? "0-0" : null),
+      outs: sit?.outs ?? null,
       actual_pitch_type: next?.pitch_type ?? null,
       model_version: r.model_version ?? null,
       created_at: r.created_at ?? null,

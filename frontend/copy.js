@@ -62,6 +62,20 @@ window.PH_COPY = (function () {
     dataTitle: "Data feed",
     dataSub: "Pitch-by-pitch and at-bat data, straight from the live feed.",
 
+    // live board · earlier at-bats strip (see paEmptyNote)
+    paLoading: "Loading this game's at-bat record…",
+    paEmptyPregame:
+      "This game hasn't started. Every at-bat lands here as it finishes, " +
+      "graded against what actually happened.",
+    paEmptyLive:
+      "No completed at-bats yet — the first one lands here the moment it ends.",
+
+    // shown when a view throws while rendering (see viewErrorHtml)
+    viewError:
+      "Something in this view failed to draw. The data behind it is fine and " +
+      "the other tabs still work — this is a bug on our side, and the details " +
+      "below are what we need to fix it.",
+
     // footer
     footerDisclaimer:
       "Live MLB data with model-driven projections, for information and " +

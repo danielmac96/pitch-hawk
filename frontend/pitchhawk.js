@@ -111,8 +111,11 @@
     constructor(root) {
       this.root = root;
       this.state = {
-        view: "home", feedGame: null,
+        view: "home",
         focusGame: null, dfGame: "all", mkt: "all", openLog: null,
+        // How many earlier at-bats the Live Board strip reveals, raised by its
+        // "show more" control. A full game runs to ~55 plate appearances.
+        paShow: 12,
         // Which slate the graded log is showing, as an America/New_York
         // date. null means today; the Yesterday chip sets the prior date.
         dfDate: null,
@@ -146,7 +149,7 @@
       // /api/pitches (see syncPaHistory). `_paSig` gates the refetch so it runs
       // when the at-bat turns over, not on every 8s poll.
       this.paHist = {};
-      this._paSig = null;
+      this._paSig = {};
       // Warehouse-backed scouting panels. `_scoutSigs` gates re-fetching per
       // panel, so a new batter does not re-request the pitcher profile or the
       // game context.
@@ -310,17 +313,25 @@
     // paginated. This reads them, so the strip is complete from first paint and
     // identical for everybody.
     //
-    // Fetched for the focused game only, and only when its at-bat has actually
-    // moved — the board polls every 8s and this is a multi-page read.
-    async syncPaHistory(games) {
-      const g = (games || []).find((x) => x.gamePk === this.state.feedGame)
-        || (games || [])[0];
+    // Fetched for the FOCUSED game, and only when its at-bat has actually moved
+    // — the board polls every 8s and this is a multi-page read.
+    //
+    // The game came off `state.feedGame` until 2026-08-16, but the Live Board's
+    // selection is `state.focusGame` (see focused()). Nothing kept the two in
+    // step — and nothing ever rendered a control for feedGame at all; poll()
+    // simply pinned it to the first live game. So clicking any other game in the
+    // rail fetched nothing, and every game but the first showed an empty strip
+    // forever, however long it had been running.
+    async syncPaHistory() {
+      const g = this.focused();
       if (!g) return false;
       // The at-bat index is not on the live payload, so the batter plus the
-      // half-inning is the signature that a PA has turned over.
-      const sig = `${g.gamePk}|${g.batter.name}|${g.inning}${g.half}`;
-      if (this._paSig === sig) return false;
-      this._paSig = sig;
+      // half-inning is the signature that a PA has turned over. Kept per game,
+      // not globally: a single signature meant switching games and switching
+      // back refetched a game whose history had not moved.
+      const sig = `${g.batter.name}|${g.inning}${g.half}|${g.phase}`;
+      if (this._paSig[g.gamePk] === sig) return false;
+      this._paSig[g.gamePk] = sig;
       try {
         // Eastern, because the server resolves the slate through
         // games.official_date — see the note in syncFeed().
@@ -330,11 +341,14 @@
         // so the strip starts at the one before it. On a finished game there is
         // nothing live and every at-bat belongs in the history.
         const earlier = g.phase === "live" ? all.slice(1) : all;
-        this.paHist[g.gamePk] = earlier.slice(0, 12).map((s) => this.bandPa(s));
+        // Every plate appearance, not the first twelve. The old cap predated the
+        // server-backed fetch and silently hid most of a game — 55 PAs by the
+        // 9th, of which 12 were reachable.
+        this.paHist[g.gamePk] = earlier.map((s) => this.bandPa(s));
         return true;
       } catch (_e) {
         // Keep whatever we had; the strip is history, not the live read.
-        this._paSig = null;
+        delete this._paSig[g.gamePk];
         return false;
       }
     }
@@ -397,8 +411,17 @@
           const s = Object.assign({}, this.state.liveSources); s[arg] = !s[arg];
           return this.setState({ liveSources: s });
         }
-        case "feedGame": return this.setState({ feedGame: Number(arg) });
-        case "focusGame": return this.setState({ focusGame: Number(arg) });
+        case "focusGame": {
+          // Paint the selection immediately, then pull that game's at-bat
+          // history in behind it — waiting for the next 8s poll to notice made
+          // the rail feel dead for up to eight seconds after every click.
+          this.setState({ focusGame: Number(arg), paShow: 12 });
+          this.syncPaHistory()
+            .then((changed) => { if (changed) this.render(); })
+            .catch(() => {});
+          return;
+        }
+        case "paMore": return this.setState({ paShow: (this.state.paShow || 12) + 24 });
         case "dfGame": {
           this.setState({ dfGame: arg === "all" ? "all" : Number(arg), dfShow: 60 });
           // Scope is applied server-side, so the chip needs a refetch. Render
@@ -407,6 +430,9 @@
           this.loadPitchFeed()
             .then((changed) => { if (changed) this.render(); })
             .catch(() => {});
+          // The scouting panels describe a pitcher, a batter and a game, so
+          // they follow this selector too.
+          this.syncScouting();
           return;
         }
         case "dfDate": {
@@ -716,23 +742,42 @@
         return { name: n, label: PH.OUTCOME_LABEL[n] || n, pct: Math.round((oc.modelProb || 0) * 100), rec: n === abr.recommendation, c: this.OUT_COLOR[n] };
       }).sort((a, b) => b.pct - a.pct);
     }
-    // The focused game is always a live one: the rail, situation strip and
-    // pitch log all describe a game in progress. Upcoming and final games have
-    // their own sections.
+    // Every game on today's slate, live first, then finished, then still to
+    // come — the selectable set for the rail and the Data Feed panels.
+    //
+    // Selection must not be gated on `phase === "live"`, for two reasons. It
+    // put every finished game out of reach the moment it ended, taking its
+    // whole graded record with it; and `phase` is not even reliable for that,
+    // because /live derives it from the presence of a live_state row rather
+    // than from status — on 2026-08-16 two of fifteen games read "Final" while
+    // still arriving as phase "live". The rail lists the slate; `phase` decides
+    // only how a panel is drawn.
+    slateGames() {
+      const rank = (g) => (g.phase === "live" ? 0 : g.phase === "final" ? 1 : 2);
+      return (PH.games || []).slice().sort((a, b) => rank(a) - rank(b));
+    }
     focused() {
-      const live = this.liveGames();
-      if (!live.length) return null;
-      return live.find((g) => g.gamePk === this.state.focusGame) || live[0];
+      const list = this.slateGames();
+      if (!list.length) return null;
+      return list.find((g) => g.gamePk === this.state.focusGame) || list[0];
     }
 
     // ── Live Board · game rail (1c) / focus strip (1b) ────────────────────
     gameRailHtml(focusPk, mobile) {
       const C = this.C;
-      const rail = this.liveGames();
+      const rail = this.slateGames();
       const items = rail.map((g) => {
         const on = g.gamePk === focusPk;
+        const live = g.phase === "live";
         const nc = this.nextCall(g);
-        const mini = `${g.score.away}–${g.score.home} ${g.half}${g.inning}`;
+        // A finished game has no half-inning left to report and an upcoming one
+        // has no score, so neither gets the live line. Showing "0–0 ▲" against a
+        // game that has not started reads as a scoreless first inning.
+        const mini = live
+          ? `${g.score.away}–${g.score.home} ${g.half}${g.inning}`
+          : g.phase === "final"
+            ? `${g.score.away}–${g.score.home} F`
+            : (this.firstPitch(g.startTs) || "TBD");
         if (mobile) {
           return `<button data-act="focusGame" data-arg="${g.gamePk}" style="flex:none;display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:82px;border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${C.txt};font-family:inherit;padding:6px 9px;border-radius:10px;text-align:left;cursor:pointer;opacity:${g.stale ? 0.7 : 1};">
             <span style="font-size:11px;font-weight:800;letter-spacing:.02em;color:${on ? C.grn : C.txt};">${esc(g.label)}</span>
@@ -744,7 +789,7 @@
             <span style="font-size:13px;font-weight:800;">${esc(g.label)}</span>
             <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:${C.dim};">${esc(mini)}</span>
           </div>
-          <div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:${C.mut};min-width:0;">
+          ${live ? `<div style="display:flex;align-items:center;gap:8px;font-size:11.5px;color:${C.mut};min-width:0;">
             <span style="font-family:'IBM Plex Mono',monospace;">${esc(g.count)}</span>
             <span style="width:1px;height:10px;background:${C.bd2};"></span>
             <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(this.shortName(g.batter.name))}</span>
@@ -752,7 +797,7 @@
           <div style="display:flex;align-items:center;gap:6px;">
             <span style="font-size:10px;font-weight:800;letter-spacing:.04em;color:${on ? C.grn : C.dim};background:${on ? "rgba(74,222,128,.16)" : C.chip};padding:2px 6px;border-radius:5px;white-space:nowrap;">${esc(nc.label)} ${esc(nc.pct)}</span>
             <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:${C.faint};">${esc(nc.velo)}</span>
-          </div>
+          </div>` : `<div style="font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:${C.faint};">${g.phase === "final" ? "Final · full record" : "Scheduled"}</div>`}
         </button>`;
       }).join("");
       if (mobile) {
@@ -760,7 +805,7 @@
       }
       return `<div class="phv-sc" style="border-right:1px solid ${C.bd};background:${C.rail};overflow-y:auto;padding:14px 12px;">
         <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:10px;padding:0 2px;">
-          <span style="font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">Live games</span>
+          <span style="font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">Today's games</span>
           <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};">${rail.length}</span>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;">${items}</div>
@@ -770,6 +815,19 @@
     // ── Live Board · broadcast situation strip ────────────────────────────
     situationHtml(g, mobile) {
       const C = this.C;
+      // The count, bases and half-inning only mean something while a game is in
+      // progress. Rendering them on a finished game showed a live-looking 0-0
+      // with nobody on; on a scheduled one it showed a scoreless first inning
+      // for a game that had not been played.
+      const live = g.phase === "live";
+      const chip = (t) => `<span style="font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.dim};background:${C.chip};border:1px solid ${C.bd2};padding:4px 9px;border-radius:7px;white-space:nowrap;">${esc(t)}</span>`;
+      // firstPitch() is empty when the schedule carries no start time, and
+      // "First pitch " with nothing after it reads as a missing value rather
+      // than as an unknown one.
+      const fp = this.firstPitch(g.startTs);
+      const stateChip = g.phase === "final"
+        ? chip("Final")
+        : chip(fp ? `First pitch ${fp}` : "Scheduled");
       if (mobile) {
         return `<div style="flex:none;background:${C.rail};border-bottom:1px solid ${C.bd};padding:11px 14px 12px;">
           <div style="display:flex;align-items:center;gap:10px;">
@@ -780,14 +838,16 @@
               <span style="font-size:28px;font-weight:700;line-height:1;">${esc(g.score.home)}</span>
               <span style="font-size:11px;font-weight:600;color:${C.blue};">${esc(g.home)}</span>
             </div>
-            <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:${C.grn};">${esc(g.half)} ${esc(g.inning)}</span>
-            <div style="margin-left:auto;">${this.diamondHtml(g, 36, 12)}</div>
-            ${this.bsoHtml(g, 8)}
+            ${live
+              ? `<span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:${C.grn};">${esc(g.half)} ${esc(g.inning)}</span>
+                 <div style="margin-left:auto;">${this.diamondHtml(g, 36, 12)}</div>
+                 ${this.bsoHtml(g, 8)}`
+              : `<span style="margin-left:auto;">${stateChip}</span>`}
           </div>
-          <div style="display:flex;gap:14px;margin-top:9px;font-size:12.5px;">
+          ${live ? `<div style="display:flex;gap:14px;margin-top:9px;font-size:12.5px;">
             <div><span style="color:${C.blue};font-size:10.5px;font-weight:700;">PITCHING</span> <b style="font-weight:700;">${esc(this.player(g.pitcher))}</b></div>
             <div><span style="color:${C.blue};font-size:10.5px;font-weight:700;">AT BAT</span> <b style="font-weight:700;">${esc(this.player(g.batter))}</b></div>
-          </div>
+          </div>` : ""}
         </div>`;
       }
       return `<div style="display:flex;align-items:center;gap:26px;flex-wrap:wrap;background:${C.rail};border:1px solid ${C.bd};border-radius:14px;padding:14px 18px;margin-bottom:16px;">
@@ -798,16 +858,16 @@
           <span style="font-size:34px;font-weight:700;line-height:1;">${esc(g.score.home)}</span>
           <span style="font-size:12px;font-weight:600;color:${C.blue};">${esc(g.home)}</span>
         </div>
-        <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+        ${live ? `<div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
           <span style="font-size:16px;line-height:1;color:${C.grn};">${esc(g.half)}</span>
           <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:${C.dim};">Inn ${esc(g.inning)}</span>
         </div>
         ${this.diamondHtml(g, 52, 16)}
-        ${this.bsoHtml(g, 11)}
-        <div style="display:flex;flex-direction:column;gap:6px;margin-left:auto;font-size:13.5px;">
+        ${this.bsoHtml(g, 11)}` : stateChip}
+        ${live ? `<div style="display:flex;flex-direction:column;gap:6px;margin-left:auto;font-size:13.5px;">
           <div style="display:flex;gap:10px;"><span style="color:${C.blue};width:60px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">Pitching</span><b style="font-weight:700;">${esc(this.player(g.pitcher))}</b></div>
           <div style="display:flex;gap:10px;"><span style="color:${C.blue};width:60px;font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;">At bat</span><b style="font-weight:700;">${esc(this.player(g.batter))}</b><span style="color:${C.faint};font-family:'IBM Plex Mono',monospace;font-size:12px;">on deck ${esc(this.shortName(g.onDeckBatter && g.onDeckBatter.name))}</span></div>
-        </div>
+        </div>` : ""}
       </div>`;
     }
 
@@ -935,7 +995,15 @@
     // ── Live Board · earlier at-bats (server-backed) ──────────────────────
     earlierRows(g, mobile) {
       const C = this.C;
-      const hist = this.paHist[g.gamePk] || [];
+      const all = this.paHist[g.gamePk] || [];
+      // Revealed in pages rather than truncated: the strip holds every plate
+      // appearance of the game now, and a 55-row wall would bury the live panel
+      // under it on first paint.
+      const shown = Math.max(Number(this.state.paShow) || 12, 12);
+      const hist = all.slice(0, shown);
+      const more = all.length > shown
+        ? `<div style="padding:10px 14px;text-align:center;"><button data-act="paMore" style="border:1px solid ${C.bd};background:${C.chip};color:${C.dim};font-family:inherit;font-weight:600;font-size:11.5px;padding:6px 14px;border-radius:999px;cursor:pointer;">Show 24 more · ${all.length - shown} earlier at-bats</button></div>`
+        : "";
       return hist.map((h) => {
         const rg = this.grd(h.callOk === true ? "good" : h.callOk === false ? "bad" : null);
         const pg = this.grd(h.pitchBand), vg = this.grd(h.veloBand), kg = this.grd(h.pickBand);
@@ -962,7 +1030,26 @@
           <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;text-align:center;padding:5px 0;border-radius:7px;background:${vg.bg};color:${vg.fg};">${esc(ve)}</span>
           <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;text-align:center;padding:5px 0;border-radius:7px;background:${kg.bg};color:${kg.fg};">${esc(rec)}</span>
         </div>`;
-      }).join("");
+      }).join("") + more;
+    }
+    // "12 of 55 plate appearances" — the strip is a window onto the server's
+    // complete record now, so it says how much of it is on screen.
+    // Three genuinely different empty states. Saying "starts empty on reload"
+    // stopped being true when this moved server-side on 2026-08-15 — the record
+    // is complete from first paint, so an empty strip now means the game has
+    // not produced one yet, or the fetch has not landed.
+    paEmptyNote(g) {
+      if (g.phase === "pregame") return COPY.paEmptyPregame;
+      if (!(g.gamePk in this._paSig)) return COPY.paLoading;
+      return COPY.paEmptyLive;
+    }
+    paCountLabel(g) {
+      const all = this.paHist[g.gamePk] || [];
+      if (!all.length) return "";
+      const shown = Math.min(all.length, Math.max(Number(this.state.paShow) || 12, 12));
+      return shown < all.length
+        ? `${shown} of ${all.length} plate appearances`
+        : `${all.length} plate appearance${all.length === 1 ? "" : "s"}`;
     }
 
     // ── Live Board · locations (1c right column) ──────────────────────────
@@ -1132,19 +1219,25 @@
         </div>`;
       }
       const hist = this.paHist[g.gamePk] || [];
+      // Everything keyed to "the next pitch" — the green prediction panel, the
+      // current-PA pitch log, the zone plot — describes a plate appearance in
+      // progress. On a finished or scheduled game there isn't one, and the
+      // complete at-bat record below is the whole point of selecting it.
+      const live = g.phase === "live";
 
       if (mobile) {
         return `<div style="display:flex;flex-direction:column;min-height:0;">
           ${this.gameRailHtml(g.gamePk, true)}
           ${this.situationHtml(g, true)}
           <div style="padding:12px 14px 20px;">
-            ${this.predPanelHtml(g, true)}
+            ${live ? this.predPanelHtml(g, true) : ""}
             <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:7px;">
-              <span style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">Pitch log · newest first</span>
+              <span style="font-size:10px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:${C.faint};">${live ? "Pitch log · newest first" : "At-bat record · newest first"}</span>
               <span style="font-size:10.5px;color:${C.faint};">shading = call accuracy</span>
             </div>
             <div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;">
-              ${this.pitchLogHtml(g, true)}
+              ${live ? this.pitchLogHtml(g, true) : ""}
+              ${!hist.length ? `<div style="padding:14px;font-size:12.5px;color:${C.faint};font-style:italic;line-height:1.5;">${esc(this.paEmptyNote(g))}</div>` : ""}
               ${hist.length ? `
               <div style="display:grid;grid-template-columns:1fr 50px 42px 34px;gap:6px;padding:7px 10px;border-top:1px solid ${C.bd};border-bottom:1px solid ${C.bd};background:${C.panel2};font-size:9.5px;font-weight:800;letter-spacing:.04em;text-transform:uppercase;color:${C.faint};">
                 <span>Earlier at-bats</span><span style="text-align:center;">P·pred</span><span style="text-align:center;">Velo</span><span style="text-align:center;">Picks</span>
@@ -1164,31 +1257,31 @@
           <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:14px;">
             <h1 style="margin:0;font-size:27px;font-weight:800;letter-spacing:-.02em;">${esc(g.label)}</h1>
             <span style="font-size:13px;color:${C.mut};">${esc(g.venue)} · ${esc(g.weather)}</span>
-            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:12px;color:${C.faint};">model ${esc(g.modelVersion || "—")} · ${g.stale ? "paused (no pitch 30s+)" : "live"}</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:12px;color:${C.faint};">model ${esc(g.modelVersion || "—")} · ${live ? (g.stale ? "paused (no pitch 30s+)" : "live") : g.phase === "final" ? "final" : "scheduled"}</span>
           </div>
           ${this.situationHtml(g, false)}
-          <div style="display:grid;grid-template-columns:${nar ? "minmax(0,1fr)" : "minmax(0,1fr) 380px"};gap:16px;align-items:start;">
+          <div style="display:grid;grid-template-columns:${nar || !live ? "minmax(0,1fr)" : "minmax(0,1fr) 380px"};gap:16px;align-items:start;">
             <div style="display:flex;flex-direction:column;gap:12px;min-width:0;">
-              <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;">
+              ${live ? `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;">
                 <span style="font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">At-bat feed · newest first</span>
                 <span style="font-size:11.5px;color:${C.faint};">shading = call accuracy · green ≤1.5 mph · amber ≤3 · red beyond</span>
               </div>
-              <div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};overflow:hidden;">${this.pitchLogHtml(g, false)}</div>
+              <div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};overflow:hidden;">${this.pitchLogHtml(g, false)}</div>` : ""}
               <div style="display:flex;align-items:baseline;justify-content:space-between;margin-top:4px;">
-                <span style="font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">Earlier at-bats</span>
-                <span style="font-size:11.5px;color:${C.faint};">${hist.length ? `${hist.length} seen since this tab opened` : "none yet this session"}</span>
+                <span style="font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">${live ? "Earlier at-bats" : "At-bat record"}</span>
+                <span style="font-size:11.5px;color:${C.faint};">${esc(this.paCountLabel(g))}</span>
               </div>
               <div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel2};overflow:hidden;">
                 <div style="display:grid;grid-template-columns:92px 2fr 74px 62px 50px;gap:12px;padding:9px 14px;border-bottom:1px solid ${C.bd};background:${C.panel3};font-size:10.5px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:${C.faint};">
                   <span>Batter</span><span>Result · called</span><span style="text-align:center;">P pred/act</span><span style="text-align:center;">Avg velo err</span><span style="text-align:center;">Picks</span>
                 </div>
-                ${hist.length ? this.earlierRows(g, false) : `<div style="padding:14px;font-size:12.5px;color:${C.faint};font-style:italic;">Finished at-bats land here as the game goes on — the feed only serves the current plate appearance, so this list starts empty on reload.</div>`}
+                ${hist.length ? this.earlierRows(g, false) : `<div style="padding:14px;font-size:12.5px;color:${C.faint};font-style:italic;">${esc(this.paEmptyNote(g))}</div>`}
               </div>
             </div>
-            <div style="display:flex;flex-direction:column;gap:14px;">
+            ${live ? `<div style="display:flex;flex-direction:column;gap:14px;">
               ${this.predPanelHtml(g, false)}
               ${this.zonePanelHtml(g)}
-            </div>
+            </div>` : ""}
           </div>
           ${dayBlocks}
         </div>
@@ -1227,21 +1320,21 @@
       const date = this.state.dfDate;
       const seq = (this._pitchSeq = (this._pitchSeq || 0) + 1);
       try {
-        // Only the two per-pitch markets render here; asking for the rest
-        // would ship at-bat and game-level rows the mapper throws away.
-        const wanted = { VELO: "pitch_speed_ou", CLASS: "pitch_result" };
+        // Every market, not just the two per-pitch ones. The old whitelist here
+        // was the reason at-bat and game-level calls — ab_result,
+        // ab_pitches_ou, moneyline, total — could not be seen anywhere in the
+        // product: they were never requested, so the mapper never saw them.
+        // "all" is dropped by loadPitches, which the server reads as no filter.
         const params = {
           game_pk: this.state.dfGame === "all" ? null : this.state.dfGame,
-          market: wanted[this.state.mkt] || "pitch_speed_ou,pitch_result",
+          market: this.state.mkt,
           limit: PAGE_LIMIT,
         };
-        // Graded only, deliberately. The velo mapper needs an actual to
-        // render a row at all and dfStats averages the error across them, so
-        // ungraded rows would cost page budget and skew the KPIs without
-        // showing anything. The lag they represent is small: settle is chained
-        // off live-poll whenever a game advances, so a call is graded within
-        // ~30s rather than on the old 10-minute timer.
-        params.status = "graded";
+        // Ungraded rows are included: the at-bat in progress is exactly the one
+        // a live viewer is looking at, and a call the model has already made is
+        // not something to hide until settle catches up. They are badged
+        // "pending" and excluded from every accuracy statistic — see dfStats.
+        //
         // Omitted for today so the server applies its own America/New_York
         // date, which is the authority on which slate "today" is.
         if (date) params.date = date;
@@ -1309,6 +1402,10 @@
         : "—";
       const base = {
         t: r.graded_at || r.created_at, pk: r.game_pk, game: r.game_label || "—",
+        // The raw market key, kept alongside the display tag below so the
+        // market chips can filter on what the server actually sent rather than
+        // on a presentation category that only ever covered two of six.
+        market: r.market,
         inning: r.inning, pitcher: r.pitcher_name, batter: r.batter_name, matchup,
         count: r.count || "—", outs: r.outs == null ? "—" : r.outs,
         type: r.actual_pitch_type, model: r.model_version || "—",
@@ -1318,40 +1415,79 @@
         // acted on. Badged in the log; still counted in the record.
         back: r.backfilled_at != null,
       };
+      const label = (c) => (c ? PH.OUTCOME_LABEL[c] || c : "—");
+      const conf = r.confidence != null ? `${Math.round(r.confidence * 100)}%` : "";
+
       if (r.market === "pitch_speed_ou") {
         // `error` is computed server-side so every client renders the same
-        // number. A null actual means the row predates actual capture.
-        if (r.predicted_value == null || r.actual_value == null) return null;
+        // number. A missing actual used to drop the row entirely, which is what
+        // made every past slate render as nothing before the actuals backfill
+        // (20260816000001) — a call with no result yet is still a call, so it
+        // renders as pending instead of vanishing.
+        if (r.predicted_value == null) return null;
         const err = r.error;
+        const pending = r.actual_value == null;
         return Object.assign(base, {
           id: `${r.id}|v`, mkt: "VELO",
           pred: `${r.predicted_value.toFixed(1)} mph`,
           predRaw: r.predicted_value.toFixed(1),
-          actual: r.actual_value.toFixed(1), actualRaw: r.actual_value.toFixed(1),
-          speed: r.actual_value,
-          err: err == null ? "ungraded"
+          actual: pending ? "pending" : r.actual_value.toFixed(1),
+          actualRaw: pending ? "—" : r.actual_value.toFixed(1),
+          speed: pending ? null : r.actual_value,
+          err: err == null ? "pending"
             : (err >= 0 ? "+" : "−") + Math.abs(err).toFixed(1),
           errAbs: err == null ? null : Math.abs(err),
           band: this.veloBand(err), hit: err != null && Math.abs(err) <= 1.5,
+          pending,
         });
       }
       if (r.market === "pitch_result") {
         const ok = r.result == null ? null : r.result === "win";
-        const label = (c) => (c ? PH.OUTCOME_LABEL[c] || c : "—");
         return Object.assign(base, {
           id: `${r.id}|c`, mkt: "CLASS",
           pred: label(r.recommendation),
-          predRaw: `${r.recommendation || "—"} ${
-            r.confidence != null ? Math.round(r.confidence * 100) + "%" : ""
-          }`.trim(),
-          actual: label(r.actual_label), actualRaw: r.actual_label || "—",
-          err: ok == null ? "ungraded" : ok ? "correct" : "miss",
+          predRaw: `${r.recommendation || "—"} ${conf}`.trim(),
+          actual: ok == null ? "pending" : label(r.actual_label),
+          actualRaw: r.actual_label || "—",
+          err: ok == null ? "pending" : ok ? "correct" : "miss",
           band: ok == null ? null : ok ? "good" : "bad", hit: ok === true,
+          pending: ok == null,
         });
       }
-      // Other markets are game/at-bat level and have their own surfaces.
-      return null;
+
+      // At-bat and game markets. The server settles all of them through the
+      // same `result` column, so they render with the per-pitch grammar —
+      // called X, actual Y, correct or miss — rather than needing a surface of
+      // their own. Nothing requested them until 2026-08-16, so an at-bat call
+      // the model made and graded was not visible anywhere in the product.
+      const meta = PH.MARKETS[r.market];
+      if (!meta) return null;   // unknown market: absent beats mislabelled
+      const ou = meta.kind === "ou";
+      const proj = r.predicted_value != null ? Number(r.predicted_value).toFixed(1) : null;
+      return Object.assign(base, {
+        id: `${r.id}|${r.market}`,
+        mkt: this.DF_TAG[r.market] || meta.short,
+        pred: ou
+          ? `${label(r.recommendation)}${r.line != null ? ` ${r.line}` : ""}${proj ? ` · proj ${proj}` : ""}`
+          : `${label(r.recommendation)}${conf ? ` ${conf}` : ""}`,
+        predRaw: `${r.recommendation || "—"}${r.line != null ? ` ${r.line}` : ""} ${conf}`.trim(),
+        actual: r.result == null ? "pending"
+          : r.actual_value != null ? String(r.actual_value) : label(r.actual_label),
+        actualRaw: r.actual_value != null ? String(r.actual_value) : (r.actual_label || "—"),
+        err: r.result == null ? "pending"
+          : r.result === "win" ? "correct" : r.result === "push" ? "push" : "miss",
+        band: r.result == null ? null
+          : r.result === "win" ? "good" : r.result === "push" ? "amber" : "bad",
+        hit: r.result === "win",
+        pending: r.result == null,
+      });
     }
+    // Compact column tags for the markets that are not per-pitch. Short enough
+    // to sit inline in the Prediction cell without pushing the call out of view.
+    DF_TAG = {
+      ab_result: "AB", ab_pitches_ou: "AB P",
+      game_moneyline: "ML", game_total: "TOT",
+    };
 
     dfRows() {
       // Already scoped server-side by game_pk; the filter stays as a guard for
@@ -1361,12 +1497,22 @@
       return scope === "all" ? rows : rows.filter((r) => r.pk === scope);
     }
     dfStats(rows) {
-      const velo = rows.filter((r) => r.mkt === "VELO");
+      // Graded only, and now explicitly so: the log carries pending rows since
+      // 2026-08-16, and a call with no result has no error to average and no
+      // outcome to score. Averaging a null errAbs in would have turned the MAE
+      // tile into NaN.
+      const velo = rows.filter((r) => r.mkt === "VELO" && r.errAbs != null);
       const cls = rows.filter((r) => r.mkt === "CLASS" && r.band != null);
       const mae = velo.length ? velo.reduce((a, r) => a + r.errAbs, 0) / velo.length : null;
       const within = velo.length ? velo.filter((r) => r.hit).length / velo.length : null;
       const clsHit = cls.length ? cls.filter((r) => r.hit).length / cls.length : null;
-      return { velo, cls, mae, within, clsHit, n: rows.length };
+      // `n` backs the "Graded" tile, so it counts settled rows across every
+      // market — not the row count, which now includes pending ones.
+      return {
+        velo, cls, mae, within, clsHit,
+        n: rows.filter((r) => !r.pending).length,
+        pending: rows.filter((r) => r.pending).length,
+      };
     }
     fmtTime(t) {
       const d = new Date(t);
@@ -1426,11 +1572,17 @@
       this.setState({ scout: { seed, ctx, profile, fatigue, matchup, loaded: true } });
     }
 
-    // Seed from the live board when it has games, otherwise from the last
-    // session. This is what makes the tab survive a refresh.
+    // Seed from the Data Feed's own game selector when it has one, otherwise
+    // from the slate, otherwise from the last session — which is what makes the
+    // tab survive a refresh.
+    //
+    // This followed `state.feedGame` until 2026-08-16: state nothing rendered a
+    // control for, which poll() pinned to the first live game. The scouting
+    // panels therefore described that game no matter which one the user had
+    // actually scoped the tab to.
     syncScouting() {
-      const g = PH.games.find((x) => x.gamePk === this.state.feedGame)
-        || PH.games[0];
+      const slate = this.slateGames();
+      const g = slate.find((x) => x.gamePk === this.state.dfGame) || slate[0];
       if (g && (g.pitcher.id || g.batter.id)) {
         this.loadScouting({
           gamePk: g.gamePk, pitcherId: g.pitcher.id, batterId: g.batter.id,
@@ -1633,38 +1785,43 @@
     dataHtml() {
       const C = this.C;
       const mobile = this.mob();
-      const live = this.liveGames();
-      // No early return when nothing is live. The graded log is server-backed
-      // as of 2026-08-08, so it is complete for the whole day whether or not a
-      // game happens to be in progress right now — someone opening the tab at
-      // 02:00 sees every prediction made that day. Only the per-game live
-      // panels below depend on `live`, and they degrade to nothing.
+      // The whole slate, not just what is live. The log is server-backed and
+      // complete for the day, but its game panels were gated on
+      // phase === "live", so the moment a game ended its record became
+      // unreachable — every finished game on the board at 02:00 could be read
+      // only in aggregate.
+      const slate = this.slateGames();
       const rows = this.dfRows();
       const st = this.dfStats(rows);
       const scopeLabel = this.state.dfGame === "all"
         ? "all games today"
-        : (PH.games || []).concat(live).find((x) => x.gamePk === this.state.dfGame)?.label
+        : slate.find((x) => x.gamePk === this.state.dfGame)?.label
           || "all games today";
 
       // ── game panels ────────────────────────────────────────────────────
       const allOn = this.state.dfGame === "all";
       const allChip = `<button data-act="dfGame" data-arg="all" style="border:1px solid ${allOn ? C.acc : C.bd};background:${allOn ? "#12301f" : C.chip};color:${allOn ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:${mobile ? 11.5 : 12}px;padding:${mobile ? "4px 11px" : "5px 12px"};border-radius:999px;cursor:pointer;">All${mobile ? "" : " games"}</button>`;
-      const panels = live.map((g) => {
+      const panels = slate.map((g) => {
         const on = g.gamePk === this.state.dfGame;
+        const isLive = g.phase === "live";
         const nc = this.nextCall(g);
+        const state = isLive
+          ? `${g.score.away}–${g.score.home} ${g.half}${g.inning}`
+          : g.phase === "final" ? `${g.score.away}–${g.score.home} F`
+            : (this.firstPitch(g.startTs) || "TBD");
         return `<button data-act="dfGame" data-arg="${g.gamePk}" style="${mobile ? "flex:none;width:158px;" : ""}display:flex;flex-direction:column;gap:6px;text-align:left;border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.panel};border-radius:12px;padding:${mobile ? "9px 10px" : "10px 11px"};font-family:inherit;color:${C.txt};cursor:pointer;opacity:${g.stale ? 0.7 : 1};">
           <div style="display:flex;align-items:center;gap:6px;">
             <span style="font-size:${mobile ? 12 : 12.5}px;font-weight:800;color:${on ? C.grn : C.txt};">${esc(g.label)}</span>
-            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 10.5 : 11}px;font-weight:600;color:${on ? C.gsub : C.dim};">${esc(g.score.away)}–${esc(g.score.home)} ${esc(g.half)}${esc(g.inning)}</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 10.5 : 11}px;font-weight:600;color:${on ? C.gsub : C.dim};">${esc(state)}</span>
           </div>
-          <div style="display:flex;align-items:center;gap:7px;font-size:${mobile ? 11 : 11.5}px;color:${C.mut};min-width:0;">
+          ${isLive ? `<div style="display:flex;align-items:center;gap:7px;font-size:${mobile ? 11 : 11.5}px;color:${C.mut};min-width:0;">
             <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(this.shortName(g.batter.name))}</span>
             <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;color:${C.dim};">${esc(g.count)}</span>
           </div>
           <div style="display:flex;align-items:center;gap:6px;">
             <span style="font-size:${mobile ? 9.5 : 10}px;font-weight:800;letter-spacing:.03em;color:${on ? C.grn : C.dim};background:${on ? "rgba(74,222,128,.16)" : C.chip};padding:2px ${mobile ? 5 : 6}px;border-radius:5px;white-space:nowrap;">${esc(nc.label)} ${esc(nc.pct)}</span>
             <span style="font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 10 : 10.5}px;color:${C.faint};">${esc(nc.velo)}</span>
-          </div>
+          </div>` : `<div style="font-size:${mobile ? 10 : 10.5}px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:${C.faint};">${g.phase === "final" ? "Final · full record" : "Scheduled"}</div>`}
         </button>`;
       }).join("");
 
@@ -1673,7 +1830,7 @@
         { label: "Velo MAE", value: st.mae == null ? "—" : st.mae.toFixed(2), unit: "mph", c: st.mae == null ? C.dim : this.grd(this.veloBand(st.mae)).fg, sub: `mean |called − actual| · n=${st.velo.length}` },
         { label: "Velo within 1.5", value: st.within == null ? "—" : Math.round(st.within * 100) + "%", c: st.within == null ? C.dim : st.within >= 0.5 ? this.GRD.good.fg : this.GRD.amber.fg, sub: `green band share · n=${st.velo.length}` },
         { label: "Class hit rate", value: st.clsHit == null ? "—" : Math.round(st.clsHit * 100) + "%", c: st.clsHit == null ? C.dim : st.clsHit >= 0.5 ? this.GRD.good.fg : this.GRD.amber.fg, sub: `strike/ball/in-play · n=${st.cls.length}` },
-        { label: "Graded today", value: String(st.n), c: C.txt, sub: `${scopeLabel} · server record` },
+        { label: "Graded", value: String(st.n), c: C.txt, sub: `${scopeLabel}${st.pending ? ` · ${st.pending} pending` : ""} · server record` },
       ];
       const kpis = kpiDefs.map((k) => mobile
         ? `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};padding:11px 12px;">
@@ -1692,8 +1849,15 @@
 
       // ── graded log ─────────────────────────────────────────────────────
       const mkt = this.state.mkt;
-      const logRows = rows.filter((r) => mkt === "all" || r.mkt === mkt);
-      const mktChips = [["all", "All"], ["VELO", "Pitch velo"], ["CLASS", "Pitch result"]].map(([k, label]) => {
+      // Filters on the raw market key, not the display tag: the old VELO/CLASS
+      // categories could only ever name two of the six markets the model prices.
+      const logRows = rows.filter((r) => mkt === "all" || r.market === mkt);
+      const mktChips = [
+        ["all", "All"],
+        ["pitch_speed_ou", "Pitch velo"], ["pitch_result", "Pitch result"],
+        ["ab_result", "AB result"], ["ab_pitches_ou", "AB pitches"],
+        ["game_moneyline", "Moneyline"], ["game_total", "Total"],
+      ].map(([k, label]) => {
         const on = mkt === k;
         return `<button data-act="mkt" data-arg="${k}" style="border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${on ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;">${label}</button>`;
       }).join("");
@@ -1745,9 +1909,20 @@
         ? `<div style="padding:11px 14px;border-top:1px solid ${C.row};text-align:center;"><button data-act="dfMore" style="border:1px solid ${C.bd};background:${C.chip};color:${C.dim};font-family:inherit;font-weight:600;font-size:11.5px;padding:6px 14px;border-radius:999px;cursor:pointer;">Show 120 more · ${moreCount} remaining</button></div>`
         : "";
 
-      const mktTag = (m) => m === "VELO"
-        ? `background:rgba(106,162,255,.16);color:#6aa2ff;`
-        : `background:rgba(164,123,255,.16);color:#a37bff;`;
+      // One tint per market family so the six of them stay tellable apart at a
+      // glance in a mixed log: pitch-level cool, at-bat warm, game-level neutral.
+      const MKT_TINT = {
+        VELO: ["rgba(106,162,255,.16)", "#6aa2ff"],
+        CLASS: ["rgba(164,123,255,.16)", "#a37bff"],
+        AB: ["rgba(224,168,58,.16)", "#e0a83a"],
+        "AB P": ["rgba(79,184,119,.16)", "#4fb877"],
+        ML: ["rgba(255,123,107,.16)", "#ff7b6b"],
+        TOT: ["rgba(132,147,170,.20)", "#aebdd2"],
+      };
+      const mktTag = (m) => {
+        const t = MKT_TINT[m] || MKT_TINT.TOT;
+        return `background:${t[0]};color:${t[1]};`;
+      };
 
       // Reconstructed rows sit in the same table as live ones and count the
       // same way, so the only thing separating them is this mark. Muted rather
@@ -1795,8 +1970,8 @@
       }).join("");
 
       const logEmpty = `<div style="padding:16px 14px;font-size:12.5px;color:${C.faint};font-style:italic;line-height:1.55;">${dfDate
-        ? `No per-pitch predictions stored for ${esc(dfDate)}. Raw predictions are kept for 21 days; older slates survive only as the game-level history above.`
-        : "No pitches predicted yet today — a row lands as soon as one arrives. Switch to Yesterday for the last completed slate."}</div>`;
+        ? `No predictions stored for ${esc(dfDate)}${mkt === "all" ? "" : " in this market"}. Raw predictions are kept for 21 days; older slates survive only as the game-level history above.`
+        : `No predictions yet today${mkt === "all" ? "" : " in this market"} — a row lands as soon as one is made. Switch to Yesterday for the last completed slate.`}</div>`;
 
       // ── analytics modules (computed from the session log) ───────────────
       const modCard = (title, body, note, right) => `<div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};padding:15px 16px;">
@@ -1844,12 +2019,25 @@
 
       // velo trend by inning for the scoped pitcher(s)
       const trend = (() => {
-        const src = st.velo.filter((r) => r.speed != null);
-        const byInn = {};
-        src.forEach((r) => { (byInn[r.inning] = byInn[r.inning] || []).push(r.speed); });
-        const innings = Object.keys(byInn).map(Number).sort((a, b) => a - b);
-        if (innings.length < 2) return null;
-        const bars = innings.map((i) => ({ inn: i, v: byInn[i].reduce((a, b) => a + b, 0) / byInn[i].length, n: byInn[i].length }));
+        // `inning` is null on every row whose pitch could not be joined
+        // server-side (see the pitch_number=0 note in pitchfeed.ts) — on
+        // 2026-08-16 that was 1,199 of 1,994 rows. Bucketing into a plain object
+        // stored those under the key "null", Number() turned it into NaN, and
+        // the lookup that followed was undefined: the whole Data Feed threw
+        // before it could paint, so the tab read as a dead button. Filtering
+        // first and keying a Map on the number cannot express that state.
+        const byInn = new Map();
+        st.velo.forEach((r) => {
+          const inn = Number(r.inning);
+          if (r.speed == null || !Number.isFinite(inn)) return;
+          const bucket = byInn.get(inn) || [];
+          bucket.push(r.speed);
+          byInn.set(inn, bucket);
+        });
+        if (byInn.size < 2) return null;
+        const bars = [...byInn.entries()]
+          .sort((a, b) => a[0] - b[0])
+          .map(([inn, vals]) => ({ inn, v: vals.reduce((a, b) => a + b, 0) / vals.length, n: vals.length }));
         const lo = Math.min.apply(null, bars.map((b) => b.v)), hi = Math.max.apply(null, bars.map((b) => b.v));
         const drop = bars[bars.length - 1].v - bars[0].v;
         return { bars, lo, hi, drop };
@@ -1868,10 +2056,18 @@
 
       // pitch mix by count bucket
       const mix = (() => {
-        const src = rows.filter((r) => r.mkt === "VELO" && r.type);
+        // Same missing-situation rows as the trend above. An unknown count
+        // arrives as the em-dash placeholder, which split to NaN and then fell
+        // through every comparison into "even" — a real bucket, silently
+        // inflated by rows that belong in none of them.
+        const cnt = (c) => {
+          const m = /^(\d+)-(\d+)$/.exec(String(c == null ? "" : c));
+          return m ? [Number(m[1]), Number(m[2])] : null;
+        };
+        const src = rows.filter((r) => r.mkt === "VELO" && r.type && cnt(r.count));
         if (src.length < 8) return null;
         const bucket = (c) => {
-          const [b, s] = c.split("-").map(Number);
+          const [b, s] = cnt(c);
           if (b === 0 && s === 0) return "0-0";
           if (s > b) return "ahead";
           if (b > s) return "behind";
@@ -2032,10 +2228,26 @@
               </div>
               ${desktopLog || logEmpty}
               ${moreBtn}
-              ${desktopLog ? `<div style="padding:11px 14px;font-size:11.5px;color:${C.faint};line-height:1.5;">Streaming — a row lands the moment a pitch arrives with a prediction attached. Errors are signed: called minus actual. Shading grades the call — green within 1.5 mph, amber ≤3, red beyond; class calls green when right, red when wrong.${logRows.some((r) => r.back) ? ` <b style="color:${C.mut};">BF</b> marks a call reconstructed after the fact, with the models current at backfill time rather than at the pitch — it counts in the record, but nobody could have acted on it.` : ""}</div>` : ""}
+              ${desktopLog ? `<div style="padding:11px 14px;font-size:11.5px;color:${C.faint};line-height:1.5;">Every call the model made on this slate — pitch, at-bat and game level. Errors are signed: called minus actual. Shading grades the call — green within 1.5 mph, amber ≤3, red beyond; class and outcome calls green when right, red when wrong.${logRows.some((r) => r.pending) ? ` <b style="color:${C.mut};">pending</b> marks a call the game has not settled yet; it is shown but counts toward nothing.` : ""}${logRows.some((r) => r.back) ? ` <b style="color:${C.mut};">BF</b> marks a call reconstructed after the fact, with the models current at backfill time rather than at the pitch — it counts in the record, but nobody could have acted on it.` : ""}</div>` : ""}
             </div>
           </div>
           <div style="display:flex;flex-direction:column;gap:14px;">${calib}${veloTrend}${mixCard}${confCard}</div>
+        </div>
+      </div>`;
+    }
+
+    // Shown in place of a view that threw. Deliberately plain and honest: this
+    // is a bug in the board, not an empty schedule or a backend outage, and
+    // saying so is what stops it being reported as missing data.
+    viewErrorHtml(view, err) {
+      const C = this.C;
+      const label = (COPY.tabs.find(([k]) => k === view) || [view, view])[1];
+      return `<div style="padding:32px 24px;">
+        <div style="max-width:640px;margin:0 auto;border:1px solid ${C.bd};border-left:3px solid ${C.red};border-radius:14px;background:${C.panel};padding:18px 20px;">
+          <div style="font-size:10.5px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.red};">Display error</div>
+          <div style="font-size:15px;font-weight:700;margin-top:6px;">${esc(label)} couldn't be drawn</div>
+          <p style="font-size:12.5px;color:${C.mut};line-height:1.55;margin:8px 0 0;">${esc(COPY.viewError)}</p>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};margin-top:10px;padding-top:9px;border-top:1px solid ${C.row};word-break:break-word;">${esc(String((err && err.message) || err))}</div>
         </div>
       </div>`;
     }
@@ -2053,10 +2265,21 @@
       this._renderDeferred = false;
       this.root.setAttribute("data-theme", this.dk() ? "dark" : "light");
       const view = this.state.view;
+      // A view is built to a string BEFORE it is assigned, so anything that
+      // throws in here used to leave the previous tab's DOM in place — the tab
+      // button looked broken rather than the render looking broken, which is
+      // how a null `inning` cost the Data Feed a day in production. The
+      // fallback keeps the chrome (header, nav, footer) so the user can still
+      // leave the tab, and says what happened rather than rendering blank.
       let main;
-      if (view === "home") main = this.homeHtml();
-      else if (view === "live") main = this.liveHtml();
-      else main = this.dataHtml();
+      try {
+        if (view === "home") main = this.homeHtml();
+        else if (view === "live") main = this.liveHtml();
+        else main = this.dataHtml();
+      } catch (e) {
+        console.error(`[pitchhawk] ${view} view failed to render`, e);
+        main = this.viewErrorHtml(view, e);
+      }
       this._bindMq();
       const wide = view !== "home";
       this.root.innerHTML = `
@@ -2132,11 +2355,10 @@
         const games = await PH.loadLive(API_BASE);
         if (Array.isArray(games)) {
           PH.games = games;
-          const live = this.liveGames();
           // Not awaited: the board must never wait on at-bat history. It
           // re-renders itself when the rows land, and no-ops unless the PA
           // actually turned over.
-          this.syncPaHistory(live)
+          this.syncPaHistory()
             .then((changed) => { if (changed) this.render(); })
             .catch(() => {});
           // Not awaited: the board must never wait on the graded feed. It
@@ -2144,9 +2366,6 @@
           this.loadPitchFeed()
             .then((changed) => { if (changed) this.render(); })
             .catch(() => {});
-          if (live.length && !live.some((g) => g.gamePk === this.state.feedGame)) {
-            this.state.feedGame = live[0].gamePk;
-          }
           this.render();
           // Deliberately not awaited: the live board must not wait on the
           // warehouse. syncScouting no-ops unless the pitcher/batter/game
@@ -2229,7 +2448,6 @@
       return;
     }
     const board = new Board(root);
-    board.state.feedGame = PH.games[0] ? PH.games[0].gamePk : null;
     board.start();
     // Restore the Data Feed's warehouse panels immediately, before the first
     // poll returns. With no live games this is the only thing that puts
