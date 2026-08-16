@@ -66,6 +66,14 @@ export interface PitchFeedRow {
   model_version: string | null;
   created_at: string | null;
   graded_at: string | null;
+  /**
+   * Set when the row was reconstructed by backfill-predictions rather than
+   * scored live. Those calls were made with the models and rolling stats of the
+   * backfill run, not of the moment — nobody could have acted on them. The
+   * client badges them; they still count toward the summary below, so the
+   * distinction has to survive the trip rather than being inferred from a gap.
+   */
+  backfilled_at: string | null;
 }
 
 const num = (v: unknown): number | null =>
@@ -96,7 +104,9 @@ export async function pitchFeed(
   const slate = gameRows ?? [];
   const empty = {
     date: p.date, rows: [], next_cursor: null,
-    summary: { n: 0, graded: 0, wins: 0, losses: 0, pushes: 0, games: 0 },
+    summary: {
+      n: 0, graded: 0, wins: 0, losses: 0, pushes: 0, backfilled: 0, games: 0,
+    },
   };
   if (!slate.length) return empty;
 
@@ -118,7 +128,7 @@ export async function pitchFeed(
   let q = db.from("predictions")
     .select("id,game_pk,at_bat_index,pitch_number,market,recommendation," +
       "predicted_value,line,confidence,result,actual_value,actual_label," +
-      "profit_units,model_version,created_at,graded_at")
+      "profit_units,model_version,created_at,graded_at,backfilled_at")
     .in("game_pk", pks)
     .order("id", { ascending: false })
     .range(cursor, cursor + limit - 1);
@@ -243,6 +253,7 @@ export async function pitchFeed(
       model_version: r.model_version ?? null,
       created_at: r.created_at ?? null,
       graded_at: r.graded_at ?? null,
+      backfilled_at: r.backfilled_at ?? null,
     };
   });
 
@@ -261,6 +272,11 @@ export async function pitchFeed(
       wins: graded.filter((r) => r.result === "win").length,
       losses: graded.filter((r) => r.result === "loss").length,
       pushes: graded.filter((r) => r.result === "push").length,
+      // Reconstructed rows are counted in wins/losses above deliberately: the
+      // call was still right or wrong about a real pitch. Reporting how many
+      // of the page they are is what keeps that honest, so a reader can see
+      // when a day's record leans on backfill rather than on live calls.
+      backfilled: rows.filter((r) => r.backfilled_at != null).length,
       games: slate.length,
     },
   };
