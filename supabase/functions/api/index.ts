@@ -51,6 +51,9 @@ const TTL: Record<string, number> = {
   // final; the live section inside it is refreshed by the client's own /live
   // poll, so 60s here does not make the live board stale.
   "board": 60, "feed": 60, "coverage": 300,
+  // Permanent per-day accuracy rollup, rewritten once a night by
+  // rollup_prediction_accuracy. Nothing about it moves during a slate.
+  "accuracy": 300,
   // Per-pitch graded history. 15s matches /edge: during a live game new rows
   // land every 30s and the Data Feed is the surface watching them arrive, so a
   // 60s cache would make it visibly lag the board it sits next to.
@@ -741,6 +744,95 @@ async function coverage(url: URL): Promise<Response> {
   });
 }
 
+// ── /api/accuracy ──────────────────────────────────────────────────────────
+// Per-day, per-market grading — the series behind "accuracy over time by
+// market" on the Data Feed.
+//
+// `prediction_accuracy_daily` has been filled nightly by
+// `rollup_prediction_accuracy()` since 20260728000002 and is never pruned, so
+// it outlives the 21-day raw-prediction horizon `/api/pitches` is bounded by.
+// It is the only place a day older than the prune can still be scored — and
+// until now nothing served it, so the permanent accuracy record was
+// unreachable from the product that exists to report it.
+//
+// Rows are keyed `(day, market, model_version)`. The version split is summed
+// here rather than in the browser: every client then draws the same series,
+// and a mid-window promotion shows as one day rather than two half-height bars.
+async function accuracy(url: URL): Promise<Response> {
+  // Wider than /feed's 30: this table is never pruned, and the point of the
+  // chart is the trend, which a month cannot show.
+  const { from, to } = windowParams(url, 120);
+  const marketRaw = url.searchParams.get("market");
+  const market = marketRaw && ALL_MARKETS.includes(marketRaw) ? marketRaw : null;
+
+  const db = svc();
+  let q = db.from("prediction_accuracy_daily")
+    .select("day,market,model_version,n,n_graded,wins,losses,pushes," +
+      "mean_confidence,mean_profit_units")
+    .gte("day", from).lte("day", to)
+    .order("day", { ascending: true });
+  if (market) q = q.eq("market", market);
+  const { data, error } = await q;
+  if (error) return json({ error: error.message }, 500);
+
+  // deno-lint-ignore no-explicit-any
+  const by = new Map<string, any>();
+  // deno-lint-ignore no-explicit-any
+  for (const r of (data ?? []) as any[]) {
+    const key = `${r.day}|${r.market}`;
+    let e = by.get(key);
+    if (!e) {
+      e = {
+        day: r.day, market: r.market, versions: [] as string[],
+        n: 0, n_graded: 0, wins: 0, losses: 0, pushes: 0, _conf: 0, _units: 0,
+      };
+      by.set(key, e);
+    }
+    const g = Number(r.n_graded ?? 0);
+    e.n += Number(r.n ?? 0);
+    e.n_graded += g;
+    e.wins += Number(r.wins ?? 0);
+    e.losses += Number(r.losses ?? 0);
+    e.pushes += Number(r.pushes ?? 0);
+    // Weighted by graded count. A version that served four calls must not pull
+    // the day's mean as hard as one that served four hundred.
+    e._conf += Number(r.mean_confidence ?? 0) * g;
+    e._units += Number(r.mean_profit_units ?? 0) * g;
+    // Which model was serving is the first question anyone asks about a day
+    // whose accuracy moved, so it travels with the day rather than being
+    // summed away.
+    if (r.model_version && !e.versions.includes(r.model_version)) {
+      e.versions.push(r.model_version);
+    }
+  }
+
+  const days = [...by.values()].map((e) => {
+    // Pushes leave the denominator — a push is not a loss. Same rule as
+    // summarize().
+    const decided = e.wins + e.losses;
+    return {
+      day: e.day, market: e.market, versions: e.versions,
+      n: e.n, n_graded: e.n_graded,
+      wins: e.wins, losses: e.losses, pushes: e.pushes,
+      win_rate: decided ? Math.round((e.wins / decided) * 1000) / 1000 : null,
+      mean_confidence: e.n_graded
+        ? Math.round((e._conf / e.n_graded) * 10000) / 10000
+        : null,
+      mean_profit_units: e.n_graded
+        ? Math.round((e._units / e.n_graded) * 10000) / 10000
+        : null,
+    };
+  }).sort((a, b) =>
+    a.day < b.day ? -1 : a.day > b.day ? 1 : a.market < b.market ? -1 : 1
+  );
+
+  return json({
+    from, to,
+    markets: [...new Set(days.map((d) => d.market))].sort(),
+    days,
+  });
+}
+
 // ── /api/feed ──────────────────────────────────────────────────────────────
 // The 30-day rolling window. Game-level rows for date/game/team/pitcher scoping;
 // player rollups for pitcher/batter scoping, because per-pitch predictions carry
@@ -1031,6 +1123,7 @@ Deno.serve(async (req) => {
       case "board": return await hit("board", TTL["board"], () => board(url));
       case "feed": return await hit("feed", TTL["feed"], () => feed(url));
       case "coverage": return await hit("coverage", TTL["coverage"], () => coverage(url));
+      case "accuracy": return await hit("accuracy", TTL["accuracy"], () => accuracy(url));
       case "pitches": return await hit("pitches", TTL["pitches"], () => pitches(url));
       case "picks/today": return await hit("picks/today", TTL["picks/today"], picksToday);
       case "odds/today": return await hit("odds/today", TTL["odds/today"], oddsToday);

@@ -716,6 +716,25 @@ window.PITCHHAWK = (function () {
     return await res.json();
   }
 
+  // Per-day, per-market grading history.
+  //
+  // The only source of accuracy for a day older than the 21-day raw-prediction
+  // prune: `prediction_accuracy_daily` is rolled up nightly and never pruned,
+  // so this answers "how has the model been doing" long after /pitches has
+  // forgotten the individual calls. The server already sums the
+  // per-model_version split, so a row here is one (day, market).
+  async function loadAccuracy(apiBase, filters, fetchImpl) {
+    const f = fetchImpl || ((...a) => fetch(...a));
+    const qs = new URLSearchParams();
+    Object.keys(filters || {}).forEach((k) => {
+      const v = filters[k];
+      if (v != null && v !== "" && v !== "all") qs.set(k, v);
+    });
+    const res = await f(`${apiBase}/accuracy?${qs.toString()}`);
+    if (!res.ok) throw new Error(`/accuracy ${res.status}`);
+    return await res.json();
+  }
+
   // Per-pitch graded predictions for one day, paginated.
   //
   // Replaces the Data Feed's old session-accumulated log. The server has been
@@ -745,7 +764,7 @@ window.PITCHHAWK = (function () {
   // Ungraded rows are included deliberately (no `status` filter): the at-bat in
   // progress has not been settled yet and is exactly the one the board is
   // showing.
-  async function loadGamePitches(apiBase, gamePk, date, fetchImpl) {
+  async function loadGamePitches(apiBase, gamePk, date, fetchImpl, markets) {
     const f = fetchImpl || ((...a) => fetch(...a));
     const rows = [];
     let cursor = 0;
@@ -754,6 +773,7 @@ window.PITCHHAWK = (function () {
     for (let page = 0; page < 8; page += 1) {
       const qs = new URLSearchParams({ game_pk: String(gamePk), limit: "1000" });
       if (date) qs.set("date", date);
+      if (markets && markets.length) qs.set("market", markets.join(","));
       if (cursor) qs.set("cursor", String(cursor));
       const res = await f(`${apiBase}/pitches?${qs.toString()}`);
       if (!res.ok) throw new Error(`/pitches ${res.status}`);
@@ -834,6 +854,7 @@ window.PITCHHAWK = (function () {
     tick, impliedFromAmerican, americanFromImplied, calcEdge,
     mlbDate,
     loadLive, loadBoard, loadFeed, loadPitches, loadGamePitches, paSummaries,
+    loadAccuracy,
     buildGames, enrichUpcoming, enrichPitchPredictions,
   };
 })();

@@ -17,7 +17,7 @@
 window.PH_COPY = (function () {
   var C = {
     // header
-    tabs: [["home", "Home"], ["live", "Live Board"], ["data", "Data Feed"]],
+    tabs: [["home", "Home"], ["live", "Live Feed"], ["data", "Data Feed"]],
 
     // home · hero
     heroBadge: "MLB · Live At-Bat Analytics",
@@ -25,7 +25,7 @@ window.PH_COPY = (function () {
     heroSub:
       "Live pitch-by-pitch data with model-predicted probabilities for every " +
       "at-bat. The board wakes at first pitch and follows every game as it unfolds.",
-    heroCta: "Open the live board →",
+    heroCta: "Open the live feed →",
     heroCompliance: null, // no betting content on the page → no 21+ line
 
     // home · today's games
@@ -53,22 +53,13 @@ window.PH_COPY = (function () {
       ["4", "Grade", "Every call is checked against what actually happened, building an open accuracy record."],
     ],
 
-    // live board
-    liveTitle: "Live board",
-    liveSub: "One panel per live at-bat — game state on the left, the model's pitch-by-pitch read on the right.",
+    // live feed
+    // No title above the hero: the best open call IS the top of the page.
     edgeLegend: null, // wagering-only: explains edge-vs-source highlighting
 
     // data feed
     dataTitle: "Data feed",
-    dataSub: "Pitch-by-pitch and at-bat data, straight from the live feed.",
-
-    // live board · earlier at-bats strip (see paEmptyNote)
-    paLoading: "Loading this game's at-bat record…",
-    paEmptyPregame:
-      "This game hasn't started. Every at-bat lands here as it finishes, " +
-      "graded against what actually happened.",
-    paEmptyLive:
-      "No completed at-bats yet — the first one lands here the moment it ends.",
+    dataSub: "Every graded call for a slate — model performance up top, then the same game, at-bat and pitch drill-down as the live feed.",
 
     // shown when a view throws while rendering (see viewErrorHtml)
     viewError:
@@ -85,6 +76,7 @@ window.PH_COPY = (function () {
 
   var WAGERING_OVERRIDES = {
     tabs: [["home", "Home"], ["live", "Live Markets"], ["data", "Data Feed"]],
+    heroCta: "Open the live markets →",
     heroBadge: "MLB · At-Bat Markets",
     heroSub:
       "Live pitch-by-pitch data with model-predicted probabilities for every " +
@@ -102,7 +94,6 @@ window.PH_COPY = (function () {
       ["3", "Watch", "Every live at-bat gets a model read — probabilities and projections stream to the live board."],
       ["4", "Next up", "Live odds comparison, +EV picks, and a public graded record are on the way."],
     ],
-    liveTitle: "Live markets",
     edgeLegend: "Model reads with an edge ≥ {threshold} against your selected sources are highlighted.",
     footerDisclaimer:
       "Live MLB data with model-driven projections, for information and " +
