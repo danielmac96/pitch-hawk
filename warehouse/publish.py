@@ -20,12 +20,12 @@ staging tables have RLS enabled and no policy, so nothing else can touch them.
 from __future__ import annotations
 
 import math
-import os
 import time
 from datetime import date, datetime
 
 from warehouse import aggregates as agg
 from warehouse import duck, manifest
+from warehouse.config import supabase_client
 
 # PostgREST rejects very large request bodies and Supabase's pooler is happier
 # with modest batches. A 65k-row publish is ~33 requests at this size.
@@ -58,20 +58,6 @@ def _retry(fn, what: str, *, retries: int = RETRIES):
                 break
             time.sleep(min(20, 2 ** attempt))
     raise RuntimeError(f"{what} failed after {retries} attempts: {last}")
-
-
-def _client():
-    """Service-role Supabase client. Imported lazily so `warehouse.duck` and
-    the aggregate builders stay usable with no Supabase dependency at all."""
-    from supabase import create_client
-
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
-    if not url or not key:
-        raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_KEY (service-role) are required to "
-            "publish; set them in .env locally or as Actions secrets.")
-    return create_client(url, key)
 
 
 def _jsonable(v):
@@ -181,7 +167,7 @@ def publish(store, *, min_pa: int = 3, only=None, dry_run: bool = False,
     if dry_run:
         return summary
 
-    client = _client()
+    client = supabase_client()
     for name, tbl in built.items():
         n = publish_table(client, name, tbl)
         summary[name]["published"] = n

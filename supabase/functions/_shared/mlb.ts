@@ -1,4 +1,5 @@
-// MLB Stats API client + row flatteners (mirrors backend/ingestion/mlb_api.py).
+// MLB Stats API client + row flatteners for the live path. The offline
+// warehouse ingest reads the same endpoints in warehouse/mlb.py.
 
 import { abResultCategory, CALL_CODE_TO_DESCRIPTION, resultCategory } from "./vocab.ts";
 import { fetchJson } from "./http.ts";

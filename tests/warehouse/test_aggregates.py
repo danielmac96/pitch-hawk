@@ -249,8 +249,9 @@ def test_matchup_history_respects_the_pa_floor(con):
 
 
 def test_matchup_history_keeps_the_legacy_column_names(con):
-    """backend/models/stats_cache.py reads pa_count/so_count/bb_count/h_count.
-    The v2 columns are additive; renaming would break the model layer."""
+    """`_shared/aggregates.ts::matchup` serves pa_count/so_count/bb_count/
+    h_count straight through to /matchup/{pitcher}/{batter}. The v2 columns are
+    additive; renaming would break the public API."""
     cols = set(agg.matchup_history(con, SEASON).schema.names)
     assert {"pa_count", "so_count", "bb_count", "h_count"} <= cols
     assert {"hr_count", "bat_side", "pitch_hand", "last_faced",

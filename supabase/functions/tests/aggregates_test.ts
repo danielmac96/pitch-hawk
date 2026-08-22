@@ -1,11 +1,9 @@
-// Tests for the Phase 4 aggregate read handlers.
+// Tests for the aggregate read handlers.
 //
-// The plan asked for these in tests/api/test_routes.py against the pytest
-// fake_client. That harness exercises the FastAPI app under backend/, which is
-// a parallel dev implementation -- these routes ship in the Deno edge function
-// that actually serves production, so pytest cannot reach them. Same three
-// cases the plan specified (happy path, unknown id, empty table), against a
-// stub db, run by `deno test` in the edge-functions CI job.
+// These routes ship inside the Deno edge function that serves production, so
+// pytest cannot reach them -- this file is their only coverage. Three cases
+// each (happy path, unknown id, empty table) against a stub db, run by
+// `deno test` in the edge-functions CI job.
 //
 //   deno test supabase/functions/tests/
 

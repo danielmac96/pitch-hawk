@@ -17,13 +17,13 @@ import streamlit as st
 
 # Streamlit puts the main script's directory (dashboard/) on sys.path, not the
 # repo root, and every other page here reads R2 rather than Postgres -- so this
-# is the first page needing backend/. Without this the import fails only at
-# page-open time, which is a bad place to find out.
+# is the first page needing a Supabase client. Without this the import fails
+# only at page-open time, which is a bad place to find out.
 _ROOT = Path(__file__).resolve().parents[2]
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from backend.db.client import get_client  # noqa: E402
+from warehouse.config import supabase_client as get_client  # noqa: E402
 
 CACHE_TTL = 300
 

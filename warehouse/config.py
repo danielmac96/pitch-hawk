@@ -353,6 +353,29 @@ _R2_VARS = ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID",
             "R2_SECRET_ACCESS_KEY", "R2_BUCKET")
 
 
+def supabase_client():
+    """Service-role Supabase client, shared by every Python caller.
+
+    `supabase` is imported lazily so the R2/Parquet side of the warehouse — the
+    manifest, the DuckDB reader, the aggregate builders — stays usable with no
+    Supabase dependency installed at all.
+
+    One home on purpose. This used to exist three times (`backend/db/client.py`,
+    `warehouse.publish._client`, `warehouse.export._client`), which meant three
+    different error messages for the same missing environment variable.
+    """
+    from supabase import create_client
+
+    url = os.environ.get("SUPABASE_URL")
+    key = os.environ.get("SUPABASE_KEY")
+    if not url or not key:
+        raise RuntimeError(
+            "SUPABASE_URL and SUPABASE_KEY are required; set them in .env "
+            "locally or as Actions secrets. Writes (model_params, the display "
+            "aggregates, the holdout export) need the service-role key.")
+    return create_client(url, key)
+
+
 def r2_config() -> R2Config:
     missing = [n for n in _R2_VARS if not os.environ.get(n)]
     if missing:

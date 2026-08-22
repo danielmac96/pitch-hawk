@@ -53,7 +53,7 @@ def gate(spec, new_oos: dict, active_oos: dict | None) -> tuple[bool, str]:  # n
 
 
 def active(market: str) -> dict | None:
-    from backend.db.client import get_client
+    from warehouse.config import supabase_client as get_client
 
     rows = (get_client().table("model_params")
             .select("version, params, metrics, activated_at")
@@ -64,7 +64,7 @@ def active(market: str) -> dict | None:
 
 def active_oos(market: str) -> dict | None:
     """Out-of-sample metrics for the live version, from its baseline run."""
-    from backend.db.client import get_client
+    from warehouse.config import supabase_client as get_client
 
     row = active(market)
     if not row:
@@ -80,7 +80,7 @@ def active_oos(market: str) -> dict | None:
 def insert_version(market: str, version: str, params: dict, metrics: dict,
                    *, notes: str) -> None:
     """Insert inactive. Activation is always a separate, explicit step."""
-    from backend.db.client import get_client
+    from warehouse.config import supabase_client as get_client
 
     get_client().table("model_params").upsert({
         "market": market, "version": version, "params": params,
@@ -91,7 +91,7 @@ def insert_version(market: str, version: str, params: dict, metrics: dict,
 
 
 def activate(market: str, version: str) -> None:
-    from backend.db.client import get_client
+    from warehouse.config import supabase_client as get_client
 
     get_client().rpc("activate_model",
                      {"p_market": market, "p_version": version}).execute()
@@ -99,7 +99,7 @@ def activate(market: str, version: str) -> None:
 
 
 def rollback(market: str) -> None:
-    from backend.db.client import get_client
+    from warehouse.config import supabase_client as get_client
 
     get_client().rpc("rollback_model", {"p_market": market}).execute()
     print(f"[modeling] rolled back {market}")

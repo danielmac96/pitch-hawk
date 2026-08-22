@@ -354,9 +354,10 @@ def matchup_history(con, season_floor: int, min_pa: int = 3):  # noqa: ANN001
 
     Emits `pa_count` rather than `pa` because this REPLACES the contents of the
     existing Postgres `matchup_history` rather than creating a v2 table beside
-    it. `backend/models/stats_cache.py:396` reads pa_count/so_count/bb_count/
-    h_count; renaming them would break the deferred model layer for no gain.
-    The v2 columns are added alongside, not instead.
+    it. The live API serves these columns straight through
+    (`_shared/aggregates.ts::matchup`, route `/matchup/{pitcher}/{batter}`), so
+    renaming them is a breaking API change for no gain. The v2 columns are
+    added alongside, not instead.
     """
     sql = f"""
     select pitcher_id, batter_id,

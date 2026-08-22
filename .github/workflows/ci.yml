@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  backend:
+  python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,8 +26,7 @@ jobs:
           # reaches a fitter dies on `No module named 'sklearn'` -- the fitter,
           # the walk-forward and the sigma are then completely uncovered while
           # the rest of the suite still looks green.
-          pip install -r requirements.txt -r requirements-warehouse.txt \
-            -r requirements-modeling.txt pytest
+          pip install -r requirements-warehouse.txt -r requirements-modeling.txt pytest
       - name: Run tests
         run: pytest tests/ -q
 
@@ -48,9 +47,9 @@ jobs:
             echo "== $fn"
             deno check "supabase/functions/$fn/index.ts"
           done
-      # The aggregate read handlers ship in the edge function, so pytest
-      # cannot reach them -- backend/ is a parallel dev implementation. These
-      # cover the same cases the plan asked for in tests/api/test_routes.py.
+      # The API and all its read handlers ship inside the Deno edge function,
+      # so pytest cannot reach them -- these tests are the only coverage the
+      # public API has.
       # --allow-read/--allow-env are for scorer_golden_test.ts, which reads the
       # committed golden fixtures and checks them against what model.ts
       # computes. Read-only on purpose: granting --allow-write here would let

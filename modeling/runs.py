@@ -74,7 +74,7 @@ def build_run(spec, sweep_result, *, holdout, calibration,  # noqa: ANN001
 
 def record(run: dict) -> str:
     """Insert one run. Returns its run_id."""
-    from backend.db.client import get_client
+    from warehouse.config import supabase_client as get_client
 
     get_client().table("model_runs").insert(run).execute()
     print(f"[modeling] recorded run {run['run_id']} "
