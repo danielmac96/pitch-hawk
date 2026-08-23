@@ -275,9 +275,9 @@ hourly.
 
 Grades three things against real outcomes: `predictions` (against the next pitch,
 the finished at-bat, or the final score), `picks` (with profit in units, using
-`winProfit` on American odds), and — new with PR #23 — `game_predictions` rows of
-both phases. Batch size 400. Mirrors the documented rules in
-`backend/jobs/settle_predictions.py`.
+`winProfit` on American odds), and `game_predictions` rows of both phases.
+Batch size 400. The grading rules are documented in the function itself,
+`supabase/functions/settle/index.ts`.
 
 **Trigger, as of 2026-08-08.** The `np-settle` 10-minute timer is retired.
 `live-poll` now calls `settle` itself via `invokeFunction()` in `_shared/db.ts`,
@@ -431,13 +431,14 @@ finishes the next afternoon and its rows grade then. Re-running is how those
 late grades reach R2, so the nightly must not pass `--skip-existing` — that
 flag exists for bulk backfills only.
 
-> **Not migrated:** `scripts/export_predictions.py` was a one-time cold dump
-> and its output is still in the bucket under `holdout/predictions/` (present
-> from 2026-07-07). It is outside the manifest and uses a different, locally
-> declared schema — no `official_date`, and rows dated by `created_at`. The
-> script is marked superseded but the data has deliberately not been folded in;
-> unioning two different column lists silently would be worse than leaving it
-> visible.
+> **Not migrated:** a one-time cold dump predating this job left output in the
+> bucket under `holdout/predictions/` (present from 2026-07-07). It is outside
+> the manifest and uses a different, locally declared schema — no
+> `official_date`, and rows dated by `created_at`, which files a 23:58 ET
+> prediction under the next day. It has deliberately not been folded in:
+> silently unioning two different column lists would be worse than leaving it
+> visible. Anyone building a holdout set across that boundary has to reconcile
+> the two by hand. The script that wrote it was removed in 2026-08.
 
 ### 5.7 Serving the day: one shared state for every user
 
@@ -511,9 +512,9 @@ of them exist as scar tissue:
   `verify.py` are unimportable and silently uncovered — which is how the manifest
   self-certification defect survived to 2026-08-02.
 - **`edge-functions`** runs `deno check` on all eight functions plus
-  `deno test supabase/functions/tests/`. The aggregate read handlers ship in the
-  edge function, so pytest cannot reach them; `backend/` is a parallel dev
-  implementation that does not serve production.
+  `deno test supabase/functions/tests/`. The API and its read handlers ship
+  inside the Deno function, so pytest cannot reach them — those tests are the
+  only coverage the public API has.
 - **`migrations`** applies every migration to a stock PG16 with `cron.schedule`
   and `cron.job` stubbed, rather than skipping the files that touch pg_cron —
   skipping them would silently drop their schema changes from coverage.

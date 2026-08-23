@@ -1,7 +1,8 @@
-// v1 model scoring. Parameters live in the model_params table (one active row
-// per market, written by scripts/train_models.py). Every market degrades to a
-// calibrated league-average heuristic when no trained row exists, so the
-// pipeline works on day zero and gets sharper as soon as training runs.
+// v1 model scoring. Parameters live in the model_params table -- one active
+// row per market, written by `python -m modeling train <market> --promote`.
+// Every market degrades to a calibrated league-average heuristic when no
+// trained row exists, so the pipeline works on day zero and gets sharper as
+// soon as training runs.
 
 import { svc } from "./db.ts";
 
@@ -297,11 +298,12 @@ export function pitchesOverProb(
 // a prediction we can promise coverage on, so this projects runs directly and
 // grades against the final score.
 //
-// Deliberately a transparent rate model rather than a fit one: there is no
-// labelled training path for it today (scripts/train_models.py exits 2), and a
-// blended-rates projection with published park and weather terms is auditable
-// and roughly calibrated. It reports total_v1 so a fitted version can supersede
-// it through the normal model_params route later.
+// Deliberately a transparent rate model rather than a fitted one: game_total
+// has no modeling/specs/ module and no model_params row, so there is no
+// labelled training path for it today. A blended-rates projection with
+// published park and weather terms is auditable and roughly calibrated. It
+// reports total_v1 so a fitted version can supersede it through the normal
+// model_params route later.
 
 export interface GameTotalContext {
   // Season rates, runs per game. Null falls back to the league mean.

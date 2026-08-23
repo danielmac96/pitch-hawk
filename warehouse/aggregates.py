@@ -3,7 +3,7 @@
 Seven tables, each built by one function returning a PyArrow table. They serve
 the frontend only. **No model tables live here** — `market_baselines`,
 `holdout_predictions`, `context_cells` and the rest are deferred; see the
-"Deferred" section of docs/plans/data-pipeline-2026-08-02.md.
+model-facing cell tables, which stay deferred (DATA-PIPELINE.md §11).
 
 Two windowing rules, and both are deliberate:
 
@@ -138,7 +138,7 @@ def batter_profiles(con, season_floor: int):  # noqa: ANN001
 def situational_splits(con, season_floor: int):  # noqa: ANN001
     """player x role x base-state x opposing hand.
 
-    This is the table DATA-INVENTORY called our "single biggest gap" —
+    This is the table an early product review called our "single biggest gap" —
     *"We do not record who is on base... we cannot produce any of them."*
     That has been false since the warehouse landed: `men_on_base` is 100%
     populated across all 2,013 days, derived from carried-forward base

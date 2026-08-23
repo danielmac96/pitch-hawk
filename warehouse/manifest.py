@@ -56,9 +56,10 @@ def load(store: ObjectStore) -> dict[str, Any]:
         # semantics would report independent verification that never happened,
         # and the prune gates on exactly that field.
         raise ValueError(
-            f"manifest is version {v!r}, this code expects {VERSION}. "
-            f"Run `py scripts/migrate_manifest_v2.py` to migrate it "
-            f"(--dry-run first)."
+            f"manifest is version {v!r}, this code expects {VERSION}. The "
+            f"v1->v2 migration ran in 2026-08 and its script has been removed; "
+            f"a v1 manifest here means you are pointed at a stale bucket. "
+            f"Check R2_BUCKET before doing anything else."
         )
     return m
 

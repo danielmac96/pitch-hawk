@@ -468,9 +468,10 @@ longer describes what is stored.
 
 `load()` **refuses a v1 manifest** rather than coercing it: in v1 the ingest
 wrote `verified_at`, so reading a v1 entry with v2 semantics would report
-independent verification that never happened. Migrate with
-`py scripts/migrate_manifest_v2.py` (`--dry-run` first). The v1 object is kept
-at `_manifest.v1.json`.
+independent verification that never happened. The v1 to v2 migration ran once
+in 2026-08 (its one-shot script has since been removed) and the v1 object is
+kept at `_manifest.v1.json`. Hitting this error now means the bucket is not
+the one you think it is — check `R2_BUCKET`.
 
 The checksum is SHA-256 over the **sorted natural keys**
 (`game_pk|at_bat_index|pitch_number`), so it is order-independent and catches

@@ -139,3 +139,37 @@ select count(*) from pitches;                             -- HOT WINDOW only (35
 select market, version, metrics from model_params where is_active;
 select status, count(*) from picks group by 1;            -- pick record
 ```
+
+## Capturing screenshots for the README
+
+The board is live-data-only, so a useful screenshot has to be taken **during a
+live game window** against a working API. A capture taken off-hours, or against
+a paused Supabase project, shows an empty state rather than the product — which
+is why the six PNGs previously committed here were removed rather than
+refreshed.
+
+```bash
+npm i --no-save playwright
+mkdir -p docs/screenshots
+bash scripts/build_frontend.sh          # points dist/ at the live API
+python -m http.server 5173 -d dist &
+
+node -e '
+const { chromium } = require("playwright");
+(async () => {
+  const b = await chromium.launch();
+  for (const [w, h, tag] of [[1440, 900, "1440"], [390, 844, "390"]]) {
+    const p = await (await b.newContext({ viewport: { width: w, height: h } })).newPage();
+    for (const name of ["Home", "Live Feed", "Data Feed"]) {
+      await p.goto("http://127.0.0.1:5173/", { waitUntil: "networkidle" });
+      await p.getByText(name, { exact: true }).first().click().catch(() => {});
+      await p.waitForTimeout(1500);
+      await p.screenshot({ path: `docs/screenshots/${name.replace(" ", "-").toLowerCase()}-${tag}.png`, fullPage: true });
+    }
+  }
+  await b.close();
+})();'
+```
+
+Then replace the `<!-- SCREENSHOT: ... -->` comment near the top of `README.md`
+with the image links.

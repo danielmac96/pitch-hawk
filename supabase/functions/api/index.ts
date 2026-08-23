@@ -185,7 +185,7 @@ async function health(): Promise<Response> {
     timestamp: new Date().toISOString(),
     // NOTE: this is the 35-day hot window since the Phase 3 swap, not all of
     // history. It fell 1,217,858 -> ~126,000 on 2026-08-03 by design; the rest
-    // lives in R2. See docs/plans/data-pipeline-2026-08-02.md.
+    // lives in R2. See docs/DATA-PIPELINE.md §5.
     pitches_rows: pitchCount ?? 0,
     jobs,
     data_fresh: dataFresh,
