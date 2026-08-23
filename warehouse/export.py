@@ -110,14 +110,21 @@ def _retry_timeout(fn):
     that. A statement timeout is the one APIError that is genuinely transient:
     the export shares its instance with the nightly `publish` job and a 15-second
     pg_cron, so a page can lose a cache race it would win on a second attempt.
-    Narrow on purpose -- every other APIError still fails fast.
-    """
-    from postgrest.exceptions import APIError
+    Narrow on purpose -- everything else propagates on the first raise.
 
+    Matched on the exception's SQLSTATE rather than by catching
+    `postgrest.exceptions.APIError`, because importing postgrest here would put
+    the Supabase client on the import path of the whole module. CI installs only
+    requirements-warehouse.txt, and this module's contract (see the docstring on
+    `config.supabase_client`) is that the R2/Parquet side stays usable with no
+    Supabase dependency installed at all. `test_the_retry_needs_no_supabase_dep`
+    holds that line; the postgrest APIError attribute this relies on is pinned
+    by `test_a_real_postgrest_api_error_carries_a_code`.
+    """
     for attempt in range(TIMEOUT_RETRIES):
         try:
             return fn()
-        except APIError as exc:
+        except Exception as exc:  # noqa: BLE001 - re-raised unless it is 57014
             if getattr(exc, "code", None) != TIMEOUT_CODE:
                 raise
             if attempt == TIMEOUT_RETRIES - 1:

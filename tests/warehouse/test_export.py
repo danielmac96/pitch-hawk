@@ -377,21 +377,33 @@ def test_game_predictions_do_not_use_keyset_paging():
                for f in q["filters"])
 
 
+class StubAPIError(Exception):
+    """Stands in for `postgrest.exceptions.APIError`, which CI does not install.
+
+    The retry matches on `.code` rather than on the exception class precisely so
+    that `warehouse.export` needs no Supabase dependency;
+    `test_a_real_postgrest_api_error_carries_a_code` pins that the real class
+    does carry the attribute this relies on.
+    """
+
+    def __init__(self, code, message=""):
+        super().__init__(message)
+        self.code = code
+        self.message = message
+
+
 def test_a_page_is_retried_on_a_statement_timeout(monkeypatch):
     """The export shares its instance with the nightly publish job and a
     15-second pg_cron, so a page can lose a cache race it would win on a
     retry."""
-    from postgrest.exceptions import APIError
-
     monkeypatch.setattr(export.time, "sleep", lambda _s: None)
     calls = []
 
     def flaky():
         calls.append(1)
         if len(calls) == 1:
-            raise APIError({"code": "57014",
-                            "message": "canceling statement due to "
-                                       "statement timeout"})
+            raise StubAPIError(export.TIMEOUT_CODE,
+                               "canceling statement due to statement timeout")
         return "ok"
 
     assert export._retry_timeout(flaky) == "ok"
@@ -401,18 +413,81 @@ def test_a_page_is_retried_on_a_statement_timeout(monkeypatch):
 def test_a_non_timeout_api_error_is_not_retried(monkeypatch):
     """A 4xx means the payload or the schema is wrong; hammering it will not
     fix that, and a retry loop would only delay the real error."""
-    from postgrest.exceptions import APIError
-
     monkeypatch.setattr(export.time, "sleep", lambda _s: None)
     calls = []
 
     def broken():
         calls.append(1)
-        raise APIError({"code": "42703", "message": "column does not exist"})
+        raise StubAPIError("42703", "column does not exist")
 
-    with pytest.raises(APIError):
+    with pytest.raises(StubAPIError):
         export._retry_timeout(broken)
     assert len(calls) == 1
+
+
+def test_an_error_with_no_code_at_all_is_not_retried(monkeypatch):
+    """Matching on an attribute rather than a class means anything without one
+    must still fail on the first raise -- a transport error or a bug in the
+    fake client is not a statement timeout."""
+    monkeypatch.setattr(export.time, "sleep", lambda _s: None)
+    calls = []
+
+    def broken():
+        calls.append(1)
+        raise KeyError("id")
+
+    with pytest.raises(KeyError):
+        export._retry_timeout(broken)
+    assert len(calls) == 1
+
+
+def test_a_real_postgrest_api_error_carries_a_code():
+    """`_retry_timeout` duck-types on `.code`, which is only correct while the
+    real APIError actually exposes it. Skipped in CI, which installs only
+    requirements-warehouse.txt; it runs wherever the export really runs."""
+    APIError = pytest.importorskip("postgrest.exceptions").APIError
+
+    exc = APIError({"code": "57014", "message": "canceling statement due to "
+                                                "statement timeout"})
+    assert exc.code == export.TIMEOUT_CODE
+
+
+def test_the_retry_needs_no_supabase_dep(tmp_path):
+    """The whole fetch path must import cleanly with no Supabase package
+    installed -- CI installs requirements-warehouse.txt only, and this module's
+    R2/Parquet side is meant to stand on its own (see `config.supabase_client`).
+
+    An `from postgrest... import` inside the paging helpers broke every test in
+    this file on CI while passing locally, where the dependency happened to be
+    installed. Blocking the import here means this fails on that mistake in
+    BOTH environments.
+    """
+    import sys
+
+    class Blocked:
+        def find_module(self, name, path=None):
+            return self.find_spec(name, path)
+
+        def find_spec(self, name, path=None, target=None):
+            root = name.split(".")[0]
+            if root in ("postgrest", "supabase", "gotrue", "storage3"):
+                raise ImportError(f"{name} is not installed in this environment")
+            return None
+
+    blocker = Blocked()
+    saved = {k: v for k, v in sys.modules.items()
+             if k.split(".")[0] in ("postgrest", "supabase", "gotrue",
+                                    "storage3")}
+    for k in saved:
+        del sys.modules[k]
+    sys.meta_path.insert(0, blocker)
+    try:
+        store = LocalStore(tmp_path)
+        res = export.export_day(store, DAY, client=FakeClient(_rows()))
+        assert res["written"] is True
+    finally:
+        sys.meta_path.remove(blocker)
+        sys.modules.update(saved)
 
 
 def test_cmd_export_imports_resolve():
