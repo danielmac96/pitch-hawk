@@ -256,7 +256,8 @@ def cmd_ingest(args) -> int:
 # ── export ──────────────────────────────────────────────────────────────────
 
 def cmd_export(args) -> int:
-    from warehouse.export import _client, export_day
+    from warehouse.config import supabase_client
+    from warehouse.export import export_day
 
     store = _store(args)
     if args.range:
@@ -268,7 +269,7 @@ def cmd_export(args) -> int:
         wanted = [args.day or _eastern_yesterday()]
 
     m = manifest.load(store)
-    client = _client()
+    client = supabase_client()
     total = {"days": 0, "bytes": 0}
     for day in wanted:
         res = export_day(store, day, client=client, m=m,

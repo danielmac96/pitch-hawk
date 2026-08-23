@@ -29,6 +29,7 @@ than by slicing `created_at`.
 from __future__ import annotations
 
 import json as _json
+import time
 from datetime import date, datetime, timezone
 
 import pyarrow as pa
@@ -39,24 +40,89 @@ from warehouse.config import (EXPORT_DATASETS, SCHEMAS, object_key,
                               supabase_client)
 from warehouse.ingest import checksum, to_parquet
 
-# PostgREST caps a single response (Supabase defaults to 1000 rows). A busy
-# slate is ~8,000 predictions, so paging is not optional.
+# PostgREST caps a single response (Supabase defaults to 1000 rows). A full
+# slate is ~19,000 predictions, so paging is not optional.
 PAGE = 1000
 
+# Supabase gives `service_role` an 8-second statement_timeout (it carries no
+# rolconfig of its own and inherits `authenticator`'s). Every query below is
+# shaped to stay far under that -- see `fetch_day`.
+TIMEOUT_CODE = "57014"
+TIMEOUT_RETRIES = 3
 
-def _page_all(make_query) -> list[dict]:
-    """Drain a PostgREST query in PAGE-sized windows.
 
-    `make_query` is called per page because the builder is single-use.
+def _page_keyset(make_query, *, key: str = "id") -> list[dict]:
+    """Drain a PostgREST query in PAGE-sized windows, keyset-style.
+
+    `make_query` is called per page because the builder is single-use, and it
+    must NOT apply its own ordering or range -- this owns both.
+
+    Keyset (`WHERE key > last ORDER BY key LIMIT n`) rather than `range()`,
+    which PostgREST turns into LIMIT/OFFSET. Under OFFSET, Postgres re-runs the
+    whole filter and re-sorts every matching row on every page and then discards
+    all but the window, so draining N pages costs O(N^2) and the last page is
+    the most expensive one. That is what pushed the nightly export past the 8s
+    statement timeout.
+
+    `key` MUST be unique within the query's result set. `.gt()` on a repeated
+    value silently drops the rest of its group.
+    """
+    out: list[dict] = []
+    last = None
+    while True:
+        def page(last=last):
+            q = make_query()
+            if last is not None:
+                q = q.gt(key, last)
+            return q.order(key).limit(PAGE).execute().data or []
+
+        rows = _retry_timeout(page)
+        out.extend(rows)
+        if len(rows) < PAGE:
+            return out
+        last = rows[-1][key]
+
+
+def _page_offset(make_query) -> list[dict]:
+    """Drain a query with no unique single-column key, via LIMIT/OFFSET.
+
+    Only for result sets small enough that the quadratic re-scan above is free
+    -- `game_predictions` is ~165 rows on a full slate, one page. Anything that
+    can grow with the season belongs on `_page_keyset`.
     """
     out: list[dict] = []
     start = 0
     while True:
-        rows = make_query().range(start, start + PAGE - 1).execute().data or []
+        rows = _retry_timeout(
+            lambda start=start: make_query()
+            .range(start, start + PAGE - 1).execute().data or [])
         out.extend(rows)
         if len(rows) < PAGE:
             return out
         start += PAGE
+
+
+def _retry_timeout(fn):
+    """Retry a page ONLY on Postgres 57014 (statement timeout).
+
+    `warehouse.publish._retry` deliberately re-raises every APIError, because a
+    4xx from PostgREST means the payload is wrong and hammering it will not fix
+    that. A statement timeout is the one APIError that is genuinely transient:
+    the export shares its instance with the nightly `publish` job and a 15-second
+    pg_cron, so a page can lose a cache race it would win on a second attempt.
+    Narrow on purpose -- every other APIError still fails fast.
+    """
+    from postgrest.exceptions import APIError
+
+    for attempt in range(TIMEOUT_RETRIES):
+        try:
+            return fn()
+        except APIError as exc:
+            if getattr(exc, "code", None) != TIMEOUT_CODE:
+                raise
+            if attempt == TIMEOUT_RETRIES - 1:
+                raise
+            time.sleep(2 ** attempt)
 
 
 # ── coercion ────────────────────────────────────────────────────────────────
@@ -137,18 +203,35 @@ def fetch_day(client, day: str) -> dict[str, list[dict]]:  # noqa: ANN001
 
     # `predictions` carries no date column at all, so the slate's game_pks are
     # the only correct way to scope it to a day. No games means no predictions
-    # -- skip the query rather than fetching the whole table unfiltered, which
-    # is what an empty `.in_()` would do on some client versions.
-    preds = _page_all(
-        lambda: client.table("predictions").select("*")
-        .in_("game_pk", pks).order("id")
-    ) if pks else []
+    # -- the loop below simply does not run, rather than fetching the whole
+    # table unfiltered, which is what an empty `.in_()` would do on some client
+    # versions.
+    #
+    # ONE GAME PER QUERY, not `.in_(game_pk, pks)` over the slate. Both forms
+    # return the same rows, but the slate-wide filter makes every page scan and
+    # sort all ~19,000 of the day's predictions (4,607 heap blocks, spilling to
+    # disk -- work_mem is 2 MB) to hand back 1,000. Per game it is ~1,300 rows
+    # and ~330 blocks, sorted in memory: measured 23 ms against an 8-second
+    # statement timeout. The bound is also structural rather than seasonal --
+    # a game holds only so many plate appearances, while a slate's total has
+    # already more than doubled once and broke this job when it did.
+    preds: list[dict] = []
+    for pk in pks:
+        preds.extend(_page_keyset(
+            lambda pk=pk: client.table("predictions").select("*")
+            .eq("game_pk", pk)))
+    # Restores the global id order the single slate-wide query used to produce,
+    # so re-exporting a day still yields the same file. (`checksum` is
+    # order-independent by design, so this is stability, not correctness.)
+    preds.sort(key=lambda r: r["id"])
 
-    picks = _page_all(
-        lambda: client.table("picks").select("*")
-        .eq("pick_date", day).order("id")
+    picks = _page_keyset(
+        lambda: client.table("picks").select("*").eq("pick_date", day)
     )
-    gpreds = _page_all(
+    # No unique single-column key here -- the PK is (game_pk, market, phase) --
+    # so keyset paging on game_pk would drop every row after the first of each
+    # game. It is 165 rows on a full slate, so one offset page covers it.
+    gpreds = _page_offset(
         lambda: client.table("game_predictions").select("*")
         .eq("official_date", day).order("game_pk")
     )

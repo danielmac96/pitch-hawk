@@ -14,6 +14,7 @@ defect as the v1 manifest's self-certification.
 
 from __future__ import annotations
 
+import inspect
 import json
 from datetime import date, datetime, timezone
 
@@ -31,21 +32,47 @@ DAY = "2026-08-06"
 
 
 class FakeQuery:
-    """Just enough of the PostgREST builder for export.fetch_day."""
+    """Just enough of the PostgREST builder for export.fetch_day.
 
-    def __init__(self, rows):
-        self._rows = rows
+    `eq` and `gt` really filter and `order`/`limit`/`range` really slice, so a
+    test can observe HOW the export asks for its rows and not just what it gets
+    back. That is the point: the nightly died on a query shape that returned
+    perfectly correct rows.
+    """
+
+    def __init__(self, rows, log=None, table=None):
+        self._rows = list(rows)
+        self._log = log if log is not None else []
+        self._table = table
+        self._order = None
+        self._limit = None
+        self._slice = None
+        self._filters: list[tuple] = []
 
     def select(self, *_a, **_k):
         return self
 
-    def eq(self, *_a, **_k):
+    def eq(self, col, val):
+        self._filters.append(("eq", col, val))
+        self._rows = [r for r in self._rows if r.get(col) == val]
         return self
 
-    def in_(self, *_a, **_k):
+    def in_(self, col, vals):
+        self._filters.append(("in", col, list(vals)))
+        self._rows = [r for r in self._rows if r.get(col) in set(vals)]
         return self
 
-    def order(self, *_a, **_k):
+    def gt(self, col, val):
+        self._filters.append(("gt", col, val))
+        self._rows = [r for r in self._rows if r.get(col) > val]
+        return self
+
+    def order(self, col, *_a, **_k):
+        self._order = col
+        return self
+
+    def limit(self, n):
+        self._limit = n
         return self
 
     def range(self, start, end):
@@ -53,23 +80,38 @@ class FakeQuery:
         return self
 
     def execute(self):
-        start, end = getattr(self, "_slice", (0, len(self._rows)))
-        return type("Res", (), {"data": self._rows[start:end + 1]})()
+        rows = self._rows
+        if self._order is not None:
+            rows = sorted(rows, key=lambda r: r[self._order])
+        if self._slice is not None:
+            start, end = self._slice
+            rows = rows[start:end + 1]
+        if self._limit is not None:
+            rows = rows[:self._limit]
+        self._log.append({"table": self._table, "filters": self._filters,
+                          "order": self._order, "limit": self._limit,
+                          "range": self._slice, "returned": len(rows)})
+        return type("Res", (), {"data": rows})()
 
 
 class FakeClient:
     def __init__(self, tables):
         self.tables = tables
+        self.log: list[dict] = []
 
     def table(self, name):
-        return FakeQuery(self.tables.get(name, []))
+        return FakeQuery(self.tables.get(name, []), log=self.log, table=name)
+
+    def queries(self, table):
+        return [q for q in self.log if q["table"] == table]
 
 
 def _rows():
     """One of each, shaped the way PostgREST actually hands them back:
     dates and timestamps as strings, jsonb as parsed dicts."""
     return {
-        "games": [{"game_pk": 1}, {"game_pk": 2}],
+        "games": [{"game_pk": 1, "official_date": DAY},
+                  {"game_pk": 2, "official_date": DAY}],
         "predictions": [{
             "id": 10, "game_pk": 1, "at_bat_index": 3, "pitch_number": 2,
             "market": "pitch_result", "predicted_value": 1.5,
@@ -239,7 +281,7 @@ def test_skip_existing_only_skips_when_every_dataset_is_present(tmp_path):
 
 
 def test_paging_drains_more_than_one_page(tmp_path, monkeypatch):
-    """A busy slate is ~8,000 predictions against a 1,000-row PostgREST cap."""
+    """A full slate is ~19,000 predictions against a 1,000-row PostgREST cap."""
     monkeypatch.setattr(export, "PAGE", 2)
     rows = _rows()
     base = rows["predictions"][0]
@@ -248,3 +290,147 @@ def test_paging_drains_more_than_one_page(tmp_path, monkeypatch):
     store = LocalStore(tmp_path)
     res = export.export_day(store, DAY, client=FakeClient(rows))
     assert res["predictions"] == 5
+
+
+def test_predictions_page_by_keyset_not_offset(monkeypatch):
+    """Under LIMIT/OFFSET, Postgres re-scans and re-sorts the whole day for
+    every page and discards all but the window. Draining ~19 pages that way is
+    what blew the 8-second statement timeout the nightly runs under.
+
+    Keyset paging carries the last id forward instead, so page N costs what
+    page 1 costs.
+    """
+    monkeypatch.setattr(export, "PAGE", 2)
+    rows = _rows()
+    base = rows["predictions"][0]
+    rows["predictions"] = [{**base, "id": i, "game_pk": 1} for i in range(5)]
+
+    client = FakeClient(rows)
+    export.fetch_day(client, DAY)
+
+    pages = client.queries("predictions")
+    assert len(pages) > 1, "the fixture should need more than one page"
+    assert all(p["range"] is None for p in pages), \
+        "range() is LIMIT/OFFSET -- the shape that timed out"
+    assert all(p["limit"] == 2 for p in pages)
+    # Every page after the first advances past the previous page's last id.
+    assert [f for p in pages[1:] for f in p["filters"] if f[0] == "gt"] == \
+        [("gt", "id", 1), ("gt", "id", 3)]
+
+
+def test_predictions_are_fetched_one_game_at_a_time():
+    """A slate-wide `.in_(game_pk, pks)` makes every page scan and sort all
+    ~19,000 of the day's predictions. Per game it is ~1,300 rows off an index.
+
+    The bound matters more than the constant: a game holds only so many plate
+    appearances, while the slate total has already doubled once and broke this
+    job when it did.
+    """
+    rows = _rows()
+    base = rows["predictions"][0]
+    rows["predictions"] = [{**base, "id": 10, "game_pk": 1},
+                           {**base, "id": 11, "game_pk": 2}]
+
+    client = FakeClient(rows)
+    out = export.fetch_day(client, DAY)
+
+    pages = client.queries("predictions")
+    assert len(pages) == 2, "one query per game_pk on the slate"
+    assert [f for p in pages for f in p["filters"] if f[0] == "in"] == [], \
+        "the slate-wide IN filter is the shape that timed out"
+    assert sorted(f[2] for p in pages for f in p["filters"]
+                  if f[0] == "eq" and f[1] == "game_pk") == [1, 2]
+    # Scoping per game must not change the rows, nor their global id order.
+    assert [r["id"] for r in out["predictions"]] == [10, 11]
+
+
+def test_no_games_means_no_predictions_query_at_all():
+    """An empty `.in_()` fetches the whole table unfiltered on some client
+    versions. The per-game loop simply does not run."""
+    rows = _rows()
+    rows["games"] = []
+
+    client = FakeClient(rows)
+    out = export.fetch_day(client, DAY)
+
+    assert out["predictions"] == []
+    assert client.queries("predictions") == []
+
+
+def test_game_predictions_do_not_use_keyset_paging():
+    """Its PK is (game_pk, market, phase), so `game_pk` repeats. Keyset paging
+    on a non-unique column silently drops every row after the first of each
+    group -- offset paging is correct here, and 165 rows a day is one page."""
+    rows = _rows()
+    base = rows["game_predictions"][0]
+    rows["game_predictions"] = [
+        {**base, "market": "game_total"},
+        {**base, "market": "run_line"},
+        {**base, "market": "moneyline"},
+    ]
+
+    client = FakeClient(rows)
+    out = export.fetch_day(client, DAY)
+
+    assert len(out["game_predictions"]) == 3
+    assert all(f[0] != "gt" for q in client.queries("game_predictions")
+               for f in q["filters"])
+
+
+def test_a_page_is_retried_on_a_statement_timeout(monkeypatch):
+    """The export shares its instance with the nightly publish job and a
+    15-second pg_cron, so a page can lose a cache race it would win on a
+    retry."""
+    from postgrest.exceptions import APIError
+
+    monkeypatch.setattr(export.time, "sleep", lambda _s: None)
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) == 1:
+            raise APIError({"code": "57014",
+                            "message": "canceling statement due to "
+                                       "statement timeout"})
+        return "ok"
+
+    assert export._retry_timeout(flaky) == "ok"
+    assert len(calls) == 2
+
+
+def test_a_non_timeout_api_error_is_not_retried(monkeypatch):
+    """A 4xx means the payload or the schema is wrong; hammering it will not
+    fix that, and a retry loop would only delay the real error."""
+    from postgrest.exceptions import APIError
+
+    monkeypatch.setattr(export.time, "sleep", lambda _s: None)
+    calls = []
+
+    def broken():
+        calls.append(1)
+        raise APIError({"code": "42703", "message": "column does not exist"})
+
+    with pytest.raises(APIError):
+        export._retry_timeout(broken)
+    assert len(calls) == 1
+
+
+def test_cmd_export_imports_resolve():
+    """`cmd_export` went on importing `warehouse.export._client` after that
+    helper was consolidated into `warehouse.config.supabase_client`. Nothing
+    here exercised the CLI layer, so `python -m warehouse export` was dead on
+    master while every other test in this file passed.
+    """
+    import re
+
+    import warehouse.cli as cli
+
+    src = inspect.getsource(cli.cmd_export)
+    assert not re.search(r"\b_client\b", src), \
+        "cmd_export references a helper that no longer exists"
+
+    # The names it imports must actually resolve.
+    for line in src.splitlines():
+        line = line.strip()
+        if line.startswith("from warehouse."):
+            exec(line, {})  # noqa: S102 - the assertion IS that this imports
