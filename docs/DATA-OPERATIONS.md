@@ -5,9 +5,12 @@
 it fires, what it writes, whether it is currently working, and what happens when
 it isn't. From `statsapi.mlb.com` through Supabase Postgres and Cloudflare R2 to
 the served frontend.
-**As of:** 2026-08-07, 23:50 UTC. Every figure below was measured on that date
-through the live system; §9 gives the exact command for each so you can
-re-measure rather than trust this file.
+**How to read it.** This file describes *shape* — what runs, on what trigger,
+and why each job is built the way it is. It deliberately holds very few
+measured numbers, because those rot: §7 gives the command for each instead.
+A dated measurement of the system as it stood on 2026-08-07, including an
+open-defect log from that morning, is in
+[`STATUS-2026-08-07.md`](STATUS-2026-08-07.md) — read that as history.
 
 **Companion documents.** [`DATA-PIPELINE.md`](DATA-PIPELINE.md) is the *design*
 document — semantics, invariants, rationale, rejected alternatives. This file is
@@ -21,7 +24,7 @@ wins**; where they disagree about why something is built the way it is,
 
 Two independent readers pull from the same public MLB Stats API. The **live
 path** (Deno edge functions, driven by pg_cron) keeps a 35-day hot window in
-Supabase Postgres current to within 30 seconds and scores predictions against
+Supabase Postgres current to within 15 seconds and scores predictions against
 it. The **history path** (Python, driven by a GitHub Actions nightly) writes
 11 seasons of wide Parquet into Cloudflare R2, verifies it against a re-fetch,
 then computes display aggregates in DuckDB over R2 and publishes them back into
@@ -56,7 +59,7 @@ transitions with nobody re-cutting the cron in November.
 
 | Job | Cadence | Fires | Conditional gate | Writes | Last observed |
 |---|---|---|---|---|---|
-| `np-live-poll` | **every 30 s** | `live-poll` | only if a game is inside `[start_ts, start_ts+4h)` **or** a `live_state` row is still `status='live'` | `pitches`, `at_bats`, `live_state`, `predictions`, `picks`, `game_predictions` (`phase='live'`) | ✅ 2,002 ok / 0 failed in 48 h |
+| `np-live-poll` | **every 15s** | `live-poll` | only if a game is inside `[start_ts, start_ts+4h)` **or** a `live_state` row is still `status='live'` | `pitches`, `at_bats`, `live_state`, `predictions`, `picks`, `game_predictions` (`phase='live'`) | ✅ 2,002 ok / 0 failed in 48 h |
 | ⟳ `np-game-predict` | **10:00 ET**, then hourly gap-fill | `game-predict` | at 10:00, any unstarted game today; after 10:00, **only** if an unstarted game is missing pregame markets | `game_predictions` (`phase='pregame'`) | ✅ 43 ok / 0 failed in 48 h |
 | ⟳ `np-settle-sweep` | **03:00 ET** | `settle` | local hour = 3 | grades whatever the live chain missed, ahead of the 04:00 export | new |
 | ~~`np-settle`~~ | ~~every 10 min~~ | — | **retired** — `live-poll` now chains `settle` directly (§5.3) | — | — |
@@ -77,8 +80,8 @@ all** — deliberately unscheduled, not broken:
 |---|---|---|---|
 | ⟳ `warehouse.yml` | **04:00 ET** — `0 8 * * *` **and** `0 9 * * *`, both guarded | `guard` picks today's real 04:00 line; `ingest`: `status` → `pending --max-gap 14` → per day `ingest` then `verify --record`; `export`: yesterday's model output → R2; `publish`: DuckDB aggregates → Supabase | ✅ 4 of last 5 green |
 | `ci.yml` | every push + every PR | pytest; `deno check` + `deno test` on the edge functions; all migrations applied to a stock PG16 with `cron`/`pg_net` stubbed | ✅ green on `master` |
-| `deploy-supabase.yml` | `workflow_dispatch` **only** | link → `db push` → rotate `cron_secret` → deploy all 7 edge functions | ⚠️ 4 consecutive failures 2026-08-06 (all from a non-default branch; `schedule`/`dispatch` only run from `master`) |
-| `train-models.yml` | `workflow_dispatch` **only** | fits v1 models → `model_params` | ⏸ **dormant by design** — schedule removed 2026-08-02; `train_models.py` exits 2 (§7.5) |
+| `deploy-supabase.yml` | `workflow_dispatch` **only** | link → `db push` → rotate `cron_secret` → deploy all 8 edge functions | ⚠️ 4 consecutive failures 2026-08-06 (all from a non-default branch; `schedule`/`dispatch` only run from `master`) |
+| `train-models.yml` | `workflow_dispatch` **only** | records a `model_runs` row per market | ✅ by design — it never passes `--promote`, so production is untouched. Promotion is a human command ([`MODELS.md`](MODELS.md)) |
 
 ### 2.3 Vercel — git-push, not cron
 
@@ -109,7 +112,7 @@ flowchart TB
 
     subgraph LIVE["LIVE PATH — Deno edge functions, driven by pg_cron"]
         direction TB
-        LP["live-poll<br/><i>every 30s, gated on game window</i>"]
+        LP["live-poll<br/><i>every 15s, gated on game window</i>"]
         GP["game-predict<br/><i>10:00 ET + gap-fill</i>"]
         ST["settle<br/><i>chained from live-poll<br/>+ 03:00 ET sweep</i>"]
         DI["daily-ingest<br/><i>daily 13:00 UTC</i>"]
@@ -150,8 +153,8 @@ flowchart TB
     PG --> SERVE --> FE
 
     VER -.->|"gates the 35-day prune"| PG
-    R2 -.->|"Phase B: training reads — NOT BUILT"| TRAIN["train_models.py<br/>dormant"]
-    TRAIN -.-> PG
+    R2 -->|"feature cells via DuckDB"| TRAIN["modeling/<br/>manual, gated"]
+    TRAIN -.->|"only on --promote"| PG
 
     style TRAIN stroke-dasharray: 5 5
 ```
@@ -184,7 +187,7 @@ gantt
     game-predict — hourly gap-fill only      :gf, 10:15, 585m
 
     section Game time
-    live-poll — every 30s                    :active, lp, 19:00, 360m
+    live-poll — every 15s                    :active, lp, 19:00, 360m
     settle — chained, within 30s of a result :active, st, 19:00, 360m
 ```
 
@@ -206,7 +209,7 @@ because ingest only writes final games and the export overwrites.
 
 ## 5. Per-pipeline detail
 
-### 5.1 `live-poll` — 30 seconds
+### 5.1 `live-poll` — 15 seconds
 
 **Trigger.** pg_cron `np-live-poll`, but the job body is a `do $$` block that
 calls the edge function **only** if a game is inside `[start_ts, start_ts + 4h)`
@@ -279,7 +282,7 @@ both phases. Batch size 400. Mirrors the documented rules in
 **Trigger, as of 2026-08-08.** The `np-settle` 10-minute timer is retired.
 `live-poll` now calls `settle` itself via `invokeFunction()` in `_shared/db.ts`,
 at the end of any cycle that either ingested new pitches or marked a game
-final. A result is graded within ~30 seconds of landing instead of up to ten
+final. A result is graded within ~15 seconds of landing instead of up to ten
 minutes later.
 
 Two details that make this safe rather than merely faster:
@@ -507,7 +510,7 @@ of them exist as scar tissue:
   `requirements.txt`. Without it, `config.py`, `ingest.py`, `manifest.py` and
   `verify.py` are unimportable and silently uncovered — which is how the manifest
   self-certification defect survived to 2026-08-02.
-- **`edge-functions`** runs `deno check` on all six functions plus
+- **`edge-functions`** runs `deno check` on all eight functions plus
   `deno test supabase/functions/tests/`. The aggregate read handlers ship in the
   edge function, so pytest cannot reach them; `backend/` is a parallel dev
   implementation that does not serve production.
@@ -533,7 +536,7 @@ sequenceDiagram
     autonumber
     participant MLB as MLB Stats API
     participant GP as game-predict (10:00 ET)
-    participant LP as live-poll (30s)
+    participant LP as live-poll (15s)
     participant M as model_params<br/>(active registry)
     participant DB as Supabase
     participant ST as settle (chained)
@@ -570,237 +573,38 @@ sequenceDiagram
     DAY->>DB: rollup_player_predictions() fills player_prediction_daily
     DAY->>DB: prune_predictions(21d) — SKIPPED if either rollup failed
 
-    Note over M: 6. TRAINING — dormant
-    M--xM: train-models.yml unscheduled, train_models.py exits 2,<br/>registry frozen at v1_20260707
+    Note over M: 6. TRAINING — manual, never automatic
+    M->>R2: python -m modeling build (feature cells via DuckDB)
+    M->>M: sweep + walk-forward + frozen 2026 holdout
+    M->>DB: model_runs row — every run, promoted or not
+    M--xDB: model_params UNCHANGED unless a human passes --promote
 ```
 
-**The registry.** All five markets are stamped `v1_20260707` and `is_active=true`.
-Nothing has been trained since **2026-07-07 — one month ago**. This is not a
-silent failure: the weekly schedule was deliberately removed on 2026-08-02
-because the `train_*_cells` RPCs the trainer read were dropped by migration
-`20260802000002` (they read all of `pitches`, and against a 35-day hot window
-they would have quietly returned 35 days and produced a worse model without
-saying so). `train_models.py` now exits 2 with an explanation. Re-pointing
-training at DuckDB over R2 is Phase B and is the last unbuilt piece.
+**Training does not run on a schedule, and that is the design.**
+`train-models.yml` is `workflow_dispatch` only and never passes `--promote`, so
+a run there records a `model_runs` row and changes nothing about what
+production serves. `build` scans the whole corpus (~2,000 Parquet files per
+dataset) and costs real R2 operations, so it should be an intentional act.
 
-**A caveat that survives from `DATA-PIPELINE.md` §8 and still holds:** the
-`game_moneyline` numbers you see served are MLB's own win-probability feed
-(`mlb_winprob_v1`), not our trained log5 model. The trained model is only called
-by `odds-ingest`, which is unscheduled.
+Promotion is a separate, deliberate command at a terminal, gated on
+out-of-sample metrics. `python -m modeling status` compares the registry's
+active version against what live scoring actually stamped on
+`predictions.model_version`, which is how a forgotten `live-poll` redeploy
+surfaces as a mismatch rather than a mystery.
 
----
+The full lifecycle, the gate rules and the registry operations live in
+[`MODELS.md`](MODELS.md), which is authoritative for anything about models.
 
-## 7. Status scorecard
-
-Measured 2026-08-07. Every verdict cites its evidence.
-
-### 7.1 Pipelines
-
-| Pipeline | Status | Evidence |
-|---|---|---|
-| `live-poll` | 🟢 | 2,002 ok / 0 failed in 48 h; last run 23:46:16, 10 s before a `/api/health` check that reported `data_fresh: true` |
-| `game-predict` | 🟢 | 43 ok / 0 failed since first deploy; last 23:05:00 |
-| `settle` | 🟢 | 289 ok / 0 failed in 48 h; last 23:40:00 |
-| `daily-ingest` | 🔴 | **failed 2026-08-07 13:00** on `rollup_player: canceling statement due to statement timeout` (§8.1) |
-| Warehouse nightly | 🟡 | 4 of last 5 green; one infrastructure failure absorbed automatically. Amber only for the missing alert and the schedule drift (§8.3, §8.4) |
-| R2 warehouse | 🟢 | current through **2026-08-06** (yesterday), 2,018 days, manifest v2 |
-| R2 verification | 🟡 | **286 days verified, 1,732 ingested-only** (§8.5) |
-| Aggregate publish | 🟢 | all 7 tables refreshed 2026-08-07 15:34–15:35; `/api/health` reports `aggregates_stale: false` |
-| Capacity | 🟢 | **227 MB / 500 MB.** The 2026-08-02 hot-window swap took it 456 MB → 182 MB (`3b75761`); it peaked at 495 MB before Phase 0 |
-| Model registry | 🔴 | `v1_20260707` across all 5 markets — 31 days stale (§8.6) |
-| Vercel | 🟢 | last production deploy `READY` on `a200477` |
-| CI | 🟢 | green on `master` |
-
-### 7.2 The measurable win from PR #23
-
-`prediction_coverage()` counts games carrying all six markets. `pregame_full`
-counts games that had all six **before first pitch** — the number that decides
-whether a morning visitor sees a board or a blank page.
-
-| Date | Games | Full coverage | **Pregame-full** | Avg markets |
-|---|---:|---:|---:|---:|
-| 2026-08-02 | 15 | 0 | **0** | 5.00 |
-| 2026-08-03 | 8 | 0 | **0** | 5.00 |
-| 2026-08-04 | 15 | 0 | **0** | 5.00 |
-| 2026-08-05 | 15 | 0 | **0** | 5.00 |
-| **2026-08-06** | 11 | 11 | **11** | 6.00 |
-| **2026-08-07** | 15 | 15 | **15** | 6.00 |
-
-A clean step change on the day `game-predict` shipped. The sixth market
-(`game_total`) had never been predicted at all before this.
-
-### 7.3 Storage position
-
-| Store | Used | Cap | Headroom |
-|---|---:|---:|---|
-| Supabase Postgres | **227 MB** | 500 MB | 273 MB |
-| Cloudflare R2 | **622 MB** | 10 GB free | ~94% |
-
-Largest Postgres tables: `predictions` 84 MB, `pitches` 36 MB, `picks` 13 MB,
-`matchup_history` 13 MB, `game_context` 9.6 MB, `at_bats` 7.4 MB.
-
-**`predictions` is now the largest table in the database**, which is a reversal
-worth internalising — for the whole prior history of this project, `pitches` was.
-It is also the table whose prune is currently blocked (§8.1).
-
-### 7.4 Serving layer
-
-The `api` edge function strips `/api/` and switches on the remainder. Every
-response is CDN-cached *and* memoised in-instance, so load scales with TTL, not
-with user count.
-
-| Route | TTL (s) |
-|---|---:|
-| `/health`, `/`, `/live` | 10 |
-| `/edge/{game_pk}` | 15 |
-| `/odds/today` | 30 |
-| `/picks/today`, `/record`, `/games`, `/board`, `/feed` | 60 |
-| `/pitches` | 15 |
-| `/player/{id}/{profile,splits,fatigue}`, `/matchup/{p}/{b}`, `/coverage` | 300 |
-| `/game/{pk}/context`, `/sportsbooks` | 3600 |
-
-The 300 s tier is deliberately conservative for tables rebuilt once nightly — it
-bounds staleness after a publish without making the cache pointless.
+**One caveat worth repeating here:** the `game_moneyline` numbers served are
+not the trained log5 model. `model.ts` has no `log5` branch at all — both
+callers take the function default `homeAdv = 0.542`. `live-poll` stamps MLB's
+own win-probability feed as `mlb_winprob_v1`; `game-predict` stamps `log5_v1`
+but reads no `model_params`. A promoted `game_moneyline` row would be
+recorded, versioned and completely inert.
 
 ---
 
-## 8. Areas of improvement, ranked
-
-Ranked by consequence if ignored, not by effort.
-
-### 8.1 🔴 `daily-ingest` is failing, and the failure ratchets
-
-**Symptom.** 2026-08-07 13:00 UTC:
-`rollup_player: canceling statement due to statement timeout`.
-
-**Root cause, located precisely.** The `authenticator` role carries
-`statement_timeout=8s` (`select rolname, rolconfig from pg_roles`). Every RPC
-`daily-ingest` calls goes through PostgREST under that role, so **8 seconds is a
-hard ceiling on any single rollup or prune, regardless of how long the edge
-function itself is allowed to run.** `rollup_player_predictions(7)` joins seven
-days of `predictions` to `at_bats`, `cross join lateral`-expands every row into a
-pitcher row and a batter row, then groups and upserts. It fit inside 8 s on
-2026-08-06 (returned 14,060) and did not on 2026-08-07 (15-game slate).
-
-**The interlock worked.** `daily-ingest/index.ts` skips `prune_predictions` when
-either rollup fails, rather than deleting rows it has no aggregate for. That is
-correct and should not be changed.
-
-**But it creates a ratchet.** Rollup times out → prune is skipped → `predictions`
-grows → the rollup's input grows → it times out again. `predictions` is already
-the largest table at 84 MB, and 3,880 rows are past the 21-day policy and
-unpruned. This does not self-heal; each day makes the next day worse.
-
-**Proposed fix**, either:
-- move `rollup_player_predictions` to its own pg_cron job, which runs as
-  `postgres` and is not subject to the 8 s `authenticator` cap; or
-- make it single-day incremental (`p_days => 1`) instead of re-aggregating a
-  rolling 7-day window every night. The `on conflict … do update` key already
-  supports this; only the volume changes.
-
-The first is more robust; the second is a one-line change to the call site.
-Neither is large. Do this first.
-
-### 8.2 🔴 `/api/health` reports `"status":"ok"` while a job is failing
-
-`/api/health` returns `"status":"ok"`, `"data_fresh":true` and a `jobs` block —
-but the block covers `live-poll`, `settle` and `game-predict` only. **The one job
-that is actually broken is not in it.** Anything monitoring this endpoint, human
-or machine, would have concluded the pipeline was healthy today.
-
-`daily-ingest` runs once a day, so it needs a different staleness threshold than
-a 30-second poller — probably "last success within 26 hours". The nightly
-warehouse job deserves the same treatment via aggregate freshness, which is
-already computed and already exposed in the same payload.
-
-> **Two knock-on effects of the 2026-08-08 reschedule, neither breaking:**
->
-> - `health()` reads the **200 most recent `ingest_runs` rows** to find each
->   job's last success. `game-predict` now writes 1–2 rows a day instead of
->   ~20, so on a busy slate it will fall outside that window and simply vanish
->   from the `jobs` block. It is not failing; it is out of frame. Fixing §8.2
->   properly means a per-job `max(finished_at)` query rather than a slice of
->   recent rows.
-> - Chained settle logs a run per new-pitch cycle rather than 144 a day, so
->   `ingest_runs` roughly doubles in volume during game hours. It is on 7-day
->   retention and the table is 4 MB, so this is a note, not a risk — but it is
->   the same table §8.1's prune failure already touches.
-
-### 8.3 🟠 Nothing alerts on any failure
-
-Both of this week's failures — the 2026-08-06 nightly and today's `daily-ingest`
-— were found by deliberate inspection during this assessment. The nightly's own
-header comment says *"a nightly nobody reads a signal from is exactly how R2 came
-to be three days stale without anyone noticing"*, and that reasoning applies to
-the signal itself, not just to the job. A red GitHub run and a red `ingest_runs`
-row are both signals nobody receives.
-
-Cheapest useful version: a failure notification on `warehouse.yml`, plus fixing
-§8.2 so an external uptime check on `/api/health` catches the pg_cron side.
-
-### 8.4 🟠 Schedule drift is unmodelled
-
-The nightly is documented and commented as running "after `np-daily-ingest` at
-13:00 UTC". Measured starts are 56 minutes to 2h29m after the nominal 14:00. The
-intended ordering has held every night so far, but by luck rather than by
-construction.
-
-The consequence of a reversal is mild — the nightly would publish aggregates
-built from a warehouse missing yesterday, and the next night would correct it —
-but the comment currently asserts a guarantee the scheduler does not provide.
-Either widen the nominal gap, or state in the workflow that ordering is
-best-effort and the job is safe under reversal.
-
-### 8.5 🟡 1,732 of 2,018 R2 days are ingested-only
-
-`warehouse status` says so plainly, and it is *correct*, not a bug: Phase 1
-independently verified the delete set, not all of history. But nothing schedules
-the remediation, and the number will simply sit there.
-
-This matters because `verified_at`/`verified_by` is what the prune's delete gate
-requires, and `is_verified()` cannot be satisfied by an ingest however complete
-it looks. Any future prune of older R2 days is blocked on work nobody has
-queued. A slow background sweep — a few hundred days per weekend run, exit codes
-respected — would close it without hammering the MLB API.
-
-### 8.6 🟡 The model registry is a month stale and nothing says so
-
-All five markets read `v1_20260707`. The dormancy is deliberate and well
-documented in the workflow file, but **no operational surface reports it**.
-`/api/health` lists `active_models` with their versions and no age judgement, so
-a stale registry looks identical to a fresh one.
-
-This compounds a known methodological gap: there is still no holdout validation
-anywhere in the project.
-
-> **Half resolved 2026-08-08.** The *capture* half shipped — the nightly
-> `warehouse export` (§5.6) now writes graded `predictions`, `picks` and
-> `game_predictions` to R2 daily, so out-of-sample data has stopped being
-> destroyed. What remains is the *use*: nothing reads those files, no holdout
-> metric is computed, and the registry age is still unreported. Re-pointing
-> training at DuckDB over R2 (Phase B) is the gate on the rest.
-
-### 8.7 🔵 Minor — database advisors
-
-Seven `*_staging` tables have no primary key, and `game_predictions` carries two
-unused indexes (`game_predictions_home_pitcher_idx`,
-`game_predictions_away_pitcher_idx`). Both are INFO-level. The staging tables are
-truncated and refilled nightly and never queried by key, so the missing PKs are
-arguably correct; the unused indexes are new enough that "never used" may just
-mean "two days old". Recheck the indexes in a fortnight before dropping them.
-
-### 8.8 Suggested order
-
-1. §8.1 — the only finding that degrades on its own.
-2. §8.2 + §8.3 — so the next failure is reported rather than discovered.
-3. ~~§8.6's `holdout_predictions` export~~ — **done 2026-08-08** (§5.6).
-4. §8.4, §8.5 — hygiene.
-5. Phase B: re-point training at DuckDB over R2. Now that the export is
-   accumulating, this is what turns it from stored bytes into a holdout metric.
-
----
-
-## 9. Runbooks — how every number above was measured
+## 7. Runbooks — how to measure any of this yourself
 
 These are the exact commands used for this assessment.
 
@@ -895,15 +699,16 @@ vercel ls                          # or the Vercel MCP: list_projects / list_dep
 
 ---
 
-## 10. What is still not built
+## 8. What is still not built
 
 | Missing | Consequence of leaving it |
 |---|---|
-| **Phase B** — training reads R2 via DuckDB | The model registry stays frozen at `v1_20260707`. `train-models.yml` cannot be re-armed until this lands. |
-| ~~**`holdout_predictions`** — daily export of graded `predictions` to R2~~ | **Shipped 2026-08-08** as `warehouse export` (§5.6), covering `predictions`, `picks` and `game_predictions`. Data is now accumulating; **nothing reads it yet**, which is Phase B. |
 | **`market_baselines`** | Published accuracy numbers have no honest denominator. A 52.5% at-bat-result rate reads as a win rather than as +6.1 points over always guessing the most common outcome. |
 | The model-facing cell tables (`context_cells`, `pitch_sequence_cells`, `fatigue_cells`, `pitch_arsenal`) | The two sub-baseline markets stay unexplained. Deferred deliberately — see `DATA-PIPELINE.md` §11. |
+| **Alerting** | Nothing pages when a job fails. `ingest_runs` records it; someone has to look. |
 
-The frontend-facing half of the original proposal shipped: seven display
-aggregates are live, published nightly, and served. The model-facing half did
-not, and Phase B is the gate on all of it.
+Both halves of the original data proposal shipped: seven display aggregates
+are live, published nightly and served, and training now reads R2 through
+DuckDB (`modeling/`). What remains is the baseline table that would make the
+published accuracy numbers interpretable, and the cell tables behind the two
+markets that score below their own baseline.

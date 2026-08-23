@@ -1,25 +1,31 @@
 # Deploying Pitch Hawk
 
 The production system runs **entirely on Supabase**: Postgres stores every
-table, edge functions do all data collection and prediction, and pg_cron
-drives the schedule. The static frontend just reads from it. The FastAPI
-backend in `backend/` remains a full local-dev stack but nothing in
-production depends on it.
+table, edge functions do all data collection and prediction, and `pg_cron`
+drives the schedule. The static frontend only reads from it.
 
 ## Architecture
 
-```
-MLB Stats API ──┐
-ESPN odds ──────┤   Supabase edge functions          Postgres            frontend
-Kalshi ─────────┤   ──────────────────────           ────────            ────────
-                ├─► backfill      (cron: 1m while pending) ─► pitches/at_bats/games
-                ├─► daily-ingest  (cron: 10:00 UTC)  ─► + rolling stats, players
-                ├─► live-poll     (cron: 30s)        ─► live_state, predictions, picks
-                ├─► odds-ingest   (cron: 5m)         ─► odds, pregame picks
-                └─► settle        (cron: 10m)        ─► graded predictions + picks
-                    api           (public, read-only) ◄── frontend fetches /live,
-                                                          /edge/{pk}, /picks/today,
-                                                          /record, /sportsbooks
+Eight edge functions deploy; five `pg_cron` jobs drive them.
+
+| function | schedule | writes |
+|---|---|---|
+| `live-poll` | 15s (`np-live-poll`) | `live_state`, `pitches`, `at_bats`, `predictions`, `picks`; chains `settle` |
+| `game-predict` | hourly (`np-game-predict`) | `game_predictions` — pregame moneyline/totals, frozen once set |
+| `daily-ingest` | 13:00 UTC (`np-daily-ingest`) | finals, slate, rolling stats, retention rollups + prunes |
+| `settle` | chained from `live-poll`, plus `np-settle-sweep` at 03:00 ET | grades `predictions` and `picks` |
+| `api` | on request | nothing — read-only public data |
+| `odds-ingest` | **unscheduled** | `odds`, pregame picks |
+| `backfill` | **unscheduled** | historical `pitches`/`at_bats`/`games` |
+| `backfill-predictions` | **unscheduled** | fills prediction holes |
+
+The last three are deployed but have no `cron.job` row; run them on demand.
+`np-prune-cron-history` is the fifth job and trims `cron.job_run_details`.
+
+Confirm rather than trust:
+
+```sql
+select jobname, schedule, active from cron.job order by jobname;
 ```
 
 ## Fastest path — GitHub Actions (no local setup)
@@ -35,8 +41,9 @@ You don't need a local machine or CLI. Add three repository secrets under
 
 Then **Actions → "Deploy pipeline to Supabase" → Run workflow** (tick
 "Load demo seed" for an immediately-populated board). It pushes migrations,
-stores the cron secret + functions URL, deploys all six functions, and seeds
-the backfill — idempotent, so re-run it to ship changes. Train models later
+stores the cron secret + functions URL, deploys all eight functions, and seeds
+the backfill. Safe to re-run to ship changes: `db push` applies only versions
+the remote has not recorded. Train models later
 with the **"Train models"** workflow (needs `SUPABASE_URL` + `SUPABASE_KEY`
 secrets). Deploy the frontend on Vercel: import the repo (root `vercel.json`
 is preconfigured) and set env var `SUPABASE_FUNCTIONS_URL` =
@@ -46,6 +53,9 @@ is preconfigured) and set env var `SUPABASE_FUNCTIONS_URL` =
 
 1. **Migrations** — apply, in order, `supabase/migrations/*.sql`
    (via MCP `apply_migration`, `supabase db push`, or the SQL editor).
+   All are idempotent except `20260802000003_hot_window_swap.sql`, a one-shot
+   table swap that fails on a second run — `db push` skips already-recorded
+   versions, so this only matters if you hand-run files.
    The cron migration is ref-agnostic: it reads the functions base URL and
    cron secret from `app_secrets` at call time, so there is nothing to
    substitute.
@@ -57,11 +67,22 @@ is preconfigured) and set env var `SUPABASE_FUNCTIONS_URL` =
      ('functions_base_url', 'https://<ref>.supabase.co/functions/v1')
    on conflict (key) do update set value = excluded.value;
    ```
-3. **Edge functions** — deploy `backfill`, `daily-ingest`, `live-poll`,
-   `odds-ingest`, `settle`, and `api` from `supabase/functions/` with
-   `verify_jwt=false` (each mutating function checks `x-cron-secret`
-   itself; `api` is read-only public data).
-4. **Kick the backfill** — set the window and let cron drain it:
+3. **Edge functions** — deploy all eight from `supabase/functions/` with
+   `verify_jwt=false` (each mutating function checks `x-cron-secret` itself;
+   `api` is read-only public data):
+
+   ```
+   api  backfill  backfill-predictions  daily-ingest
+   game-predict  live-poll  odds-ingest  settle
+   ```
+
+   This list must match `scripts/provision.sh` and both
+   `.github/workflows/{ci,deploy-supabase}.yml`. It was six here for a month
+   while the workflows deployed eight, which left a CLI-provisioned project
+   with no pregame board.
+4. **Kick the backfill** — `np-backfill` is unscheduled, so seed the window and
+   then invoke `backfill` yourself (or re-run the deploy workflow, which seeds
+   it for you):
    ```sql
    insert into backfill_progress (id, start_date, end_date, cursor_date)
    values (1, '2025-03-27', current_date - 1, current_date - 1)
@@ -113,7 +134,8 @@ no local CLI — see `docs/MODELS.md` for the model-registry commands.
 ```sql
 select * from ingest_runs order by id desc limit 20;      -- job health
 select * from backfill_progress;                          -- backfill status
-select count(*) from pitches;                             -- dataset size
+select count(*) from pitches;                             -- HOT WINDOW only (35d)
+                                                          -- full history: python -m warehouse status
 select market, version, metrics from model_params where is_active;
 select status, count(*) from picks group by 1;            -- pick record
 ```

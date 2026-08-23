@@ -87,6 +87,14 @@ centre a feature identically or the shipped coefficients meet a differently
 scaled input. No scorer parity test can catch that — the scorer is handed the
 delta already computed — so it is pinned by `tests/modeling/test_cells.py`.
 
+## `game_total` is scored but unregistered
+
+`game-predict` scores a sixth market, `game_total`, from `team_run_rates` and
+`park_factors` (`_shared/model.ts`). It has no `model_params` row, no
+`modeling/specs/` module and no place in the registry — it is a formula, not a
+fitted model. `python -m modeling list` will never show it. Registering it
+means writing a spec and a fitter like any other market.
+
 ## `game_moneyline` is fitted but not served
 
 `model.ts` has **no `params.type === "log5"` branch**. `game-predict` calls
