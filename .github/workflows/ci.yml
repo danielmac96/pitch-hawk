@@ -126,6 +126,23 @@ jobs:
                  psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f "$f";;
             esac
           done
-          # idempotency: re-apply core
-          psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
-            -f supabase/migrations/20260703000001_core_schema.sql
+          # Idempotency: re-apply every migration, not just core_schema. The
+          # narrower check passed for a year while 20260802000003 could not
+          # actually run twice, because it was never the file being re-run.
+          #
+          # 20260802000003 is exempt by name and by design: it is a one-shot
+          # table swap (at_bats -> at_bats_old) and fails on a second run.
+          # `supabase db push` only applies unrecorded versions, so that is
+          # safe in deploy -- but it means the file cannot be in this loop.
+          # Any NEW migration must be re-runnable; add to this list only with
+          # a reason as good as that one.
+          for f in supabase/migrations/*.sql; do
+            case "$f" in
+              *_cron.sql|*_harden_functions.sql) continue;;
+              *_hot_window_swap.sql) echo "skip $f (one-shot table swap)"; continue;;
+            esac
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f "$f" >/dev/null \
+              || { echo "::error::$f is not idempotent -- it failed on re-apply"; exit 1; }
+          done
+          echo "all migrations re-applied cleanly"
+
