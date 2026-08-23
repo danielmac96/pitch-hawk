@@ -192,7 +192,7 @@ reach the feed; there is no offline demo mode.
 
 ```bash
 pip install -r requirements-warehouse.txt -r requirements-modeling.txt pytest
-pytest                                              # 217 tests, no network
+pytest                                              # no network, no real Supabase
 deno test --allow-net --allow-read --allow-env supabase/functions/tests/
 ```
 
