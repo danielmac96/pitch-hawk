@@ -30,7 +30,6 @@ table built on Statcast columns — floors at 2017 and says so in its own
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 WINDOW_SEASONS = 3
 STATCAST_FLOOR = 2017
@@ -51,10 +50,6 @@ _SWUNG = "(description in ('swinging_strike','foul') or result_category = 'in_pl
 _WHIFF = "description = 'swinging_strike'"
 _CONTACT = "(description = 'foul' or result_category = 'in_play')"
 _FASTBALL = "pitch_type in ('FF','FT','SI','FC')"
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _scoped(table: str) -> str:
@@ -394,5 +389,3 @@ BUILDERS = {
 
 # Statcast-dependent tables floor at 2017; the rest at the window start.
 STATCAST_TABLES = {"batter_power_profile"}
-
-TABLE_NAMES = tuple(BUILDERS)

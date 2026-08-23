@@ -23,6 +23,7 @@ import math
 import time
 from datetime import date, datetime
 
+from warehouse.store import ObjectStore
 from warehouse import aggregates as agg
 from warehouse import duck, manifest
 from warehouse.config import supabase_client
@@ -78,7 +79,7 @@ def rows_of(table) -> list[dict]:  # noqa: ANN001
     return [{k: _jsonable(v) for k, v in r.items()} for r in table.to_pylist()]
 
 
-def build(store, *, min_pa: int = 3, only=None, m: dict | None = None,
+def build(store: ObjectStore, *, min_pa: int = 3, only=None, m: dict | None = None,
           on_progress=None) -> dict:  # noqa: ANN001
     """Build every aggregate. Returns {name: pyarrow.Table}.
 
@@ -158,7 +159,7 @@ def publish_table(client, name: str, table, *,  # noqa: ANN001
                   f"{name}: swap")
 
 
-def publish(store, *, min_pa: int = 3, only=None, dry_run: bool = False,
+def publish(store: ObjectStore, *, min_pa: int = 3, only=None, dry_run: bool = False,
             on_progress=None, on_publish=None) -> dict:  # noqa: ANN001
     """Build, then (unless dry_run) stage and swap each table."""
     built = build(store, min_pa=min_pa, only=only, on_progress=on_progress)

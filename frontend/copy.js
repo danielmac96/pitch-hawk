@@ -55,7 +55,6 @@ window.PH_COPY = (function () {
 
     // live feed
     // No title above the hero: the best open call IS the top of the page.
-    edgeLegend: null, // wagering-only: explains edge-vs-source highlighting
 
     // data feed
     dataTitle: "Data feed",
@@ -94,7 +93,6 @@ window.PH_COPY = (function () {
       ["3", "Watch", "Every live at-bat gets a model read — probabilities and projections stream to the live board."],
       ["4", "Next up", "Live odds comparison, +EV picks, and a public graded record are on the way."],
     ],
-    edgeLegend: "Model reads with an edge ≥ {threshold} against your selected sources are highlighted.",
     footerDisclaimer:
       "Live MLB data with model-driven projections, for information and " +
       "entertainment only — nothing here is betting advice. 21+ where betting " +

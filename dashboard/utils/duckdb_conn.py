@@ -26,14 +26,6 @@ from utils.r2 import CONNECT_ERROR, R2Unavailable
 
 _LOCK = threading.Lock()
 
-# Guards a runaway section: without it a mis-typed window could scan all 2,014
-# days (550 MB of Parquet) and leave the page spinning with no way to tell a
-# slow query from a hung one.
-QUERY_TIMEOUT_NOTE = (
-    "Queries scan Parquet in R2 directly. Widen the window in the sidebar only "
-    "as far as you need — cost scales with days scanned."
-)
-
 
 def connect(store: Any) -> duckdb.DuckDBPyConnection:
     """A connection wired to read this store's Parquet over the S3 API."""

@@ -33,6 +33,7 @@ from datetime import date, datetime, timezone
 
 import pyarrow as pa
 
+from warehouse.store import ObjectStore
 from warehouse import manifest
 from warehouse.config import (EXPORT_DATASETS, SCHEMAS, object_key,
                               supabase_client)
@@ -163,7 +164,7 @@ def fetch_day(client, day: str) -> dict[str, list[dict]]:  # noqa: ANN001
 
 # ── export ──────────────────────────────────────────────────────────────────
 
-def export_day(store, day: str, *, client=None,  # noqa: ANN001
+def export_day(store: ObjectStore, day: str, *, client=None,
                m: dict | None = None, skip_existing: bool = False) -> dict:
     """Export one day. Returns per-dataset facts.
 

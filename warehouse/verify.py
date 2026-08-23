@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 
 import pyarrow.parquet as pq
 
+from warehouse.store import ObjectStore
 from warehouse import manifest
 from warehouse.config import object_key
 from warehouse.ingest import checksum
@@ -43,7 +44,7 @@ class DayVerdict:
 VERIFIER = "verify_day/v2"
 
 
-def verify_day(store, day: str, *, with_boxscore: bool = True,
+def verify_day(store: ObjectStore, day: str, *, with_boxscore: bool = True,
                workers: int = 6, record: bool = False,
                m: dict | None = None) -> DayVerdict:
     """Re-fetch `day` from the API and reconcile against the warehouse.
@@ -161,7 +162,7 @@ def _mark_verified(m: dict, day: str) -> None:
                                  verified_at=now, verified_by=VERIFIER)
 
 
-def verify_sample(store, days: list[str], *, record: bool = False,
+def verify_sample(store: ObjectStore, days: list[str], *, record: bool = False,
                   fail_fast: bool = False, flush_every: int = 25,
                   on_day=None, **kw) -> dict:
     """Verify a list of days. Returns a summary; prints as it goes.

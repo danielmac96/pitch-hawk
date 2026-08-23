@@ -34,6 +34,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from warehouse.store import ObjectStore
 from warehouse.config import MANIFEST_KEY
 
 
@@ -44,7 +45,7 @@ def empty() -> dict[str, Any]:
     return {"version": VERSION, "datasets": {}}
 
 
-def load(store) -> dict[str, Any]:  # noqa: ANN001
+def load(store: ObjectStore) -> dict[str, Any]:
     if not store.exists(MANIFEST_KEY):
         return empty()
     m = json.loads(store.get(MANIFEST_KEY).decode("utf-8"))
@@ -62,7 +63,7 @@ def load(store) -> dict[str, Any]:  # noqa: ANN001
     return m
 
 
-def save(store, m: dict[str, Any]) -> None:  # noqa: ANN001
+def save(store: ObjectStore, m: dict[str, Any]) -> None:
     store.put(MANIFEST_KEY,
               json.dumps(m, indent=2, sort_keys=True).encode("utf-8"))
 

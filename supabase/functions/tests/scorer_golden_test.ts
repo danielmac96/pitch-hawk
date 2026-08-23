@@ -26,7 +26,7 @@
 //      constants (zone 0.48, chase 0.28), so the fixtures have to build a real
 //      context and let the TypeScript compute the deltas itself.
 
-import { scoreMultinomial } from "../_shared/model.ts";
+import { scoreMultinomial, speedOverProb } from "../_shared/model.ts";
 
 const params = {
   type: "multinomial_logistic",
@@ -68,6 +68,20 @@ for (const balls of [0, 1, 2, 3]) {
   }
 }
 
+// speedOverProb is the mean -> P(over) step for the `linear` markets
+// (pitch_speed_ou, ab_pitches_ou). scoreLinear() returns only the mean, so
+// the 36 multinomial cases above never exercised normCdf at all -- the Python
+// mirror of it in modeling/score.py sat uncovered, which is why
+// modeling.score.speed_over_prob read as dead code.
+const speedCases: Array<Record<string, number>> = [];
+for (const mu of [88.5, 92.0, 96.3]) {
+  for (const sigma of [1.9, 5.4]) {
+    for (const line of [86.5, 92.0, 97.5]) {
+      speedCases.push({ mu, sigma, line, expected: speedOverProb(mu, sigma, line) });
+    }
+  }
+}
+
 // Resolved from this file, not the process cwd, so the check behaves the same
 // from the repo root and from supabase/functions/.
 const GOLDEN = new URL("../../../tests/fixtures/scorer_golden.json", import.meta.url);
@@ -93,10 +107,47 @@ interface GoldenCase {
   expected: Record<string, number>;
 }
 
-function differences(got: { cases: GoldenCase[] }, want: { cases: GoldenCase[] }): string[] {
+interface SpeedCase {
+  mu: number;
+  sigma: number;
+  line: number;
+  expected: number;
+}
+
+function speedDifferences(got: SpeedCase[], want: SpeedCase[] | undefined): string[] {
+  if (!want) {
+    return ["speed_cases: missing from the committed fixtures -- regenerate"];
+  }
+  if (got.length !== want.length) {
+    return [`speed_cases count: generated ${got.length}, committed ${want.length}`];
+  }
   const out: string[] = [];
+  for (let i = 0; i < got.length; i++) {
+    const g = got[i], w = want[i];
+    for (const field of ["mu", "sigma", "line"] as const) {
+      if (g[field] !== w[field]) {
+        out.push(`speed_case ${i} ${field}: generated ${g[field]}, committed ${w[field]}`);
+      }
+    }
+    const d = Math.abs(g.expected - w.expected);
+    if (!(d <= GOLDEN_TOL)) {
+      out.push(
+        `speed_case ${i} expected: generated ${g.expected}, committed ${w.expected} ` +
+          `(|delta| ${d.toExponential(3)} > ${GOLDEN_TOL})`,
+      );
+    }
+  }
+  return out;
+}
+
+function differences(
+  got: { cases: GoldenCase[]; speed_cases: SpeedCase[] },
+  want: { cases: GoldenCase[]; speed_cases?: SpeedCase[] },
+): string[] {
+  const out: string[] = speedDifferences(got.speed_cases, want.speed_cases);
   if (got.cases.length !== want.cases.length) {
-    return [`case count: generated ${got.cases.length}, committed ${want.cases.length}`];
+    out.push(`case count: generated ${got.cases.length}, committed ${want.cases.length}`);
+    return out;
   }
   for (let i = 0; i < got.cases.length; i++) {
     const g = got.cases[i], w = want.cases[i];
@@ -125,7 +176,7 @@ function differences(got: { cases: GoldenCase[] }, want: { cases: GoldenCase[] }
   return out;
 }
 const payload = JSON.stringify(
-  { generated_by: "scorer_golden_test.ts", cases },
+  { generated_by: "scorer_golden_test.ts", cases, speed_cases: speedCases },
   null,
   2,
 );
@@ -145,7 +196,10 @@ const payload = JSON.stringify(
 Deno.test("golden fixtures match model.ts", () => {
   if (Deno.env.get("UPDATE_GOLDEN") === "1") {
     Deno.writeTextFileSync(GOLDEN, payload);
-    console.log(`wrote ${cases.length} cases to ${GOLDEN.pathname}`);
+    console.log(
+      `wrote ${cases.length} cases + ${speedCases.length} speed cases ` +
+        `to ${GOLDEN.pathname}`,
+    );
     return;
   }
 

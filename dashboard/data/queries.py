@@ -123,20 +123,6 @@ def _source(uris: list[str]) -> str:
     return read_parquet_expr(uris)
 
 
-def missing_counts(
-    con: Any, uris: list[str], dataset: str
-) -> tuple[int, dict[str, int]]:
-    """Row total and non-null count per column, in a single scan.
-
-    Returns `(total_rows, {column: non_null})`; the caller turns that into
-    rates. `count(col)` ignores nulls, which is the whole measurement.
-    """
-    cols = columns(dataset)
-    projections = ", ".join(f'count("{c}") as "{c}"' for c in cols)
-    sql = f'select count(*) as "__total", {projections} from {_source(uris)}'
-    row = query_df(con, sql).iloc[0]
-    total = int(row["__total"])
-    return total, {c: int(row[c]) for c in cols}
 
 
 def missing_counts_split(
@@ -235,16 +221,6 @@ def latest_records(
     return query_df(con, sql)
 
 
-def latest_timestamp(con: Any, uris: list[str], dataset: str) -> pd.Timestamp | None:
-    """The most recent event timestamp present — how fresh the data itself is.
-
-    Distinct from a file's `ingested_at`: a file written five minutes ago can
-    still hold yesterday's games.
-    """
-    ts = TIMESTAMP_COLUMN[dataset]
-    sql = f'select max("{ts}") as latest from {_source(uris)}'
-    value = query_df(con, sql).iloc[0]["latest"]
-    return None if pd.isna(value) else pd.Timestamp(value)
 
 
 def distributions(con: Any, uris: list[str], latest_day: str) -> pd.DataFrame:

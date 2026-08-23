@@ -15,7 +15,7 @@ import pathlib
 
 import pytest
 
-from modeling.score import feature_value, score
+from modeling.score import feature_value, score, speed_over_prob
 
 GOLDEN = pathlib.Path("tests/fixtures/scorer_golden.json")
 
@@ -69,3 +69,34 @@ def test_every_featurevalue_case_is_mirrored():
         assert feature_value(name, ctx, _missing=sentinel) is not sentinel, (
             f"featureValue() in model.ts handles {name!r} but "
             f"modeling/score.py does not")
+
+
+def _speed_cases():
+    data = json.loads(GOLDEN.read_text())
+    cases = data.get("speed_cases")
+    if not cases:
+        pytest.skip(
+            "speed_cases missing from the golden fixtures -- regenerate with "
+            "UPDATE_GOLDEN=1 deno test --allow-write --allow-read --allow-env "
+            "supabase/functions/tests/scorer_golden_test.ts")
+    return cases
+
+
+def test_speed_cases_exist_and_are_populated():
+    assert len(_speed_cases()) >= 18
+
+
+@pytest.mark.parametrize("i", range(18))
+def test_speed_over_prob_matches_typescript(i):
+    """The mean -> P(over) step for the `linear` markets.
+
+    scoreLinear() returns only a mean, so the 36 multinomial cases never
+    reached normCdf -- this half of the scorer was unpinned, which is exactly
+    why modeling.score.speed_over_prob looked like dead code.
+    """
+    case = _speed_cases()[i]
+    got = speed_over_prob(case["mu"], case["sigma"], case["line"])
+    assert got == pytest.approx(case["expected"], abs=1e-9), (
+        f"speed case {i} (mu={case['mu']}, sigma={case['sigma']}, "
+        f"line={case['line']}): python={got} typescript={case['expected']}. "
+        f"model.ts is correct -- fix modeling/score.py.")

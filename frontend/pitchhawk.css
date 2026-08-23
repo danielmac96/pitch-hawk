@@ -80,7 +80,6 @@ body { margin: 0; }
   flex-wrap: wrap;
   padding: .55rem 0;
 }
-.ph-header-inner .ph-icon-btn { margin-left: auto; }
 
 /* Tab nav: fixed bottom bar on phones, header pill row on md+. */
 .ph-nav {
@@ -116,22 +115,6 @@ body { margin: 0; }
   color: var(--pill-active-fg);
 }
 
-.ph-icon-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 44px; height: 44px; /* touch target */
-  border-radius: 999px;
-  border: 1px solid var(--border-2);
-  background: var(--surface);
-  color: var(--text-2);
-  cursor: pointer;
-  font-size: .95rem;
-  line-height: 1;
-}
-
-/* Filter chips: comfortable touch height on phones. */
-.ph-chip { min-height: 42px; }
 
 /* Hero + promo: single column on phones, split on wider screens. */
 .ph-hero, .ph-promo {
@@ -141,124 +124,6 @@ body { margin: 0; }
   align-items: center;
 }
 
-/* Live panel internals: game state stacks above the pitch feed on phones. */
-.ph-panel-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 1.2rem;
-}
-/* Let columns shrink below their content width — the wide pitch-feed table
-   must scroll inside .ph-scroll, not stretch the column. */
-.ph-panel-grid > * { min-width: 0; }
-
-/* Wide data tables scroll inside their card, never the page. */
-.ph-scroll {
-  overflow-x: auto;
-  scrollbar-width: thin;
-  -webkit-overflow-scrolling: touch;
-}
-
-/* ============================================================
-   Readability — the inline template uses very small font sizes
-   (~.58–.66rem ≈ 9–10.5px) for section labels. That's below the
-   mobile readability floor, so raise it on phones and return to
-   the compact desktop size at md+. Encodes the label's full
-   look so callers just swap the inline styles for this class.
-   ============================================================ */
-.ph-microlabel {
-  font-size: .72rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: .05em;
-  color: var(--faint);
-}
-
-/* ============================================================
-   Responsive data tables. Desktop keeps the original CSS-grid
-   table — its columns come from the inline `--cols` custom
-   property, its horizontal-scroll min-width from `--minw`. On
-   phones every row reflows into a stacked, labeled card so all
-   columns stay visible with no sideways scroll; the header row
-   is hidden because each cell now carries its own label.
-
-   Markup contract (built in pitchhawk.js):
-     .ph-table       inner width holder inside a .ph-scroll
-     .ph-table-head  the column-label row  (hidden on mobile)
-     .ph-table-row   one data row          (grid md+, card mobile)
-     .ph-cell        one value; data-label="…" names it on mobile
-     .ph-cell--end   right-aligned value column (e.g. Count)
-     .ph-next        the pinned "next pitch" row accent
-   ============================================================ */
-
-/* — mobile-first: stacked labeled cards — */
-.ph-table { min-width: 0; }
-.ph-table-head { display: none; }
-.ph-table-row {
-  display: block;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--surface-2);
-  padding: .5rem .7rem;
-  margin-bottom: .5rem;
-  font-size: .86rem;
-}
-.ph-table-row.ph-next { box-shadow: inset 3px 0 0 var(--accent); }
-.ph-cell {
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
-  gap: .75rem;
-  padding: .2rem 0;
-  min-width: 0;
-}
-.ph-cell + .ph-cell { border-top: 1px solid var(--row-border); }
-.ph-cell::before {
-  content: attr(data-label);
-  flex: none;
-  color: var(--faint);
-  font-weight: 700;
-  font-size: .7rem;
-  text-transform: uppercase;
-  letter-spacing: .03em;
-}
-
-/* — md+: original horizontal grid table — */
-@media (min-width: 768px) {
-  .ph-microlabel { font-size: .64rem; }
-  .ph-table { min-width: var(--minw, 0); }
-  .ph-table-head {
-    display: grid;
-    grid-template-columns: var(--cols);
-    gap: .4rem;
-    padding: 0 .3rem .4rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .ph-table-row {
-    display: grid;
-    grid-template-columns: var(--cols);
-    gap: .35rem;
-    align-items: center;
-    border: 0;
-    border-bottom: 1px solid var(--row-border);
-    border-radius: 0;
-    background: transparent;
-    padding: .42rem .25rem;
-    margin-bottom: 0;
-    font-size: .82rem;
-  }
-  .ph-table-row.ph-next { background: var(--surface-2); padding: .5rem .25rem; }
-  .ph-cell {
-    display: flex;
-    align-items: center;
-    justify-content: flex-start;
-    gap: 0;
-    padding: 0;
-    border: 0;
-  }
-  .ph-cell + .ph-cell { border-top: 0; }
-  .ph-cell--end { justify-content: flex-end; }
-  .ph-cell::before { display: none; }
-}
 
 .ph-footer {
   background: #0f1b2d;
@@ -270,7 +135,6 @@ body { margin: 0; }
 @media (min-width: 768px) {
   .ph-main { padding: 1.4rem 0 3rem; }
   .ph-header-inner { padding: .7rem 0; }
-  .ph-header-inner .ph-icon-btn { margin-left: 0; }
   .ph-nav {
     position: static;
     margin-left: auto;
@@ -292,10 +156,7 @@ body { margin: 0; }
     color: var(--seg-active-fg);
     box-shadow: 0 1px 2px rgba(15,27,45,.14);
   }
-  .ph-icon-btn { width: 34px; height: 34px; }
-  .ph-chip { min-height: 0; }
   .ph-hero { grid-template-columns: 1.25fr .9fr; gap: 2rem; }
-  .ph-panel-grid { grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); }
   .ph-footer { padding: 1.8rem 0; }
 }
 
@@ -325,9 +186,3 @@ body { margin: 0; }
   .ph-main.phv-wide { padding-bottom: 0; }
 }
 
-/* Thin scrollbars for the game rail, feed and horizontal chip strips. */
-.phv-sc { scrollbar-width: thin; scrollbar-color: #31435f transparent; }
-.phv-sc::-webkit-scrollbar { width: 8px; height: 8px; }
-.phv-sc::-webkit-scrollbar-track { background: transparent; }
-.phv-sc::-webkit-scrollbar-thumb { background: #31435f; border-radius: 999px; }
-.phv-sc::-webkit-scrollbar-thumb:hover { background: #3f5673; }
