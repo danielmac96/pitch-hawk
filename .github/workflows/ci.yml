@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  backend:
+  python:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -26,8 +26,7 @@ jobs:
           # reaches a fitter dies on `No module named 'sklearn'` -- the fitter,
           # the walk-forward and the sigma are then completely uncovered while
           # the rest of the suite still looks green.
-          pip install -r requirements.txt -r requirements-warehouse.txt \
-            -r requirements-modeling.txt pytest
+          pip install -r requirements-warehouse.txt -r requirements-modeling.txt pytest
       - name: Run tests
         run: pytest tests/ -q
 
@@ -48,9 +47,9 @@ jobs:
             echo "== $fn"
             deno check "supabase/functions/$fn/index.ts"
           done
-      # The aggregate read handlers ship in the edge function, so pytest
-      # cannot reach them -- backend/ is a parallel dev implementation. These
-      # cover the same cases the plan asked for in tests/api/test_routes.py.
+      # The API and all its read handlers ship inside the Deno edge function,
+      # so pytest cannot reach them -- these tests are the only coverage the
+      # public API has.
       # --allow-read/--allow-env are for scorer_golden_test.ts, which reads the
       # committed golden fixtures and checks them against what model.ts
       # computes. Read-only on purpose: granting --allow-write here would let
@@ -127,6 +126,23 @@ jobs:
                  psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f "$f";;
             esac
           done
-          # idempotency: re-apply core
-          psql -h localhost -U postgres -v ON_ERROR_STOP=1 \
-            -f supabase/migrations/20260703000001_core_schema.sql
+          # Idempotency: re-apply every migration, not just core_schema. The
+          # narrower check passed for a year while 20260802000003 could not
+          # actually run twice, because it was never the file being re-run.
+          #
+          # 20260802000003 is exempt by name and by design: it is a one-shot
+          # table swap (at_bats -> at_bats_old) and fails on a second run.
+          # `supabase db push` only applies unrecorded versions, so that is
+          # safe in deploy -- but it means the file cannot be in this loop.
+          # Any NEW migration must be re-runnable; add to this list only with
+          # a reason as good as that one.
+          for f in supabase/migrations/*.sql; do
+            case "$f" in
+              *_cron.sql|*_harden_functions.sql) continue;;
+              *_hot_window_swap.sql) echo "skip $f (one-shot table swap)"; continue;;
+            esac
+            psql -h localhost -U postgres -v ON_ERROR_STOP=1 -f "$f" >/dev/null \
+              || { echo "::error::$f is not idempotent -- it failed on re-apply"; exit 1; }
+          done
+          echo "all migrations re-applied cleanly"
+

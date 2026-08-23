@@ -1,4 +1,6 @@
-// Mirrors backend/ingestion/vocab.py — keep in sync.
+// Pitch/at-bat vocabulary. Mirrored by warehouse/mlb.py for the offline
+// ingest — keep the two in sync; tests/warehouse/test_mlb_flatten.py guards
+// the Python side.
 
 export const CALL_CODE_TO_DESCRIPTION: Record<string, string> = {
   B: "ball", "*B": "ball", I: "ball", P: "ball", V: "ball",

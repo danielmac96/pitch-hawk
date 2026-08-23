@@ -32,10 +32,6 @@
 
   const PH = window.PITCHHAWK;
   const COPY = window.PH_COPY;
-  // Wagering surfaces (source filters, edge highlighting/columns, settled
-  // picks) render only when the flag is on — see config.js / copy.js.
-  const WAGER = !!(window.PH_FEATURES && window.PH_FEATURES.wageringInsights);
-
   const esc = (s) =>
     String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
       ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));

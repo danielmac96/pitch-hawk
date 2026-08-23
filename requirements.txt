@@ -1,7 +1,9 @@
-fastapi
-uvicorn[standard]
-python-dotenv
+# Supabase transport. `warehouse/publish.py` writes the nightly display
+# aggregates and `warehouse/export.py` copies graded rows out to R2 before
+# Supabase's retention timers reach them; both go through supabase-py.
+#
+# Deliberately minimal. The heavier stacks are declared where they are used:
+#   requirements-warehouse.txt   R2 / Parquet / DuckDB   (warehouse/)
+#   requirements-modeling.txt    numpy / sklearn / pandas (modeling/)
+#   dashboard/requirements.txt   streamlit / plotly       (dashboard/)
 supabase
-pybaseball
-httpx
-pandas

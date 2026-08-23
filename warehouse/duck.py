@@ -21,11 +21,12 @@ is 1.47 MB and a seven-table publish would otherwise fetch it seven times.
 
 from __future__ import annotations
 
+from warehouse.store import ObjectStore
 from warehouse import manifest
 from warehouse.config import DATASETS, DAY_PARTITIONED, object_key
 
 
-def connect(store):  # noqa: ANN001
+def connect(store: ObjectStore):
     """A DuckDB connection wired up to read this store's Parquet."""
     import duckdb
 
@@ -36,7 +37,7 @@ def connect(store):  # noqa: ANN001
     return con
 
 
-def days(store, dataset: str, seasons=None, *, m: dict | None = None,
+def days(store: ObjectStore, dataset: str, seasons=None, *, m: dict | None = None,
          verified_only: bool = False) -> list[str]:
     """Days the manifest holds for `dataset`, optionally limited to seasons."""
     # DAY_PARTITIONED, not DATASETS: the Supabase exports are readable here
@@ -56,14 +57,14 @@ def days(store, dataset: str, seasons=None, *, m: dict | None = None,
     return out
 
 
-def uris(store, dataset: str, seasons=None, *, m: dict | None = None,
+def uris(store: ObjectStore, dataset: str, seasons=None, *, m: dict | None = None,
          verified_only: bool = False) -> list[str]:
     return [store.uri(object_key(dataset, d))
             for d in days(store, dataset, seasons, m=m,
                           verified_only=verified_only)]
 
 
-def dataset(store, name: str, seasons=None, *, m: dict | None = None,
+def dataset(store: ObjectStore, name: str, seasons=None, *, m: dict | None = None,
             verified_only: bool = False) -> str:
     """A `read_parquet([...])` expression usable anywhere a table is.
 
@@ -82,7 +83,7 @@ def dataset(store, name: str, seasons=None, *, m: dict | None = None,
     return f"read_parquet([{quoted}])"
 
 
-def register(con, store, names=DATASETS, seasons=None, *,  # noqa: ANN001
+def register(con, store: ObjectStore, names=DATASETS, seasons=None, *,
              m: dict | None = None, verified_only: bool = False) -> dict:
     """Create one view per dataset so the aggregate SQL can say `from pitches`.
 
@@ -101,12 +102,12 @@ def register(con, store, names=DATASETS, seasons=None, *,  # noqa: ANN001
     return scanned
 
 
-def seasons_available(store, dataset_name: str = "pitches", *,
+def seasons_available(store: ObjectStore, dataset_name: str = "pitches", *,
                       m: dict | None = None) -> list[int]:
     return sorted({int(d[:4]) for d in days(store, dataset_name, m=m)})
 
 
-def recent_seasons(store, n: int = 3, *, m: dict | None = None) -> list[int]:
+def recent_seasons(store: ObjectStore, n: int = 3, *, m: dict | None = None) -> list[int]:
     """The n most recent seasons present. `matchup_history` v2 and the
     season-scoped profiles are defined as windows, not as all of history."""
     avail = seasons_available(store, m=m)

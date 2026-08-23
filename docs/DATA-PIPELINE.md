@@ -7,20 +7,20 @@ serving layer and the Cloudflare R2 historical warehouse.
 **As of:** 2026-08-02. Numbers marked *(measured)* were re-checked on that date
 against the live systems; everything else cites its source.
 
-Companion documents: [`DATA-OPERATIONS.md`](DATA-OPERATIONS.md) (**current**
-schedules, live status and runbooks), [`DATA-INVENTORY.md`](DATA-INVENTORY.md)
-(product view of what we hold), [`MODELS.md`](MODELS.md) (model registry
-runbook), [`DEPLOY.md`](DEPLOY.md) (provisioning), and the design archive under
-`docs/superpowers/`. Where those disagree with this file, see
+Companion documents: [`DATA-OPERATIONS.md`](DATA-OPERATIONS.md) (schedules,
+job shapes and runbooks), [`MODELS.md`](MODELS.md) (the model registry),
+[`DATABASE.md`](DATABASE.md) (table reference), [`DEPLOY.md`](DEPLOY.md)
+(provisioning). Where those disagree with this file, see
 [§1.3 What supersedes what](#13-what-supersedes-what).
 
-> **⚠️ Read this first (added 2026-08-07).** This file is now a **design**
-> document. Its rationale, semantics and invariants are current and correct; its
-> *state* is frozen at 2026-08-02 and much of it has since changed. Phases B, C
-> and D all shipped on 2026-08-02/03, so every storage figure below is pre-prune
-> and §1.2 and §7 describe work that is done. Sections carrying stale state are
-> marked inline. **For anything operational — what runs, when, and whether it
-> worked — use [`DATA-OPERATIONS.md`](DATA-OPERATIONS.md).**
+> **What this file is.** A **design** document: ingest semantics, the
+> target-leakage rule, the warehouse schema, the manifest, verification, and
+> the invariants that must not break. It deliberately holds no measured
+> figures — those moved to the commands that produce them, because three
+> documents once quoted three different day counts for the same manifest.
+>
+> **For anything operational** — what runs, when, and whether it worked — use
+> [`DATA-OPERATIONS.md`](DATA-OPERATIONS.md).
 
 ---
 
@@ -41,31 +41,29 @@ data and is not part of the pipeline.
 
 ### 1.2 You are here
 
-The warehouse was designed as a five-phase migration. **All four phases have now
-shipped** — the text below is corrected from its 2026-08-02 original, which said
-B, C and D had not started:
+The warehouse was designed as a four-phase migration. All four have shipped.
 
-| Phase | Deliverable | Status |
+| Phase | Deliverable | Shipped |
 |---|---|---|
-| **A** | History ingested into R2, verified, nothing deleted | ✅ Shipped 2026-07-30 (`adda1d7`), verify pass `3c8f3db` |
-| **B** | Training reads R2 via DuckDB instead of Postgres RPCs | ❌ **Still not started** — the one remaining gap |
-| **C** | Nightly aggregates computed in DuckDB, published to Supabase | ✅ Shipped 2026-08-03 (`cf6c543`, `c72a6e3`) |
-| **D** | 35-day hot window in Postgres; ~307 MB reclaimed | ✅ Executed 2026-08-02 (`fb627ff`, `3b75761`) — 274 MB reclaimed, 456 MB → 182 MB |
+| **A** | History ingested into R2 and verified, nothing deleted | 2026-07-30 |
+| **B** | Training reads R2 via DuckDB instead of Postgres RPCs | 2026-08-11 (`modeling/`) |
+| **C** | Nightly aggregates computed in DuckDB, published to Supabase | 2026-08-03 |
+| **D** | 35-day hot window in Postgres | 2026-08-02 |
 
-Consequences you must internalise before touching anything:
+Three consequences to internalise before touching anything:
 
-- ~~**Postgres still holds full 2025–26 history.**~~ **No longer true.** The
-  hot-window swap ran on 2026-08-02. Postgres holds **35 days** of `pitches` and
-  `at_bats`; R2 holds everything. R2 is now the system of record for history, not
-  an additive copy.
-- ~~**There is no nightly warehouse job.**~~ **Shipped 2026-08-02** (Phase 2).
-  `.github/workflows/warehouse.yml` ingests and verifies daily at 14:00 UTC,
-  then publishes aggregates. Merged to `master` and firing;
-  see [`DATA-OPERATIONS.md` §5.5](DATA-OPERATIONS.md) for measured run history.
-- ~~**Nothing reads R2 yet.**~~ **No longer true.** `warehouse/duck.py` and
-  `warehouse/aggregates.py` build seven display aggregates in DuckDB over R2
-  every night, and the `api` edge function serves them. What still does *not*
-  read R2 is **training** — that is Phase B, and it is the only unbuilt piece.
+- **R2 is the system of record for history, not an additive copy.** Postgres
+  holds 35 days of `pitches` and `at_bats`. Anything older exists only in R2.
+  A query that "returns nothing" against Postgres for last season is working
+  correctly.
+- **The nightly is the only thing keeping R2 current.**
+  `.github/workflows/warehouse.yml` ingests, verifies, exports and publishes at
+  04:00 ET. R2 was once frozen for three days because nothing ran on a
+  schedule and no one noticed.
+- **Both readers of R2 are offline.** The aggregate publisher writes display
+  tables the API serves; the modeling workbench builds feature cells. Neither
+  can change what users see without a human promoting a model.
+
 
 ### 1.3 What supersedes what
 
@@ -73,10 +71,12 @@ Consequences you must internalise before touching anything:
 |---|---|---|
 | **This file** | Design rationale, ingest semantics, invariants, the §10–§12 proposals | **Current state.** Frozen 2026-08-02; storage figures are pre-prune |
 | [`DATA-OPERATIONS.md`](DATA-OPERATIONS.md) | Current state: schedules, cadences, job health, capacity, runbooks | Design rationale — it points back here for that |
-| `README.md` | Supabase pipeline, edge functions, deploy, local dev | It predates R2 and does not mention the warehouse |
-| `DATA-INVENTORY.md` | Product framing, model win rates | Storage figures and the "cannot build" list — three of five items are now unblocked (§6.4). Its batter-coverage open question is **answered** in §6.6 |
-| `docs/superpowers/specs/2026-07-29-data-pipeline-design.md` | Design rationale, rejected alternatives, the prune mechanics in §5.5 | §5.1's "export from Supabase" — revised by its own §4a |
-| `docs/superpowers/plans/2026-07-29-warehouse-and-capacity.md` | Phases B, C, D task detail | **Tasks 1–7 are superseded.** The file says so at line 84 |
+| [`MODELS.md`](MODELS.md) | Anything about models: the gate, the registry, promotion, `params` shapes | — it is authoritative here and this file defers to it |
+| [`DATABASE.md`](DATABASE.md) | The table and function reference, retention policy | — read back from the applied schema |
+| `README.md` | What the project is, the architecture, how to run it | Detail — it links here for that |
+
+`DATA-INVENTORY.md` was deleted in 2026-08. All five of its "cannot build"
+gaps had been built, and three other documents contradicted it.
 
 ---
 
@@ -91,7 +91,7 @@ Consequences you must internalise before touching anything:
 flowchart TB
     MLB[("MLB Stats API<br/>statsapi.mlb.com")]
 
-    subgraph LIVE["LIVE PATH — runs today, every 30s"]
+    subgraph LIVE["LIVE PATH — runs today, every 15s"]
         LP["live-poll<br/>_shared/mlb.ts"]
         DI["daily-ingest<br/>10:00 UTC"]
         PG[("Supabase Postgres<br/>500 MB cap")]
@@ -209,25 +209,32 @@ metric — see §12.
 ### 4.1 What runs
 
 pg_cron jobs dispatch through `call_edge_function()` (SECURITY DEFINER,
-`pg_net`, `x-cron-secret` header). **Trust `cron.job`, not
-`supabase/migrations/20260703000002_cron.sql`** — schedules were changed in
-production after that migration and two jobs were unscheduled entirely.
-Schedules below are *(measured 2026-08-02)* from
-`select jobname, schedule, active from cron.job`:
+`pg_net`, `x-cron-secret` header).
 
-| Job | Cadence | Function | Live status |
-|---|---|---|---|
-| `np-live-poll` | `30 seconds` | `live-poll` | active — **now conditionally gated** on a game being inside its window or a `live_state` row still reading `live` |
-| `np-settle` | `*/10 * * * *` | `settle` | active |
-| `np-game-predict` | `5 * * * *` | `game-predict` | active — **added 2026-08-06** (`20260806020310`), not in the original of this table |
-| `np-daily-ingest` | `0 13 * * *` | `daily-ingest` | active — **not** the `0 10 * * *` in the migration |
-| `np-prune-cron-history` | `15 13 * * *` | pruning SQL | active (added `20260728000003`) |
-| `np-odds-ingest` | — | `odds-ingest` | **no cron.job row at all**; deliberately unscheduled |
-| `np-backfill` | — | `backfill` | **no cron.job row at all**; drained and removed |
+**The schedule table lives in [`DATA-OPERATIONS.md`](DATA-OPERATIONS.md) §2**,
+which is the one place it is maintained. This section used to carry a second
+copy and the two drifted apart within a week.
 
-**Five** jobs exist as of 2026-08-07, not the four this section originally
-recorded. `odds-ingest` and `backfill` are still deployed edge functions and
-remain callable by hand; only their schedules are gone.
+Two things about it that are design decisions rather than status, and so
+belong here:
+
+- **Trust `cron.job`, not `20260703000002_cron.sql`.** Schedules have been
+  changed in production after that migration, and jobs unscheduled entirely.
+  The migration is the initial state, not the current one.
+
+  ```sql
+  select jobname, schedule, active from cron.job order by jobname;
+  ```
+
+- **`live-poll` is window-gated, not merely frequent.** The job fires on a
+  short cadence but returns immediately unless a game is inside its window or
+  a `live_state` row still reads `live`. That gate is what makes a sub-minute
+  cadence affordable; without it the poll burns MLB API calls around the clock
+  for nine months of the year.
+
+`odds-ingest`, `backfill` and `backfill-predictions` are deployed edge
+functions with no `cron.job` row. They remain callable by hand; only their
+schedules are gone.
 
 ### 4.2 One live pitch, end to end
 
@@ -272,52 +279,30 @@ record and it is invisible.
 `api/index.ts` strips `/api/` and switches on the remainder. Every response is
 CDN-cached *and* memoised in-instance, so load scales with TTL, not user count.
 
-| Route | TTL (s) |
-|---|---:|
-| `/health`, `/` | 10 |
-| `/live` | 10 |
-| `/edge/{game_pk}` | 15 |
-| `/odds/today` | 30 |
-| `/picks/today`, `/record`, `/games` | 60 |
-| `/sportsbooks` | 3600 |
+The route/TTL table is maintained in
+[`DATA-OPERATIONS.md`](DATA-OPERATIONS.md). The copy that used to sit here
+listed six of the eighteen routes and was never updated as the aggregate
+endpoints landed. The authority is the source:
 
-### 4.5 Live row counts *(measured 2026-08-02, PostgREST `count=exact`)*
+```
+supabase/functions/api/index.ts  →  const TTL
+```
 
-> **⚠️ Pre-prune. Every figure in this section is superseded.** The hot-window
-> swap ran later the same day. As of 2026-08-07 the database is **227 MB of
-> 500 MB** (not 453 MB), `pitches` is **140,929 rows / 36 MB** (not 1,213,819),
-> `at_bats` is **36,234 rows / 7.4 MB** (not 313,294), and `predictions` at
-> **84 MB** is now the largest table in the database. Current counts and sizes:
-> [`DATA-OPERATIONS.md` §7.3](DATA-OPERATIONS.md). The table below is retained
-> only as the pre-swap baseline.
 
-| Table | Rows | Note |
-|---|---:|---|
-| `pitches` | 1,213,819 | full 2025–26; **not pruned** |
-| `at_bats` | 313,294 | full 2025–26; **not pruned** |
-| `predictions` | 258,714 | 21-day retention |
-| `picks` | 18,685 | |
-| `matchup_history` | 41,313 | model input, 2 seasons |
-| `games` | 4,173 | |
-| `player_info` | 1,728 | |
-| `ingest_runs` | 10,629 | 7-day retention |
-| `pitcher_rolling_stats` | 588 | 30-day, model input |
-| `batter_rolling_stats` | 489 | 30-day, model input |
-| `live_state` | 293 | |
-| `odds` | 178 | flag-gated, stale |
-| `prediction_accuracy_daily` | 106 | permanent |
-| `model_params` | 5 | all `v1_20260707` |
+### 4.5 How big is it right now
 
-Table *sizes* could not be re-measured (the Supabase MCP token was
-unauthorized). The last verified figures are 2026-07-29: `pitches` 287 MB,
-`at_bats` 57 MB, database total **453 MB of 500 MB**. Re-measure with:
+Deliberately not written down. The hot-window swap makes any row count a
+function of the last 35 days, and three documents once quoted three different
+numbers for the same thing.
 
 ```sql
-select relname, pg_size_pretty(pg_total_relation_size(c.oid))
-from pg_class c join pg_namespace n on n.oid = c.relnamespace
-where n.nspname = 'public' and c.relkind = 'r'
-order by pg_total_relation_size(c.oid) desc;
+select relname, n_live_tup,
+       pg_size_pretty(pg_total_relation_size(relid)) as size
+from pg_stat_user_tables order by pg_total_relation_size(relid) desc limit 15;
 ```
+
+For the R2 side: `python -m warehouse status`.
+
 
 ### 4.6 Security model
 
@@ -483,9 +468,10 @@ longer describes what is stored.
 
 `load()` **refuses a v1 manifest** rather than coercing it: in v1 the ingest
 wrote `verified_at`, so reading a v1 entry with v2 semantics would report
-independent verification that never happened. Migrate with
-`py scripts/migrate_manifest_v2.py` (`--dry-run` first). The v1 object is kept
-at `_manifest.v1.json`.
+independent verification that never happened. The v1 to v2 migration ran once
+in 2026-08 (its one-shot script has since been removed) and the v1 object is
+kept at `_manifest.v1.json`. Hitting this error now means the bucket is not
+the one you think it is — check `R2_BUCKET`.
 
 The checksum is SHA-256 over the **sorted natural keys**
 (`game_pk|at_bat_index|pitch_number`), so it is order-independent and catches
@@ -638,8 +624,8 @@ Zero egress cost. Reading the full 7.9M-row dataset is free.
 
 ### 6.6 Answering "is coverage complete?"
 
-`DATA-INVENTORY.md` flags an open question: *"674 distinct batters for 2025 …
-lower than a full MLB season would suggest. Worth an audit."*
+An earlier product review flagged an open question: *"674 distinct batters
+for 2025 — lower than a full MLB season would suggest. Worth an audit."*
 
 **Audited, and the data is correct.** Distinct players per season in R2, from a
 completely independent ingest path:
@@ -668,39 +654,40 @@ select jobname, schedule, active from cron.job;
 
 ---
 
-## 7. What is not built yet
+## 7. The reclaim mechanics
 
-> **Mostly shipped.** Four of the five rows below are done as of 2026-08-03.
-> Only the `predictions` export remains, alongside Phase B (training over
-> DuckDB). Current gap list: [`DATA-OPERATIONS.md` §10](DATA-OPERATIONS.md).
+Everything on the original "not built" list has shipped: the nightly workflow,
+the DuckDB aggregate layer, the CLI, the hot-window migration, and the
+row-level `predictions` export. The standing gap list lives in
+[`DATA-OPERATIONS.md`](DATA-OPERATIONS.md) §8.
 
-| Missing | Consequence of leaving it |
-|---|---|
-| ~~`.github/workflows/warehouse.yml`~~ | **Shipped 2026-08-02**, merged to `master` and firing nightly. Ingest + `verify --record` + `publish`, catch-up bounded to 14 days. |
-| ~~`warehouse/duck.py`, `aggregates.py`, `publish.py`~~ | **Shipped 2026-08-03** (`cf6c543`). Seven display aggregates built in DuckDB over R2 and published nightly. `cells.py` is deliberately **not** built — the model-facing tables stay deferred. |
-| ~~`warehouse/cli.py`~~ | **Shipped 2026-08-02.** `python -m warehouse status\|pending\|verify\|ingest\|backfill\|publish`. |
-| ~~Migrations for warehouse tables and the hot-window swap~~ | **Shipped as `20260802000003_hot_window_swap` and `20260803000001_display_aggregates`.** 274 MB reclaimed. |
-| **Row-level `predictions` export to R2** | **Still missing.** No out-of-sample evaluation set is accumulating. Every day without it is a day of holdout data lost. |
+What is worth keeping here is *how the reclaim works*, because it is the part
+most likely to be improvised badly if it is ever needed again.
 
-The reclaim mechanics are already designed and should not be re-derived: see
-spec §5.5. Two points that will bite anyone who improvises:
-
-- **`DELETE` frees no measured space.** Dead tuples are reusable by the table
-  but `pg_database_size` does not shrink. `VACUUM FULL` needs ~2× the table size
-  in transient space — impossible at 453/500 MB. `pg_repack` is unavailable. The
-  reclaim is a **table swap**.
+- **`DELETE` frees no measured space.** Dead tuples become reusable by the
+  table, but `pg_database_size` does not shrink. `VACUUM FULL` needs ~2× the
+  table size in transient space — impossible when you are at 453 of 500 MB,
+  which is exactly when you need it. `pg_repack` is unavailable on Supabase.
+  The reclaim is therefore a **table swap**, not a delete.
 - **Swap `at_bats` first, then `pitches`.** Peak disk is 459 MB in that order
-  and 484 MB reversed — 16 MB of headroom with no margin for WAL.
-  `LIKE … INCLUDING ALL` copies indexes and constraints but **not RLS policies or
-  grants**; recreate them explicitly in the same migration.
-- Pause `np-live-poll` for the duration; it writes to `pitches` every 30 s.
+  and 484 MB reversed — 16 MB of headroom, with no margin for WAL.
+- **`LIKE … INCLUDING ALL` copies indexes and constraints but not RLS policies
+  or grants.** Recreate them explicitly in the same migration or the new table
+  ships world-writable.
+- **Pause `np-live-poll` for the duration** — it writes to `pitches` on every
+  tick.
+
+The migration that did this, `20260802000003_hot_window_swap.sql`, is also the
+one migration in the repo that is not idempotent: it renames `at_bats` to
+`at_bats_old`, so a second run fails. That is inherent to a swap.
 
 ---
+
 
 ## 8. Known defects carried forward
 
 Verified elsewhere, restated here so nobody rediscovers them the hard way.
-Sources: spec §8, `MODELS.md`, `DATA-INVENTORY.md`.
+Where these overlap with [`MODELS.md`](MODELS.md), that file wins.
 
 1. **The training RPCs are a post-prune landmine.** `train_pitch_result_cells`,
    `train_ab_result_cells`, `train_pitch_speed_cells`, `train_ab_pitches_cells`
@@ -708,14 +695,16 @@ Sources: spec §8, `MODELS.md`, `DATA-INVENTORY.md`.
    produce a quietly worse model. They are dropped in the same migration for
    exactly this reason. `train_home_advantage` reads only `games` and stays.
 2. **Scheduled retraining has not succeeded since 2026-07-07.**
-   `train-models.yml` runs Mondays; `train_models.py` stamps `v1_<YYYYMMDD>`; no
+   `train-models.yml` is dispatch-only and never promotes; no
    new `model_params` rows exist. Diagnose this *before* migrating training to
    DuckDB, or the acceptance gate is confounded.
-3. **`game_moneyline`'s trained model has never scored a live prediction.** All
-   moneyline rows are stamped `mlb_winprob_v1` — `live-poll` relays MLB's own
-   win-probability feed. The 70.8% headline in `DATA-INVENTORY.md` is MLB's
-   number, not ours. The trained log5 model is only called by `odds-ingest`,
-   which is unscheduled.
+3. **`game_moneyline`'s trained model has never scored a live prediction.**
+   `model.ts` has no `log5` branch at all, so no caller reads `model_params`
+   for this market: `live-poll` relays MLB's own win-probability feed as
+   `mlb_winprob_v1`, and `game-predict` stamps `log5_v1` while taking the
+   function default `homeAdv = 0.542`. Any moneyline accuracy headline is
+   MLB's number, not ours. See [`MODELS.md`](MODELS.md), which is
+   authoritative on this.
 4. **`ab_result` is knowingly miscalibrated and patched at serve time.**
    `CALIB_SHRINK = 0.7` in `_shared/model.ts` shrinks output toward the league
    prior. Served probabilities are not raw model output.
@@ -807,8 +796,8 @@ outage then degrades a display, never a prediction.
 | **Consumer** | RISP / bases-empty / runners-on splits — table stakes for a baseball analytics product |
 | **Measured cardinality** | 4,762 pitcher×base-state, 3,321 batter×base-state pairs; ×2 platoon sides |
 
-**This was DATA-INVENTORY's "single biggest gap"** — *"We do not record who is on
-base… we cannot produce any of them."* That is no longer true.
+**This was once recorded as the single biggest gap** — *"We do not record who
+is on base… we cannot produce any of them."* That is no longer true.
 `men_on_base` is **100% populated across all 2,011 days in R2**. The capability
 is blocked only on the DuckDB layer, not on data capture.
 
@@ -1026,21 +1015,22 @@ well-established in the literature and free to us.
 
 ### 12.1 Recommended sequence
 
-**Steps 1–4 are done** (2026-08-02/03); step 5 is not. Retained with outcomes:
+All five steps of the original sequence have shipped:
 
-1. ~~**Scripted verify path**~~ ✅ `warehouse/cli.py`, 2026-08-02.
-2. ~~**Nightly warehouse job**~~ ✅ 2026-08-02. R2 tracks yesterday.
-   *`holdout_predictions` was **not** included and is still outstanding.*
-3. ~~**The prune (Phase D)**~~ ✅ 2026-08-02. **274 MB reclaimed**, 456 → 182 MB.
-   Executed as designed: `at_bats` first, table swap, RLS recreated,
-   `np-live-poll` paused under four minutes.
-4. ~~**Aggregates**~~ ✅ 2026-08-03. Seven tables, 118k rows / 22.3 MB, published
-   nightly and served. The model-facing tables (§11) remain deferred.
-5. **Phase B training migration** — ❌ not started, and now the only thing
-   blocking §11 in its entirety. `train-models.yml` was deliberately unscheduled
-   on 2026-08-02 rather than diagnosed: the `train_*_cells` RPCs it read were
-   dropped because they would have silently returned 35 days post-prune. The
-   registry has been frozen at `v1_20260707` for a month.
+1. **Scripted verify path** — `warehouse/cli.py`.
+2. **Nightly warehouse job** — R2 tracks yesterday.
+3. **The prune (Phase D)** — executed as designed: `at_bats` first, table swap,
+   RLS recreated, `np-live-poll` paused under four minutes.
+4. **Aggregates** — seven tables, published nightly and served.
+5. **Phase B training migration** — `modeling/` reads R2 through DuckDB and
+   fits from a local feature-cell cache. This is what unblocks §11: the
+   model-facing cell tables are now a matter of writing specs, not of
+   re-plumbing where training gets its data.
+
+The `train_*_cells` RPCs that this replaced were dropped in `20260802000002`
+because they read all of `pitches` and would have silently returned 35 days
+after the prune — producing a quietly worse model with no error.
+
 
 ### 12.2 Two decisions for leadership
 
@@ -1059,8 +1049,8 @@ multiplies this. A product call, not an engineering one.
 
 ### 12.3 One correction to the record
 
-`DATA-INVENTORY.md` lists five "cannot build" items. **Three are no longer data
-gaps.** Base state, in-game pitch count, times-through-order and score-at-pitch
+An earlier product review listed five "cannot build" items. **None are still
+data gaps.** Base state, in-game pitch count, times-through-order and score-at-pitch
 are all captured in R2 at 100% completeness across 2,011 days and 7.9M pitches.
 They are blocked only on the DuckDB layer that reads them. Any roadmap or
 investment decision that still treats them as requiring new ingestion is working

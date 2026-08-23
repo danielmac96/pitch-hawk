@@ -1,5 +1,7 @@
 // Settlement — grades pending predictions AND picks against real outcomes.
-// Mirrors backend/jobs/settle_predictions.py (that module documents the rules).
+// Grades pending predictions and picks against the next pitch, the finished
+// at-bat, or the final score. Chained from live-poll whenever a game advanced;
+// np-settle-sweep at 03:00 ET catches anything a failed chain left behind.
 // Requires x-cron-secret. Scheduled every 10 minutes via pg_cron.
 
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";

@@ -1,15 +1,19 @@
 # ML Pipeline QA Dashboard
 
-A single-page Streamlit dashboard for the Cloudflare R2 Parquet warehouse.
+A Streamlit dashboard for the Cloudflare R2 Parquet warehouse and the model
+registry.
 Internal QA only, read-only, and deliberately boring: it reads the bucket **in
 place** with DuckDB and copies nothing into another database.
 
 It is built to answer one question first — *is anything wrong right now?* — and
 only then to let you look closer.
 
-As of 2026-08-05 the warehouse it inspects holds 2,015 dataset-days per
-dataset — 7.9 M pitches, 2.0 M plate appearances, 26.9 K games — spanning
-2015-04-05 to 2026-08-03.
+The warehouse it inspects spans 2015 to yesterday. For the current size, ask
+the manifest rather than this file:
+
+```bash
+python -m warehouse status
+```
 
 ---
 
@@ -200,7 +204,8 @@ startup so this reports as a connection failure instead.
 
 ```
 dashboard/
-├── app.py                 # page layout, caching, all Streamlit rendering
+├── app.py                 # warehouse QA page: layout, caching, rendering
+├── pages/2_Models.py      # the model registry and every recorded training run
 ├── data/queries.py        # every SQL statement, one place
 ├── utils/r2.py            # store, manifest and credentials (wraps warehouse/)
 ├── utils/duckdb_conn.py   # the DuckDB connection and query execution
@@ -208,8 +213,13 @@ dashboard/
 ├── utils/checks.py        # the checks and their thresholds
 ├── utils/palette.py       # validated colour tokens and chart chrome
 ├── .streamlit/config.toml # chrome colour (Streamlit's default red is reserved here)
-├── requirements.txt · .env.example · assets/
+└── requirements.txt · .env.example
 ```
+
+Two pages. `app.py` answers "is the warehouse healthy?" from the manifest;
+`pages/2_Models.py` reads `model_params` and `model_runs` from Supabase and is
+the only page needing database credentials rather than R2 ones. It is where
+rejected training runs are visible — see [`../docs/MODELS.md`](../docs/MODELS.md).
 
 `utils/r2.py` imports the repo's `warehouse` package rather than
 re-implementing credentials, the store or the manifest, so the dashboard cannot

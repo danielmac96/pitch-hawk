@@ -20,12 +20,13 @@ staging tables have RLS enabled and no policy, so nothing else can touch them.
 from __future__ import annotations
 
 import math
-import os
 import time
 from datetime import date, datetime
 
+from warehouse.store import ObjectStore
 from warehouse import aggregates as agg
 from warehouse import duck, manifest
+from warehouse.config import supabase_client
 
 # PostgREST rejects very large request bodies and Supabase's pooler is happier
 # with modest batches. A 65k-row publish is ~33 requests at this size.
@@ -60,20 +61,6 @@ def _retry(fn, what: str, *, retries: int = RETRIES):
     raise RuntimeError(f"{what} failed after {retries} attempts: {last}")
 
 
-def _client():
-    """Service-role Supabase client. Imported lazily so `warehouse.duck` and
-    the aggregate builders stay usable with no Supabase dependency at all."""
-    from supabase import create_client
-
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
-    if not url or not key:
-        raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_KEY (service-role) are required to "
-            "publish; set them in .env locally or as Actions secrets.")
-    return create_client(url, key)
-
-
 def _jsonable(v):
     """Arrow -> JSON. PostgREST needs ISO strings for dates and rejects the
     NaN/Infinity that a division by an empty group can produce."""
@@ -92,7 +79,7 @@ def rows_of(table) -> list[dict]:  # noqa: ANN001
     return [{k: _jsonable(v) for k, v in r.items()} for r in table.to_pylist()]
 
 
-def build(store, *, min_pa: int = 3, only=None, m: dict | None = None,
+def build(store: ObjectStore, *, min_pa: int = 3, only=None, m: dict | None = None,
           on_progress=None) -> dict:  # noqa: ANN001
     """Build every aggregate. Returns {name: pyarrow.Table}.
 
@@ -172,7 +159,7 @@ def publish_table(client, name: str, table, *,  # noqa: ANN001
                   f"{name}: swap")
 
 
-def publish(store, *, min_pa: int = 3, only=None, dry_run: bool = False,
+def publish(store: ObjectStore, *, min_pa: int = 3, only=None, dry_run: bool = False,
             on_progress=None, on_publish=None) -> dict:  # noqa: ANN001
     """Build, then (unless dry_run) stage and swap each table."""
     built = build(store, min_pa=min_pa, only=only, on_progress=on_progress)
@@ -181,7 +168,7 @@ def publish(store, *, min_pa: int = 3, only=None, dry_run: bool = False,
     if dry_run:
         return summary
 
-    client = _client()
+    client = supabase_client()
     for name, tbl in built.items():
         n = publish_table(client, name, tbl)
         summary[name]["published"] = n

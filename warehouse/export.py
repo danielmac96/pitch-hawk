@@ -29,32 +29,19 @@ than by slicing `created_at`.
 from __future__ import annotations
 
 import json as _json
-import os
 from datetime import date, datetime, timezone
 
 import pyarrow as pa
 
+from warehouse.store import ObjectStore
 from warehouse import manifest
-from warehouse.config import EXPORT_DATASETS, SCHEMAS, object_key
+from warehouse.config import (EXPORT_DATASETS, SCHEMAS, object_key,
+                              supabase_client)
 from warehouse.ingest import checksum, to_parquet
 
 # PostgREST caps a single response (Supabase defaults to 1000 rows). A busy
 # slate is ~8,000 predictions, so paging is not optional.
 PAGE = 1000
-
-
-def _client():
-    """Service-role Supabase client. Imported lazily so the rest of the
-    warehouse stays usable with no Supabase dependency installed."""
-    from supabase import create_client
-
-    url = os.environ.get("SUPABASE_URL")
-    key = os.environ.get("SUPABASE_KEY")
-    if not url or not key:
-        raise RuntimeError(
-            "SUPABASE_URL and SUPABASE_KEY (service-role) are required to "
-            "export; set them in .env locally or as Actions secrets.")
-    return create_client(url, key)
 
 
 def _page_all(make_query) -> list[dict]:
@@ -177,7 +164,7 @@ def fetch_day(client, day: str) -> dict[str, list[dict]]:  # noqa: ANN001
 
 # ── export ──────────────────────────────────────────────────────────────────
 
-def export_day(store, day: str, *, client=None,  # noqa: ANN001
+def export_day(store: ObjectStore, day: str, *, client=None,
                m: dict | None = None, skip_existing: bool = False) -> dict:
     """Export one day. Returns per-dataset facts.
 
@@ -198,7 +185,7 @@ def export_day(store, day: str, *, client=None,  # noqa: ANN001
                 **{ds: 0 for ds in EXPORT_DATASETS}}
 
     if client is None:
-        client = _client()
+        client = supabase_client()
     by_dataset = fetch_day(client, day)
 
     now = datetime.now(timezone.utc).isoformat()

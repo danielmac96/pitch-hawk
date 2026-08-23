@@ -72,9 +72,11 @@ split) and **900px** (promo splits). Verified at 360 / 390 / 768 / 1024 /
 
 - `.ph-nav`: fixed bottom tab bar under 768px (48px targets,
   `safe-area-inset-bottom`); header pill row above.
-- `.ph-hero` / `.ph-promo` / `.ph-panel-grid`: single column on phones.
-- `.ph-chip`: 42px minimum touch height on phones.
-- `.ph-scroll`: wide tables scroll inside their card — the page itself
-  never scrolls horizontally (fixed-width grids are guarded with
-  `minmax(min(Npx, 100%), 1fr)`).
+- `.ph-hero` / `.ph-promo`: single column on phones.
+- Wide tables scroll inside their card — the page itself never scrolls
+  horizontally (fixed-width grids are guarded with
+  `minmax(min(Npx, 100%), 1fr)`). The board builds these inline in
+  `pitchhawk.js`; the `.ph-table` / `.ph-scroll` / `.ph-chip` class system
+  that once backed them was never used by the markup and was removed in
+  2026-08.
 - `viewport-fit=cover` + `env(safe-area-inset-*)` on nav and footer.

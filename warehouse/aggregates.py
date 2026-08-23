@@ -3,7 +3,7 @@
 Seven tables, each built by one function returning a PyArrow table. They serve
 the frontend only. **No model tables live here** — `market_baselines`,
 `holdout_predictions`, `context_cells` and the rest are deferred; see the
-"Deferred" section of docs/plans/data-pipeline-2026-08-02.md.
+model-facing cell tables, which stay deferred (DATA-PIPELINE.md §11).
 
 Two windowing rules, and both are deliberate:
 
@@ -30,7 +30,6 @@ table built on Statcast columns — floors at 2017 and says so in its own
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 WINDOW_SEASONS = 3
 STATCAST_FLOOR = 2017
@@ -51,10 +50,6 @@ _SWUNG = "(description in ('swinging_strike','foul') or result_category = 'in_pl
 _WHIFF = "description = 'swinging_strike'"
 _CONTACT = "(description = 'foul' or result_category = 'in_play')"
 _FASTBALL = "pitch_type in ('FF','FT','SI','FC')"
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _scoped(table: str) -> str:
@@ -143,7 +138,7 @@ def batter_profiles(con, season_floor: int):  # noqa: ANN001
 def situational_splits(con, season_floor: int):  # noqa: ANN001
     """player x role x base-state x opposing hand.
 
-    This is the table DATA-INVENTORY called our "single biggest gap" —
+    This is the table an early product review called our "single biggest gap" —
     *"We do not record who is on base... we cannot produce any of them."*
     That has been false since the warehouse landed: `men_on_base` is 100%
     populated across all 2,013 days, derived from carried-forward base
@@ -354,9 +349,10 @@ def matchup_history(con, season_floor: int, min_pa: int = 3):  # noqa: ANN001
 
     Emits `pa_count` rather than `pa` because this REPLACES the contents of the
     existing Postgres `matchup_history` rather than creating a v2 table beside
-    it. `backend/models/stats_cache.py:396` reads pa_count/so_count/bb_count/
-    h_count; renaming them would break the deferred model layer for no gain.
-    The v2 columns are added alongside, not instead.
+    it. The live API serves these columns straight through
+    (`_shared/aggregates.ts::matchup`, route `/matchup/{pitcher}/{batter}`), so
+    renaming them is a breaking API change for no gain. The v2 columns are
+    added alongside, not instead.
     """
     sql = f"""
     select pitcher_id, batter_id,
@@ -393,5 +389,3 @@ BUILDERS = {
 
 # Statcast-dependent tables floor at 2017; the rest at the window start.
 STATCAST_TABLES = {"batter_power_profile"}
-
-TABLE_NAMES = tuple(BUILDERS)

@@ -16,7 +16,6 @@
 window.PITCHHAWK = (function () {
   // ── odds math ─────────────────────────────────────────────────────────
   const clampP = (p) => Math.max(0.02, Math.min(0.97, p));
-  const impliedFromAmerican = (a) => (a < 0 ? -a / (-a + 100) : 100 / (a + 100));
   const americanFromImplied = (p) => {
     p = clampP(p);
     const raw = p >= 0.5 ? -(p / (1 - p)) * 100 : ((1 - p) / p) * 100;
@@ -50,51 +49,7 @@ window.PITCHHAWK = (function () {
       url: "https://polymarket.com" },
   };
 
-  // Build per-source quotes around a consensus implied prob. Sportsbooks carry
-  // a touch of vig (implied a hair higher → worse for the bettor); prediction
-  // markets sit near-fair with a thin spread. Each source's edge is recomputed
-  // from its own implied prob, so the "best" source falls out naturally.
-  function buildSources(modelProb, baseImplied, keys) {
-    return keys.map((k, i) => {
-      const s = SOURCES[k];
-      const vig = s.type === "book" ? 0.013 : 0.003;
-      const jitter = (i % 2 ? 1 : -1) * (0.003 + 0.005 * ((i * 7) % 3) / 2);
-      const implied = clampP(baseImplied + vig + jitter);
-      return {
-        source: k, name: s.name, short: s.short, type: s.type, url: s.url,
-        impliedProb: +implied.toFixed(4),
-        price: americanFromImplied(implied),
-        edge: calcEdge(modelProb, implied),
-      };
-    });
-  }
   const bestOf = (rows) => rows.reduce((a, b) => (b.edge > a.edge ? b : a), rows[0]);
-
-  // over/under market
-  function ou(market, predicted, side, line, modelProb, edge, keys) {
-    const sources = buildSources(modelProb, modelProb - edge, keys);
-    const best = bestOf(sources);
-    return { market, kind: "ou", predictedValue: predicted, recommendation: side,
-      line, modelProb, sources, best, edge: best.edge };
-  }
-  // categorical market — specs: [{name, prob, edge, conf}]
-  function cat(market, specs, keys) {
-    const outcomes = specs.map((o) => {
-      const sources = buildSources(o.prob, o.prob - o.edge, keys);
-      const best = bestOf(sources);
-      return { name: o.name, modelProb: o.prob, conf: o.conf, sources, best, edge: best.edge };
-    });
-    const rec = outcomes.reduce((a, b) => (b.edge > a.edge ? b : a), outcomes[0]);
-    const probs = {};
-    specs.forEach((o) => (probs[o.name] = o.prob));
-    return { market, kind: "cat", probs, outcomes, recommendation: rec.name,
-      recOutcome: rec, modelProb: rec.modelProb, edge: rec.edge, best: rec.best, conf: rec.conf };
-  }
-
-  const ALL = ["draftkings", "fanduel", "kalshi", "polymarket"];
-  const MKT = ["kalshi", "polymarket", "draftkings"]; // markets lead the micro-props
-  const p = (n, type, speed, zone, desc, cat, b, s) =>
-    ({ n, type, speed, zone, desc, cat, balls: b, strikes: s });
 
   // ── markets meta ──────────────────────────────────────────────────────
   const MARKETS = {
@@ -115,269 +70,11 @@ window.PITCHHAWK = (function () {
     home: "Home", away: "Away",
   };
 
-  // ── games ─────────────────────────────────────────────────────────────
-  const now = Date.now();
-  const ago = (s) => new Date(now - s * 1000).toISOString();
 
-  function buildGames() {
-    return [
-      {
-        gamePk: 746285, away: "NYY", home: "BOS", label: "NYY @ BOS",
-        venue: "Fenway Park", weather: "72°F · Wind 8mph out to RF · Clear", score: { away: 2, home: 0 },
-        pitcher: { name: "Gerrit Cole", hand: "R", meta: "0H 1SO · ERA 2.71" },
-        batter: { name: "Rafael Devers", hand: "L", meta: "2/4 .312 · OPS .910" },
-        onDeck: "T. Story",
-        inning: 6, half: "▲", count: "2-1", outs: 1,
-        runners: { first: false, second: true, third: false },
-        pitchCountPa: 3, pitchCountGame: 78, lastPitch: ago(7),
-        pitches: [
-          p(1, "FF", 97.2, 5, "called_strike", "strike_foul", 0, 0),
-          p(2, "SL", 88.1, 14, "ball", "ball", 0, 1),
-          p(3, "FF", 96.8, 11, "ball", "ball", 1, 1),
-        ],
-        m: {
-          pitch_speed_ou: ou("pitch_speed_ou", 96.2, "over", 94.5, 0.78, 0.073, ALL),
-          pitch_result: cat("pitch_result", [
-            { name: "strike_foul", prob: 0.51, edge: 0.010, conf: 0.78 },
-            { name: "ball", prob: 0.34, edge: 0.017, conf: 0.62 },
-            { name: "in_play", prob: 0.15, edge: 0.055, conf: 0.55 },
-          ], MKT),
-          ab_result: cat("ab_result", [
-            { name: "strikeout", prob: 0.31, edge: 0.054, conf: 0.71 },
-            { name: "walk", prob: 0.09, edge: 0.005, conf: 0.60 },
-            { name: "hit", prob: 0.21, edge: 0.015, conf: 0.65 },
-            { name: "out", prob: 0.39, edge: -0.040, conf: 0.62 },
-          ], MKT),
-          ab_pitches_ou: ou("ab_pitches_ou", 5.2, "under", 3.5, 0.71, 0.058, ALL),
-        },
-      },
-      {
-        gamePk: 746401, away: "LAD", home: "SFG", label: "LAD @ SFG",
-        venue: "Oracle Park", weather: "58°F · Wind 12mph in from CF · Overcast", score: { away: 4, home: 3 },
-        pitcher: { name: "Yoshinobu Yamamoto", hand: "R", meta: "1H 4SO · ERA 1.92" },
-        batter: { name: "Matt Chapman", hand: "R", meta: "1/3 .268 · OPS .812" },
-        onDeck: "J. Yastrzemski",
-        inning: 3, half: "▼", count: "1-2", outs: 0,
-        runners: { first: true, second: false, third: false },
-        pitchCountPa: 4, pitchCountGame: 42, lastPitch: ago(11),
-        pitches: [
-          p(1, "SP", 90.4, 8, "swinging_strike", "strike_foul", 0, 0),
-          p(2, "FF", 96.1, 13, "ball", "ball", 0, 1),
-          p(3, "FF", 95.7, 4, "foul", "strike_foul", 1, 1),
-          p(4, "CB", 82.3, 6, "foul", "strike_foul", 1, 2),
-        ],
-        m: {
-          pitch_speed_ou: ou("pitch_speed_ou", 94.8, "under", 96.5, 0.66, 0.055, ALL),
-          pitch_result: cat("pitch_result", [
-            { name: "strike_foul", prob: 0.39, edge: -0.005, conf: 0.66 },
-            { name: "ball", prob: 0.42, edge: 0.045, conf: 0.69 },
-            { name: "in_play", prob: 0.19, edge: 0.012, conf: 0.58 },
-          ], MKT),
-          ab_result: cat("ab_result", [
-            { name: "strikeout", prob: 0.24, edge: 0.010, conf: 0.62 },
-            { name: "walk", prob: 0.07, edge: 0.003, conf: 0.55 },
-            { name: "hit", prob: 0.28, edge: 0.050, conf: 0.69 },
-            { name: "out", prob: 0.41, edge: -0.032, conf: 0.61 },
-          ], MKT),
-          ab_pitches_ou: ou("ab_pitches_ou", 5.6, "over", 4.5, 0.69, 0.064, ALL),
-        },
-      },
-      {
-        gamePk: 746502, away: "HOU", home: "SEA", label: "HOU @ SEA",
-        venue: "T-Mobile Park", weather: "64°F · Roof open · Calm", score: { away: 1, home: 1 },
-        pitcher: { name: "Framber Valdez", hand: "L", meta: "0H 2SO · ERA 3.18" },
-        batter: { name: "Julio Rodríguez", hand: "R", meta: "0/2 .274 · OPS .851" },
-        onDeck: "C. Raleigh",
-        inning: 4, half: "▲", count: "0-0", outs: 2,
-        runners: { first: false, second: false, third: true },
-        pitchCountPa: 0, pitchCountGame: 51, lastPitch: ago(9),
-        pitches: [],
-        m: {
-          pitch_speed_ou: ou("pitch_speed_ou", 93.1, "under", 93.5, 0.58, 0.024, ALL),
-          pitch_result: cat("pitch_result", [
-            { name: "strike_foul", prob: 0.48, edge: 0.020, conf: 0.62 },
-            { name: "ball", prob: 0.37, edge: -0.005, conf: 0.58 },
-            { name: "in_play", prob: 0.15, edge: 0.010, conf: 0.55 },
-          ], MKT),
-          ab_result: cat("ab_result", [
-            { name: "strikeout", prob: 0.24, edge: 0.005, conf: 0.61 },
-            { name: "walk", prob: 0.08, edge: -0.002, conf: 0.54 },
-            { name: "hit", prob: 0.25, edge: -0.008, conf: 0.60 },
-            { name: "out", prob: 0.43, edge: 0.048, conf: 0.66 },
-          ], MKT),
-          ab_pitches_ou: ou("ab_pitches_ou", 5.0, "over", 4.5, 0.62, 0.051, ALL),
-        },
-      },
-      {
-        gamePk: 746611, away: "CHC", home: "STL", label: "CHC @ STL",
-        venue: "Busch Stadium", weather: "81°F · Wind 6mph L-to-R · Humid", score: { away: 5, home: 5 },
-        pitcher: { name: "Justin Steele", hand: "L", meta: "2H 1SO · ERA 3.41" },
-        batter: { name: "Paul Goldschmidt", hand: "R", meta: "2/3 .284 · OPS .831" },
-        onDeck: "N. Gorman",
-        inning: 7, half: "▼", count: "3-2", outs: 2,
-        runners: { first: true, second: true, third: false },
-        pitchCountPa: 6, pitchCountGame: 96, lastPitch: ago(13),
-        pitches: [
-          p(1, "FF", 91.4, 13, "ball", "ball", 0, 0),
-          p(2, "CH", 83.1, 2, "foul", "strike_foul", 1, 0),
-          p(3, "SL", 85.2, 5, "foul", "strike_foul", 1, 1),
-          p(4, "FF", 90.8, 14, "ball", "ball", 1, 2),
-          p(5, "SL", 84.6, 4, "foul", "strike_foul", 2, 2),
-          p(6, "FF", 91.7, 11, "ball", "ball", 3, 2),
-        ],
-        m: {
-          pitch_speed_ou: ou("pitch_speed_ou", 90.9, "under", 91.5, 0.63, 0.042, ALL),
-          pitch_result: cat("pitch_result", [
-            { name: "strike_foul", prob: 0.36, edge: -0.015, conf: 0.60 },
-            { name: "ball", prob: 0.39, edge: 0.020, conf: 0.63 },
-            { name: "in_play", prob: 0.25, edge: 0.035, conf: 0.66 },
-          ], MKT),
-          ab_result: cat("ab_result", [
-            { name: "strikeout", prob: 0.21, edge: -0.005, conf: 0.55 },
-            { name: "walk", prob: 0.18, edge: 0.060, conf: 0.72 },
-            { name: "hit", prob: 0.24, edge: 0.010, conf: 0.60 },
-            { name: "out", prob: 0.37, edge: -0.025, conf: 0.58 },
-          ], MKT),
-          ab_pitches_ou: ou("ab_pitches_ou", 7.1, "over", 6.5, 0.60, 0.031, ALL),
-        },
-      },
-      {
-        gamePk: 746712, away: "ATL", home: "PHI", label: "ATL @ PHI",
-        venue: "Citizens Bank Park", weather: "77°F · Wind 9mph out to LF · Clear", score: { away: 1, home: 2 },
-        pitcher: { name: "Spencer Strider", hand: "R", meta: "1H 5SO · ERA 2.94" },
-        batter: { name: "Kyle Schwarber", hand: "L", meta: "1/3 .241 · OPS .891" },
-        onDeck: "B. Harper",
-        inning: 2, half: "▲", count: "2-2", outs: 0,
-        runners: { first: false, second: false, third: false },
-        pitchCountPa: 5, pitchCountGame: 31, lastPitch: ago(6),
-        pitches: [
-          p(1, "FF", 99.1, 5, "called_strike", "strike_foul", 0, 0),
-          p(2, "SL", 87.4, 13, "ball", "ball", 0, 1),
-          p(3, "FF", 98.6, 4, "swinging_strike", "strike_foul", 0, 2),
-          p(4, "SL", 86.9, 14, "ball", "ball", 1, 2),
-          p(5, "FF", 98.9, 2, "foul", "strike_foul", 2, 2),
-        ],
-        m: {
-          pitch_speed_ou: ou("pitch_speed_ou", 97.8, "over", 97.5, 0.59, 0.021, ALL),
-          pitch_result: cat("pitch_result", [
-            { name: "strike_foul", prob: 0.54, edge: 0.005, conf: 0.60 },
-            { name: "ball", prob: 0.31, edge: -0.008, conf: 0.55 },
-            { name: "in_play", prob: 0.15, edge: 0.003, conf: 0.54 },
-          ], MKT),
-          ab_result: cat("ab_result", [
-            { name: "strikeout", prob: 0.38, edge: 0.020, conf: 0.62 },
-            { name: "walk", prob: 0.10, edge: -0.005, conf: 0.54 },
-            { name: "hit", prob: 0.18, edge: -0.010, conf: 0.56 },
-            { name: "out", prob: 0.34, edge: -0.005, conf: 0.56 },
-          ], MKT),
-          ab_pitches_ou: ou("ab_pitches_ou", 5.4, "under", 5.5, 0.51, -0.008, ALL),
-        },
-      },
-      {
-        gamePk: 746833, away: "TBR", home: "TOR", label: "TBR @ TOR",
-        venue: "Rogers Centre", weather: "72°F · Roof closed · Dome", score: { away: 0, home: 3 }, stale: true,
-        pitcher: { name: "Shane McClanahan", hand: "L", meta: "3H 2SO · ERA 3.66" },
-        batter: { name: "Vladimir Guerrero Jr.", hand: "R", meta: "1/2 .291 · OPS .848" },
-        onDeck: "B. Bichette",
-        inning: 5, half: "▼", count: "0-1", outs: 1,
-        runners: { first: false, second: false, third: false },
-        pitchCountPa: 1, pitchCountGame: 64, lastPitch: ago(34),
-        pitches: [p(1, "FF", 94.2, 5, "called_strike", "strike_foul", 0, 0)],
-        m: {
-          pitch_speed_ou: ou("pitch_speed_ou", 93.8, "under", 94.5, 0.66, 0.054, ALL),
-          pitch_result: cat("pitch_result", [
-            { name: "strike_foul", prob: 0.44, edge: 0.015, conf: 0.60 },
-            { name: "ball", prob: 0.36, edge: 0.005, conf: 0.58 },
-            { name: "in_play", prob: 0.20, edge: -0.020, conf: 0.56 },
-          ], MKT),
-          ab_result: cat("ab_result", [
-            { name: "strikeout", prob: 0.22, edge: -0.010, conf: 0.55 },
-            { name: "walk", prob: 0.09, edge: 0.005, conf: 0.54 },
-            { name: "hit", prob: 0.27, edge: 0.030, conf: 0.62 },
-            { name: "out", prob: 0.36, edge: -0.025, conf: 0.57 },
-          ], MKT),
-          ab_pitches_ou: ou("ab_pitches_ou", 4.6, "over", 4.5, 0.54, 0.012, ALL),
-        },
-      },
-    ];
-  }
 
-  // Flatten one best-edge opportunity per game × market for the board.
-  function buildEdges(games) {
-    const out = [];
-    for (const g of games) {
-      for (const key of Object.keys(MARKETS)) {
-        const m = g.m[key];
-        const meta = MARKETS[key];
-        const pick = meta.kind === "ou"
-          ? `${OUTCOME_LABEL[m.recommendation]} ${m.line}`
-          : OUTCOME_LABEL[m.recommendation];
-        out.push({
-          id: `${g.gamePk}:${key}`, gamePk: g.gamePk, market: key,
-          kind: meta.kind, marketLabel: meta.label, marketShort: meta.short,
-          group: meta.group, pick, recommendation: m.recommendation,
-          modelProb: m.modelProb, edge: m.edge, best: m.best, sources: m.best ? m.sources : [],
-          predictedValue: m.predictedValue, line: m.line, probs: m.probs,
-          stale: !!g.stale,
-        });
-      }
-    }
-    out.sort((a, b) => b.edge - a.edge);
-    return out;
-  }
 
-  // Recent settled at-bats (proof points for the data feed).
-  const RECENT = [
-    { date: "2026-06-16", matchup: "TOR @ CLE", batter: "V. Guerrero Jr.", pick: "Strikeout",      market: "ab_result",     pitches: 5, price: -120, result: "win" },
-    { date: "2026-06-16", matchup: "MIA @ CHC", batter: "M. Machado",      pick: "Next Pitch Over 95.5", market: "pitch_speed_ou", pitches: 1, price: -110, result: "win" },
-    { date: "2026-06-16", matchup: "BAL @ TB",  batter: "G. Henderson",    pick: "Hit",            market: "ab_result",     pitches: 4, price: 140,  result: "loss" },
-    { date: "2026-06-15", matchup: "STL @ MIL", batter: "W. Contreras",    pick: "Pitches Under 4.5", market: "ab_pitches_ou", pitches: 3, price: -105, result: "win" },
-    { date: "2026-06-15", matchup: "KC @ MIN",  batter: "B. Witt Jr.",     pick: "Strikeout",      market: "ab_result",     pitches: 6, price: 105,  result: "win" },
-    { date: "2026-06-15", matchup: "TEX @ LAA", batter: "M. Trout",        pick: "Strike or Foul", market: "pitch_result",  pitches: 1, price: -125, result: "push" },
-    { date: "2026-06-14", matchup: "BOS @ NYY", batter: "A. Judge",        pick: "Walk",           market: "ab_result",     pitches: 7, price: 240,  result: "loss" },
-    { date: "2026-06-14", matchup: "SF @ COL",  batter: "T. Estrada",      pick: "Pitches Over 4.5", market: "ab_pitches_ou", pitches: 6, price: -110, result: "win" },
-  ];
 
-  const RECORD = {
-    overall: { wins: 312, losses: 248, pushes: 19, units: 41.6, roi: 7.2, picks: 579 },
-    last30: { wins: 41, losses: 31, pushes: 3, units: 6.8, roi: 9.1, picks: 75 },
-  };
 
-  // ── live tick: subtle drift on edges/predicted, flag changed ids ────────
-  function tick(games) {
-    const r = (lo, hi) => lo + Math.random() * (hi - lo);
-    const flash = new Set();
-    for (const g of games) {
-      if (g.stale) continue;
-      for (const key of Object.keys(g.m)) {
-        const m = g.m[key];
-        if (m.kind === "ou" && Math.random() < 0.5) {
-          const old = m.predictedValue;
-          const step = key === "pitch_speed_ou" ? 0.15 : 0.1;
-          m.predictedValue = +(old + r(-step, step)).toFixed(2);
-          if (Math.abs(m.predictedValue - old) > 0.04) flash.add(`${g.gamePk}:${key}:pred`);
-        }
-        const pool = m.kind === "ou" ? [m] : m.outcomes;
-        for (const o of pool) {
-          for (const s of o.sources) {
-            const oldE = s.edge;
-            s.impliedProb = clampP(s.impliedProb + r(-0.004, 0.004));
-            s.price = americanFromImplied(s.impliedProb);
-            s.edge = calcEdge(o.modelProb, s.impliedProb);
-            if (Math.abs(s.edge - oldE) > 0.002) flash.add(`${g.gamePk}:${key}:edge`);
-          }
-          o.best = bestOf(o.sources);
-        }
-        if (m.kind === "ou") { m.edge = m.best.edge; }
-        else {
-          const rec = m.outcomes.reduce((a, b) => (b.edge > a.edge ? b : a), m.outcomes[0]);
-          m.recommendation = rec.name; m.recOutcome = rec; m.modelProb = rec.modelProb;
-          m.edge = rec.edge; m.best = rec.best;
-        }
-      }
-    }
-    return flash;
-  }
 
   // ── upcoming (on-deck batter) markets ───────────────────────────────────
   // The Live/Upcoming toggle lets users pre-scout the next hitter. We derive an
@@ -416,35 +113,6 @@ window.PITCHHAWK = (function () {
       c.edge = rec.best ? rec.best.edge : null; c.best = rec.best;
     }
     return c;
-  }
-  // Per-pitch pre-pitch model reads (predicted speed + strike/ball/in-play
-  // probabilities). Sample-data only and no longer rendered: the live backend
-  // serves just the latest next-pitch prediction per market (no per-past-pitch
-  // history), so the board shows the model's pitch-level read as a per-game
-  // "Next pitch · model read" block instead of per-row feed columns.
-  const PITCH_BASE_SPEED = { FF: 96.2, SI: 94.1, FC: 90.4, SL: 85.6, CB: 80.2, CH: 84.8, SP: 89.1, KC: 82.3, CU: 79.4 };
-  function enrichPitchPredictions(games) {
-    for (const g of games) {
-      const rnd = seeded(g.gamePk * 31 + 7);
-      for (const pt of g.pitches) {
-        const base = PITCH_BASE_SPEED[pt.type] != null ? PITCH_BASE_SPEED[pt.type] : 90;
-        pt.predSpeed = +(base + (rnd() - 0.5) * 2.2).toFixed(1);
-        let a = 0.40 + rnd() * 0.24;      // strike / foul
-        let b = 0.22 + rnd() * 0.20;      // ball
-        let c = Math.max(0.05, 1 - a - b); // in play
-        const sum = a + b + c;
-        pt.pStrike = +(a / sum).toFixed(2);
-        pt.pBall = +(b / sum).toFixed(2);
-        pt.pInPlay = +(1 - pt.pStrike - pt.pBall).toFixed(2);
-        // Per-value model edge (model prob − market implied). Some clear the
-        // highlight threshold, some don't — deterministic per game.
-        const edge = () => +(rnd() * 0.11 - 0.03).toFixed(3); // −0.030 … +0.080
-        pt.predSpeedEdge = edge();
-        pt.pStrikeEdge = edge();
-        pt.pBallEdge = edge();
-        pt.pInPlayEdge = edge();
-      }
-    }
   }
 
   function enrichUpcoming(games) {
@@ -735,23 +403,6 @@ window.PITCHHAWK = (function () {
     return await res.json();
   }
 
-  // Per-pitch graded predictions for one day, paginated.
-  //
-  // Replaces the Data Feed's old session-accumulated log. The server has been
-  // making and grading these predictions all along; nothing served them, so
-  // the browser rebuilt a partial copy from whatever it happened to watch.
-  // Every user now gets the same rows for the same day.
-  async function loadPitches(apiBase, params, fetchImpl) {
-    const f = fetchImpl || ((...a) => fetch(...a));
-    const qs = new URLSearchParams();
-    Object.keys(params || {}).forEach((k) => {
-      const v = params[k];
-      if (v != null && v !== "" && v !== "all") qs.set(k, v);
-    });
-    const res = await f(`${apiBase}/pitches?${qs.toString()}`);
-    if (!res.ok) throw new Error(`/pitches ${res.status}`);
-    return await res.json();
-  }
 
   // Every prediction made in ONE game, all at-bats, newest first.
   //
@@ -785,77 +436,16 @@ window.PITCHHAWK = (function () {
     return rows;
   }
 
-  // Server rows -> the per-at-bat summaries the board's "Earlier at-bats" strip
-  // renders. One entry per plate appearance, newest first.
-  //
-  // Everything here was already computed server-side: `result` is set by the
-  // settle job, so a call's correctness is read rather than re-derived in the
-  // browser. That is what makes two people watching the same game see the same
-  // numbers.
-  function paSummaries(rows) {
-    const byAb = new Map();
-    (rows || []).forEach((r) => {
-      if (r == null || r.at_bat_index == null) return;
-      let g = byAb.get(r.at_bat_index);
-      if (!g) { g = { abi: r.at_bat_index, rows: [] }; byAb.set(r.at_bat_index, g); }
-      g.rows.push(r);
-    });
 
-    const out = [];
-    [...byAb.keys()].sort((a, b) => b - a).forEach((abi) => {
-      const rs = byAb.get(abi).rows;
-      const of = (m) => rs.filter((r) => r.market === m);
-      const cls = of("pitch_result");
-      const velo = of("pitch_speed_ou");
-      const abr = of("ab_result")[0] || null;
-      const abp = of("ab_pitches_ou")[0] || null;
-
-      // Positions are 0-based and one per thrown pitch, so the count is the
-      // highest position seen plus one.
-      const positions = cls.map((r) => r.pitch_number).filter((n) => n != null);
-      const pitches = positions.length ? Math.max.apply(null, positions) + 1 : rs.length;
-
-      const graded = cls.filter((r) => r.result != null);
-      const right = graded.filter((r) => r.result === "win").length;
-      const errs = velo
-        .filter((r) => r.error != null)
-        .map((r) => +r.error);
-      const avgErr = errs.length ? errs.reduce((a, b) => a + b, 0) / errs.length : null;
-      const ratio = graded.length ? right / graded.length : null;
-
-      out.push({
-        abi,
-        batter: (abr && abr.batter_name) || (cls[0] && cls[0].batter_name) || "—",
-        pitches,
-        projPitches: abp && abp.predicted_value != null ? +abp.predicted_value : null,
-        outcomeLabel: (abr && abr.actual_label) || "Unresolved",
-        call: abr ? abr.recommendation : null,
-        callProb: abr && abr.confidence != null ? +abr.confidence : null,
-        // Null, not false, while the at-bat is still unsettled — an ungraded
-        // call must never render as a miss.
-        callOk: abr && abr.result != null ? abr.result === "win" : null,
-        avgErr,
-        right,
-        gradedN: graded.length,
-        ratio,
-      });
-    });
-    return out;
-  }
-
-  // Live-only boot: the board starts empty and fills from loadLive(). The
-  // sample generators above are kept for local demos (call buildGames() +
-  // enrichUpcoming/enrichPitchPredictions by hand); RECENT/RECORD sample
-  // literals are likewise not exported until graded picks ship in the UI.
+  // Live-only boot: the board starts empty and fills from loadLive(). There is
+  // no offline fallback -- the synthetic demo generators that used to sit here
+  // were never wired into the load path and were removed in 2026-08.
   const games = [];
   return {
-    SOURCES, MARKETS, OUTCOME_LABEL, RECENT: [], RECORD: null,
-    games, edges: [], buildEdges,
-    tick, impliedFromAmerican, americanFromImplied, calcEdge,
+    MARKETS, OUTCOME_LABEL,
+    games,
     mlbDate,
-    loadLive, loadBoard, loadFeed, loadPitches, loadGamePitches, paSummaries,
-    loadAccuracy,
-    buildGames, enrichUpcoming, enrichPitchPredictions,
+    loadLive, loadBoard, loadFeed, loadGamePitches, loadAccuracy,
   };
 })();
 

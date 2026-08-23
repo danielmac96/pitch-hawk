@@ -40,7 +40,12 @@ supabase db query "insert into app_secrets(key,value) values
 echo "   cron secret stored (len=${#CRON_SECRET}); functions_base_url=$FUNCTIONS_URL"
 
 echo "== Deploying edge functions"
-for fn in api backfill daily-ingest live-poll odds-ingest settle; do
+# Keep this list in sync with .github/workflows/{ci,deploy-supabase}.yml, which
+# both iterate the same eight. game-predict and backfill-predictions were
+# missing here while present in both workflows, so a project provisioned by
+# this script -- and only by this script -- came up with no pregame board and
+# no way to backfill a prediction hole.
+for fn in api backfill backfill-predictions daily-ingest game-predict live-poll odds-ingest settle; do
   echo "   -> $fn"
   supabase functions deploy "$fn" --no-verify-jwt --project-ref "$REF"
 done

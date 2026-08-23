@@ -16,8 +16,6 @@ from datetime import date, timedelta
 import pandas as pd
 
 # Missing-value rates, in percent of rows.
-MISSING_WARN_PCT = 1.0
-MISSING_ALERT_PCT = 5.0
 
 # ── the anomaly rule ────────────────────────────────────────────────────────
 # Every "is this day normal?" judgement in the dashboard runs through
@@ -87,7 +85,6 @@ LAG_JUDGE_DAYS = 14
 
 # Used when MAD is exactly zero, where a z score is undefined: judge on relative
 # deviation alone, failing at three times the floor.
-DRIFT_ALERT_PCT = REL_FLOOR_PCT
 
 # Worst first. Every status sort and every "worst of" in the app uses this.
 STATUS_RANK: dict[str, int] = {"fail": 0, "warn": 1, "pass": 2}
@@ -172,31 +169,6 @@ def summarize(m: dict, dataset: str) -> DatasetSummary:
     )
 
 
-def daily_counts(m: dict, dataset: str) -> pd.DataFrame:
-    """Rows per day for one dataset: the ingestion record, one row per file.
-
-    Sourced from the manifest rather than a `group by game_date`, which makes
-    it complete over all 2,014 days at the cost of a single GET. A day absent
-    here has no file at all, which is the failure the section exists to find.
-    """
-    entries = m.get("datasets", {}).get(dataset, {})
-    rows = [
-        {
-            "day": day,
-            "rows": e.get("rows", 0),
-            "games": e.get("games", 0),
-            "bytes": e.get("bytes", 0),
-            "ingested_at": e.get("ingested_at"),
-            "verified": bool(e.get("verified_at") and e.get("verified_by")),
-        }
-        for day, e in sorted(entries.items())
-    ]
-    df = pd.DataFrame(
-        rows, columns=["day", "rows", "games", "bytes", "ingested_at", "verified"]
-    )
-    if not df.empty:
-        df["day"] = pd.to_datetime(df["day"]).dt.date
-    return df
 
 
 def season_gaps(days: list[str]) -> pd.DataFrame:
@@ -242,39 +214,8 @@ def season_gaps(days: list[str]) -> pd.DataFrame:
     )
 
 
-def missingness(counts: dict[str, int], total_rows: int, dataset: str) -> pd.DataFrame:
-    """Per-column null rate from `count(col)` results and the row total."""
-    structural = STRUCTURAL_NULL_COLUMNS.get(dataset, frozenset())
-    rows = []
-    for column, non_null in counts.items():
-        missing = max(total_rows - non_null, 0)
-        rows.append(
-            {
-                "column": column,
-                "missing": missing,
-                "missing_pct": (100.0 * missing / total_rows) if total_rows else 0.0,
-                "present": non_null,
-                "structural": column in structural,
-            }
-        )
-    df = pd.DataFrame(
-        rows, columns=["column", "missing", "missing_pct", "present", "structural"]
-    )
-    return df.sort_values("missing_pct", ascending=False, ignore_index=True)
 
 
-def missing_severity(pct: float, structural: bool = False) -> str:
-    """`ok` / `warn` / `alert`, per MISSING_WARN_PCT and MISSING_ALERT_PCT."""
-    if structural:
-        return "ok"
-    if pct > MISSING_ALERT_PCT:
-        return "alert"
-    if pct > MISSING_WARN_PCT:
-        return "warn"
-    return "ok"
-
-
-# ── robust statistics ───────────────────────────────────────────────────────
 
 
 def mad(values: pd.Series) -> float:

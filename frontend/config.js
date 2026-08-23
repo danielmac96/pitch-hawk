@@ -1,20 +1,19 @@
 // Deployment config — loaded before the app scripts.
 //
-// PITCH_EDGE_API points the frontend at the public read API. In production
-// that's the Supabase `api` edge function (no auth needed — it serves only
-// public data); for local dev against the FastAPI backend, use
-// "http://localhost:8080".
+// PITCH_EDGE_API points the frontend at the public read API: the Supabase
+// `api` edge function. No auth needed — it serves only public data.
 //
-// The provisioning step (scripts/provision.sh / docs/DEPLOY.md) replaces the
-// placeholder below with https://<ref>.supabase.co/functions/v1. Until then,
-// we leave PITCH_EDGE_API unset so the app runs cleanly on bundled sample
-// data instead of firing doomed fetches at an unresolved placeholder.
+// The build step (scripts/build_frontend.sh, run by Vercel) replaces the
+// placeholder below with https://<ref>.supabase.co/functions/v1. The guard
+// keeps an unsubstituted placeholder from becoming a doomed fetch at every
+// poll; the board then reports that it cannot reach the feed, which is the
+// truth. There is no offline fallback.
 (function () {
   var base = "{{SUPABASE_FUNCTIONS_URL}}"; // substituted at deploy time
   if (base.indexOf("{{") === -1 && base) {
     window.PITCH_EDGE_API = window.PITCH_EDGE_API || base + "/api";
   }
-  // else: leave window.PITCH_EDGE_API as-is (default sample-data mode).
+  // else: the placeholder was never substituted — leave the API unset.
 
   // Feature flags. `wageringInsights` gates every odds/edge/picks surface:
   // sportsbook source filters, edge highlighting and columns, settled-pick

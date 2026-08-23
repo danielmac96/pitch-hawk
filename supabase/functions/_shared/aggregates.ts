@@ -14,8 +14,6 @@
 // deno-lint-ignore no-explicit-any
 type Db = any;
 
-export type Found<T> = { found: boolean; data: T };
-
 /** Ordered so the UI can render career → season → d30 without re-sorting. */
 const SCOPE_ORDER: Record<string, number> = { career: 0, season: 1, d30: 2 };
 

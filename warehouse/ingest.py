@@ -20,6 +20,7 @@ from datetime import date, datetime, timedelta, timezone
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from warehouse.store import ObjectStore
 from warehouse import manifest
 from warehouse.config import (
     DATASETS, KEY_COLUMNS, SCHEMAS, object_key, snapshot_key,
@@ -70,7 +71,7 @@ def daterange(start: str, end: str) -> list[str]:
     return out
 
 
-def ingest_day(store, day: str, *, with_boxscore: bool = True,
+def ingest_day(store: ObjectStore, day: str, *, with_boxscore: bool = True,
                workers: int = WORKERS, m: dict | None = None) -> dict:
     """Fetch, flatten and write one day. Returns manifest facts per dataset.
 
@@ -137,7 +138,7 @@ def ingest_day(store, day: str, *, with_boxscore: bool = True,
             "player_ids": player_ids}
 
 
-def ingest_range(store, start: str, end: str, *, with_boxscore: bool = True,
+def ingest_range(store: ObjectStore, start: str, end: str, *, with_boxscore: bool = True,
                  workers: int = WORKERS, skip_existing: bool = True,
                  on_day=None, flush_every: int = 25) -> dict:
     """Ingest a date window, skipping days already in the manifest.
@@ -184,7 +185,7 @@ def ingest_range(store, start: str, end: str, *, with_boxscore: bool = True,
     return totals
 
 
-def refresh_players(store, ids: list[int]) -> int:
+def refresh_players(store: ObjectStore, ids: list[int]) -> int:
     """Merge any unseen player ids into the players snapshot.
 
     Merge-only: a player already in the snapshot is never re-fetched. The

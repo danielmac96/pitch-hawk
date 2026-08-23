@@ -14,7 +14,7 @@ Two structural decisions, both load-bearing:
    is what makes a 600-fit sweep finish in seconds instead of costing 30M R2
    reads.
 
-Nothing here writes to R2. Caches are local. See docs/plans/ml-workbench-2026-08-08.md §9.
+Nothing here writes to R2. Caches are local.
 """
 
 from __future__ import annotations

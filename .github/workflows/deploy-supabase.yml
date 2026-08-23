@@ -57,7 +57,14 @@ jobs:
       # --include-all applies migrations that sort before the last one already
       # recorded on remote. Needed because some migrations were historically
       # applied out of order (via the dashboard/MCP), leaving earlier versions
-      # unapplied behind a later one. All migrations here are idempotent.
+      # unapplied behind a later one.
+      #
+      # All but one are idempotent: 20260802000003_hot_window_swap.sql is a
+      # one-shot table swap (at_bats -> at_bats_old, at_bats_new -> at_bats)
+      # and fails with `relation "at_bats_old" already exists` if it runs a
+      # second time. That is safe here -- push only applies versions the remote
+      # has not recorded -- but do not hand-run that file against a project
+      # that already has it.
       - name: Push migrations
         run: supabase db push --include-all --password "${{ secrets.SUPABASE_DB_PASSWORD }}"
 

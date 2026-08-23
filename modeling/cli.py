@@ -145,7 +145,7 @@ def cmd_baseline(args) -> int:
 
 
 def cmd_list(args) -> int:
-    from backend.db.client import get_client
+    from warehouse.config import supabase_client as get_client
     rows = (get_client().table("model_params")
             .select("market, version, is_active, activated_at, metrics")
             .order("market").execute().data)
@@ -161,7 +161,7 @@ def cmd_show(args) -> int:
 
 
 def cmd_status(args) -> int:
-    from backend.db.client import get_client
+    from warehouse.config import supabase_client as get_client
     client = get_client()
     for market in all_markets():
         row = registry.active(market)
