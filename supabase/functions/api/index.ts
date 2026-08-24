@@ -199,7 +199,7 @@ async function health(): Promise<Response> {
 async function games(): Promise<Response> {
   const today = mlbToday();
   const { data } = await svc().from("games")
-    .select("game_pk,status,home_team,away_team,home_abbr,away_abbr,start_ts,home_score,away_score")
+    .select("game_pk,status,home_team,away_team,home_abbr,away_abbr,start_ts,home_score,away_score,venue_name")
     .eq("official_date", today).order("start_ts");
   return json(data ?? []);
 }
@@ -226,7 +226,7 @@ async function slatePayloads(date: string): Promise<any[]> {
   const db = svc();
   const { data: gameRows } = await db.from("games")
     .select("game_pk,status,start_ts,home_team,away_team,home_abbr,away_abbr," +
-      "home_team_id,away_team_id,home_score,away_score")
+      "home_team_id,away_team_id,home_score,away_score,venue_name")
     .eq("official_date", date).order("start_ts");
   const slate = gameRows ?? [];
   if (!slate.length) return [];
@@ -405,6 +405,11 @@ async function slatePayloads(date: string): Promise<any[]> {
       game_label: `${g.away_team ?? "Away"} @ ${g.home_team ?? "Home"}`,
       away_abbr: g.away_abbr ?? null,
       home_abbr: g.home_abbr ?? null,
+      // The slate pill names the park. games.venue_name has always been
+      // populated by the schedule ingest; nothing served it, so the board had
+      // to wait for the nightly game_context publish to learn where a game
+      // being played right now was being played.
+      venue: g.venue_name ?? null,
       home_team_id: g.home_team_id ?? null,
       away_team_id: g.away_team_id ?? null,
       // Ids are additive (Phase 5) and exist so the Data Feed can look the

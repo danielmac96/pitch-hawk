@@ -30,7 +30,22 @@ window.PH_COPY = (function () {
 
     // home · today's games
     slateTitle: "Today's games",
-    slateSub: "Live now first, then up next, then finals — live model reads open with each game window.",
+    slateSub: "Live now first, then finals, then up next with time to first pitch.",
+    slateHint: "latest inning first · tap a game for the live feed",
+    slateHintShort: "latest inning first",
+    // Why a metadata field is a dash. Two notes, because the reason differs:
+    // a finished game is waiting on the nightly publish, a scheduled one is
+    // waiting on the lineup card.
+    slateMetaNote:
+      "Context is published by the nightly warehouse job — dashes mean not yet " +
+      "written for this game.",
+    slateMetaNoteSched:
+      "Weather and umpire land at lineup post; a dash means the feed hasn't " +
+      "published it yet.",
+    // The bases diamond is always empty because the live feed carries no
+    // runners. Said out loud rather than letting an empty diamond read as a
+    // claim that the bases are clear.
+    runnersNote: "Runners on base are not in the live feed yet — every base shown empty.",
 
     // home · live-board promo
     promoBadge: "The live board",

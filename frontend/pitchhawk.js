@@ -119,6 +119,10 @@
         // survives the 8s poll rebuilding every row underneath it. Filters are
         // per game, so scoping one game never narrows another.
         openG: {}, openAb: {}, phFilters: {},
+        // Home slate pills. `homeOpen` is the metadata chevron, keyed by
+        // game_pk; `gameCtx` caches GET /game/{pk}/context per game so the
+        // tier is fetched once on first expand rather than on every poll.
+        homeOpen: {}, gameCtx: {},
         // Every micro-market prediction, and the slate it belongs to, keyed by
         // America/New_York date. Per date rather than one "current day": the
         // Live Feed is always about today while the Data Feed walks the
@@ -235,6 +239,29 @@
         }
         case "goHome": return this.setState({ view: "home" });
         case "goLive": return this.setState({ view: "live" });
+        // A Home pill's body: open the Live Feed on that game. The pill's own
+        // open state is `openG`, which the Live Feed already reads, so the
+        // game arrives expanded.
+        case "goLiveGame": {
+          const pk = String(arg);
+          this.setState({
+            view: "live",
+            openG: Object.assign({}, this.state.openG, { [pk]: true }),
+          });
+          this.syncDay(false, "live");
+          this.scrollToPill(pk);
+          return;
+        }
+        // The metadata tier. Context is fetched on first expand and cached, so
+        // collapsing and re-opening costs nothing and the 8s poll never
+        // re-requests it.
+        case "homeMeta": {
+          const o = Object.assign({}, this.state.homeOpen);
+          o[arg] = !o[arg];
+          this.setState({ homeOpen: o });
+          if (o[arg]) this.loadGameContext(arg);
+          return;
+        }
         case "feedDays": {
           this.state.feedF.days = Number(arg) || 30;
           this.state.feedShow = 120;
@@ -339,10 +366,6 @@
         return isNaN(d) ? "TBD" : d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
       };
 
-      const fmtDay = (ts) => {
-        const d = new Date(ts);
-        return isNaN(d) ? "" : d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
-      };
       const fmtDow = (ts) => {
         const d = new Date(ts);
         return isNaN(d) ? "" : d.toLocaleDateString(undefined, { weekday: "short" });
@@ -395,58 +418,18 @@
         </div>
       </div>`;
 
-      // Game slate (GET /games) as a card grid: live first, then upcoming by
-      // first pitch, finals (with final score) last. Scheduled games carry no
-      // status chip — the start time IS the status.
-      const statusRank = (g) => (isLiveStatus(g.status) ? 0 : isFinalStatus(g.status) ? 2 : 1);
-      const display = Array.isArray(sorted)
-        ? sorted.slice().sort((a, b) => statusRank(a) - statusRank(b) || new Date(a.start_ts) - new Date(b.start_ts))
-        : sorted;
-      let slateCards;
-      if (display === null) {
-        slateCards = `<div style="padding:1.4rem 1rem;color:var(--muted);font-style:italic;">Loading today's games…</div>`;
-      } else if (!display.length) {
-        slateCards = `<div style="padding:1.4rem 1rem;color:var(--muted);">No MLB games on today's schedule.</div>`;
-      } else {
-        const cards = display.map((g) => {
-          const liveG = isLiveStatus(g.status);
-          const finalG = isFinalStatus(g.status);
-          const hasScore = g.away_score != null && g.home_score != null;
-          const chip = liveG
-            ? `<span style="font-size:.64rem;font-weight:800;letter-spacing:.05em;padding:.18rem .5rem;border-radius:6px;color:var(--good-strong);background:var(--good-bg);white-space:nowrap;">● LIVE</span>`
-            : finalG
-              ? `<span style="font-size:.64rem;font-weight:700;letter-spacing:.05em;padding:.18rem .5rem;border-radius:6px;color:var(--muted);background:var(--surface-2);white-space:nowrap;">FINAL</span>`
-              : "";
-          // Big slot: score for live/final games, first-pitch time for scheduled.
-          const big = (liveG || finalG) && hasScore
-            ? `<span style="font-family:'IBM Plex Mono',monospace;font-size:1.45rem;font-weight:700;line-height:1;${finalG ? "" : "color:var(--good-strong);"}">${esc(g.away_score)}<span style="color:var(--vs);font-weight:600;"> – </span>${esc(g.home_score)}</span>`
-            : `<span style="font-family:'IBM Plex Mono',monospace;font-size:1.45rem;font-weight:700;line-height:1;">${esc(fmtTime(g.start_ts))}</span>`;
-          const when = (liveG || finalG) && hasScore
-            ? `${fmtDay(g.start_ts)} · ${fmtTime(g.start_ts)}`
-            : fmtDay(g.start_ts);
-          const foot = liveG
-            ? `<button data-act="goLive" style="border:0;background:transparent;color:var(--accent);font-family:inherit;font-weight:700;font-size:.8rem;cursor:pointer;padding:0;text-align:left;">Watch live →</button>`
-            : `<span style="font-size:.74rem;color:var(--muted);">${esc(g.away_team)} at ${esc(g.home_team)}</span>`;
-          return `
-          <div style="display:flex;flex-direction:column;gap:.45rem;background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:.85rem 1rem;box-shadow:0 1px 2px rgba(15,27,45,.04),0 6px 16px rgba(15,27,45,.05);${finalG ? "opacity:.82;" : ""}">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:.5rem;">
-              <span style="font-weight:800;font-size:.98rem;">${esc(g.away_abbr || g.away_team)} <span style="color:var(--vs);font-weight:500;">@</span> ${esc(g.home_abbr || g.home_team)}</span>
-              ${chip}
-            </div>
-            ${big}
-            <span style="font-size:.72rem;color:var(--faint);font-weight:600;">${esc(when)}</span>
-            ${foot}
-          </div>`;
-        }).join("");
-        slateCards = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(215px,100%),1fr));gap:.8rem;">${cards}</div>`;
-      }
+      // The slate as one row pill per game, grouped live (latest inning
+      // first) -> final -> upcoming. The pill is a shared method: the Live
+      // Feed draws the same game with the same status chip, score cell and
+      // game-level lines.
       const slateBlock = `
       <div style="margin-bottom:1.6rem;">
-        <div style="margin-bottom:1rem;">
+        <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin-bottom:.2rem;">
           <h2 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.slateTitle)}</h2>
-          <p style="margin:.35rem 0 0;color:var(--muted);font-size:.95rem;">${esc(COPY.slateSub)}</p>
+          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:${this.mob() ? 10 : 11.5}px;color:var(--faint);">${esc(this.mob() ? COPY.slateHintShort : COPY.slateHint)}</span>
         </div>
-        ${slateCards}
+        <p style="margin:.35rem 0 14px;color:var(--muted);font-size:.95rem;">${esc(COPY.slateSub)}</p>
+        ${this.slatePillsHtml(this.mob())}
       </div>`;
       // live board promo
       const promo = `
@@ -566,6 +549,340 @@
       if (mins <= 0) return `${clock} · starting`;
       if (mins < 60) return `${clock} · in ${mins}m`;
       return `${clock} · in ${Math.floor(mins / 60)}h ${mins % 60}m`;
+    }
+    // Just the clock, and just the countdown — the pill puts them in different
+    // cells (chip and sub-line), so firstPitch()'s combined string is no use.
+    clockOf(ts) {
+      const t = Date.parse(ts || "");
+      return isFinite(t)
+        ? new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+        : null;
+    }
+    untilText(ts) {
+      const t = Date.parse(ts || "");
+      if (!isFinite(t)) return null;
+      const mins = Math.round((t - Date.now()) / 60000);
+      if (mins <= 0) return "starting";
+      if (mins < 60) return `in ${mins}m`;
+      return `in ${Math.floor(mins / 60)}h ${String(mins % 60).padStart(2, "0")}m`;
+    }
+    // /live carries the half as ▲/▼; the pill's status chip spells it.
+    halfWord(half) { return half === "▼" ? "BOT" : half === "▲" ? "TOP" : ""; }
+
+    // ══ SLATE PILLS (Home · reused by the Live Feed) ══════════════════════
+    // One row per game. Everything the pill draws comes from the /live slate
+    // payload, which is the whole schedule with an explicit phase per game —
+    // /games carries no inning, count or game-level call, so it is only the
+    // cold-start fallback below.
+    homeSlate() {
+      const games = PH.games || [];
+      if (games.length) {
+        return games.map((g) => {
+          const live = g.phase === "live";
+          const has = g.score && g.score.away !== "—" && g.score.home !== "—";
+          return {
+            pk: String(g.gamePk), away: g.away, home: g.home,
+            phase: g.phase, startTs: g.startTs, venue: g.venue || null,
+            inning: live ? g.inning : null,
+            half: live ? g.half : null,
+            // Pregame rows arrive with a defaulted "0-0" / 0 out; showing them
+            // on a game that has not started is a fabricated situation.
+            count: live ? g.count : null,
+            outs: live && g.outs != null ? g.outs : null,
+            // games.home_score/away_score are 0, not null, before first pitch,
+            // so a scheduled game reported a 0–0 score it had not played.
+            score: has && g.phase !== "pregame" ? `${g.score.away} – ${g.score.home}` : null,
+            ml: (g.m && g.m.game_moneyline) || null,
+            tot: (g.m && g.m.game_total) || null,
+            modelVersion: g.modelVersion || null,
+          };
+        });
+      }
+      // Cold start, before the first /live or /board lands: /games is enough
+      // for teams, status, score and first pitch. Everything else is absent,
+      // and renders as absent.
+      if (!Array.isArray(SLATE)) return null;
+      return SLATE.map((g) => {
+        const has = g.away_score != null && g.home_score != null;
+        const phase = isLiveStatus(g.status) ? "live" : isFinalStatus(g.status) ? "final" : "pregame";
+        return {
+          pk: String(g.game_pk),
+          away: g.away_abbr || g.away_team, home: g.home_abbr || g.home_team,
+          phase,
+          startTs: g.start_ts, venue: g.venue_name || null,
+          inning: null, half: null, count: null, outs: null,
+          score: has && phase !== "pregame" ? `${g.away_score} – ${g.home_score}` : null,
+          ml: null, tot: null, modelVersion: null,
+        };
+      });
+    }
+
+    // Live latest-inning-first (bottom 9 above top 9 — strict inning order, a
+    // blowout is not demoted), then finals as returned, then upcoming by first
+    // pitch.
+    slateGroups(rows) {
+      const of = (p) => (rows || []).filter((g) => g.phase === p);
+      const innKey = (g) => (g.inning == null ? -1 : g.inning * 2 + (g.half === "▼" ? 1 : 0));
+      return [
+        { title: "LIVE NOW", fg: this.C.grn, games: of("live").slice().sort((a, b) => innKey(b) - innKey(a)) },
+        { title: "FINAL", fg: this.C.mut, games: of("final") },
+        {
+          title: "UPCOMING", fg: this.C.blue,
+          games: of("pregame").slice().sort((a, b) =>
+            Date.parse(a.startTs || 0) - Date.parse(b.startTs || 0)),
+        },
+      ];
+    }
+
+    // Status chip: the inning for a live game, FINAL, or the first-pitch clock.
+    slateChipHtml(g, mobile) {
+      const C = this.C;
+      let text, fg, bg;
+      if (g.phase === "live") {
+        const inn = g.inning == null ? "LIVE" : `${this.halfWord(g.half)} ${g.inning}`.trim();
+        text = `● ${inn}`; fg = C.grn; bg = "rgba(74,222,128,.13)";
+      } else if (g.phase === "final") {
+        text = "FINAL"; fg = C.mut; bg = C.chip;
+      } else {
+        text = this.clockOf(g.startTs) || "TBD"; fg = C.blue; bg = "#16294a";
+      }
+      return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:${mobile ? 9.5 : 10}px;font-weight:800;letter-spacing:.05em;padding:${mobile ? "2px 6px" : "3px 7px"};border-radius:${mobile ? 5 : 6}px;justify-self:start;white-space:nowrap;color:${fg};background:${bg};">${esc(text)}</span>`;
+    }
+
+    // The bases diamond. Every base renders empty, and says why: /live carries
+    // no runners (pitchhawk-data.js hard-codes all three false), so a filled
+    // base would be an invention and an unmarked empty one a false claim.
+    basesHtml(mobile) {
+      const C = this.C;
+      const box = mobile ? { w: 28, h: 21, s: 9, o: 10, l: 18, m: 9 } : { w: 32, h: 24, s: 10, o: 11, l: 21, m: 11 };
+      const base = (top, left) =>
+        `<span style="position:absolute;top:${top}px;left:${left}px;width:${box.s}px;height:${box.s}px;transform:rotate(45deg);border:1px solid ${C.bd2};border-radius:2px;background:transparent;"></span>`;
+      return `<span title="${esc(COPY.runnersNote)}" style="position:relative;width:${box.w}px;height:${box.h}px;flex:none;display:block;">
+        ${base(0, box.m)}${base(box.o, mobile ? 0 : 1)}${base(box.o, box.l)}
+      </span>`;
+    }
+
+    // A game-level call — moneyline or total — as pick + probability. Both are
+    // written once before first pitch and never updated, which the caption
+    // says out loud rather than implying a line that moves.
+    gameLineCell(pick, prob, caption, mobile) {
+      const C = this.C;
+      return `<span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+        <span style="display:flex;align-items:baseline;gap:6px;">
+          <b style="font-size:12.5px;font-weight:800;white-space:nowrap;">${esc(pick)}</b>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:${prob == null ? C.faint : this.accColor(prob)};">${this.pct(prob)}</span>
+        </span>
+        <span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;color:${C.faint};white-space:nowrap;">${esc(caption)}</span>
+      </span>`;
+    }
+    // Moneyline recommendation is "home"/"away"; the pill names the side it
+    // picked rather than the word, because the pill is about this game.
+    mlPick(g) {
+      const rec = g.ml && g.ml.recommendation;
+      if (!rec) return { pick: "—", prob: null };
+      return {
+        pick: rec === "home" ? g.home : rec === "away" ? g.away : (this.outLabel(rec) || "—"),
+        prob: g.ml.modelProb,
+      };
+    }
+    // What the two game-level cells are actually showing, which is not what the
+    // handoff assumed. `game_total` is written once by game-predict and never
+    // updated, so it really is a frozen pregame line. `game_moneyline` is NOT:
+    // live-poll writes an MLB live win probability every poll (mlb_winprob_v1)
+    // over the pregame log5 call, and slatePayloads prefers that row — so a
+    // live game's moneyline is a live number and a finished game's is the win
+    // probability at its last pitch. Only a game that has not started shows the
+    // pregame call, and only it is captioned PREGAME.
+    mlCaption(phase) {
+      return phase === "live" ? "MONEYLINE · LIVE"
+        : phase === "final" ? "MONEYLINE · AT FINAL"
+          : "MONEYLINE · PREGAME";
+    }
+    totPick(g) {
+      const rec = g.tot && g.tot.recommendation;
+      if (!rec) return { pick: "—", prob: null };
+      const side = rec === "over" ? "O" : rec === "under" ? "U" : this.outLabel(rec) || "—";
+      const line = g.tot.line == null ? "" : ` ${Number(g.tot.line)}`;
+      return { pick: `${side}${line}`, prob: g.tot.modelProb };
+    }
+
+    // ── the metadata tier ────────────────────────────────────────────────
+    // Written by the nightly warehouse publish, so today's games legitimately
+    // have none. Absent renders as dashes with the note below — never as a
+    // spinner, because there is nothing on the way.
+    async loadGameContext(pk) {
+      const key = String(pk);
+      if (this.state.gameCtx[key]) return;   // fetched, or already in flight
+      this.state.gameCtx = Object.assign({}, this.state.gameCtx, { [key]: { pending: true } });
+      const row = await fetchJson(`/game/${key}/context`);
+      this.setState({
+        gameCtx: Object.assign({}, this.state.gameCtx, {
+          [key]: row ? Object.assign({}, row, { pending: false }) : { pending: false, err: true },
+        }),
+      });
+    }
+    gameMetaPairs(g) {
+      const c = this.state.gameCtx[g.pk] || {};
+      const ok = !!c.found;
+      const txt = (v) => (v == null || v === "" ? "—" : String(v));
+      const weather = ok && c.weather_condition
+        ? `${c.weather_condition}${c.temp_f == null ? "" : ` · ${c.temp_f}°F`}`
+        : null;
+      const wind = ok && c.wind_mph != null
+        ? `${c.wind_mph} mph ${c.wind_direction || ""}`.trim()
+        : null;
+      return [
+        ["STADIUM", txt((ok && c.venue_name) || g.venue)],
+        // No roof column exists in game_context, so this is honestly unknown
+        // for every game rather than pending for today's.
+        ["ROOF", "—"],
+        ["WEATHER", txt(weather)],
+        ["WIND", txt(wind)],
+        ["HP UMPIRE", txt(ok ? c.hp_umpire : null)],
+        ["FIRST PITCH", txt(this.clockOf(g.startTs))],
+        ["ATTENDANCE", txt(ok && c.attendance != null ? Number(c.attendance).toLocaleString() : null)],
+        ["MODEL VERSION", txt(g.modelVersion)],
+      ];
+    }
+    slateMetaHtml(g, mobile) {
+      const C = this.C;
+      const pairs = this.gameMetaPairs(g).map(([k, v]) => `
+        <span style="display:flex;flex-direction:column;gap:${mobile ? 1 : 2}px;min-width:0;">
+          <span style="font-size:${mobile ? 9 : 9.5}px;font-weight:800;letter-spacing:.06em;color:${C.faint};">${esc(k)}</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 12 : 12.5}px;color:${C.txt};overflow:hidden;text-overflow:ellipsis;">${esc(v)}</span>
+        </span>`).join("");
+      const note = g.phase === "pregame" ? COPY.slateMetaNoteSched : COPY.slateMetaNote;
+      const cta = `<button data-act="goLiveGame" data-arg="${esc(g.pk)}" style="border:1px solid ${C.gbd};background:#12301f;color:${C.grn};font-family:inherit;font-weight:700;cursor:pointer;${mobile
+        ? `margin-top:10px;width:100%;min-height:44px;font-size:12px;border-radius:10px;`
+        : `font-size:11.5px;padding:6px 12px;border-radius:999px;`}">Go to Live Feed →</button>`;
+
+      return mobile
+        ? `<div style="border-top:1px solid ${C.bd};background:${C.panel2};padding:10px 11px 11px;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;">${pairs}</div>
+            ${cta}
+            <div style="margin-top:8px;font-size:10.5px;color:${C.faint};line-height:1.5;">${esc(note)}</div>
+          </div>`
+        : `<div style="border-top:1px solid ${C.bd};background:${C.panel2};padding:12px 14px 13px;">
+            <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 22px;">${pairs}</div>
+            <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-top:12px;padding-top:10px;border-top:1px solid ${C.row};">
+              ${cta}<span style="font-size:11px;color:${C.faint};">${esc(note)}</span>
+            </div>
+          </div>`;
+    }
+
+    // ── the pill ─────────────────────────────────────────────────────────
+    slatePillHtml(g, mobile) {
+      const C = this.C;
+      const open = !!this.state.homeOpen[g.pk];
+      const live = g.phase === "live";
+      const final = g.phase === "final";
+      const ml = this.mlPick(g), tot = this.totPick(g);
+      const label = `${g.away} @ ${g.home}`;
+      const until = g.phase === "pregame" ? this.untilText(g.startTs) : null;
+      const sub = [g.venue, until].filter(Boolean).join(" · ") || "—";
+      const scoreFg = live ? C.txt : final ? C.dim : C.faint;
+      const scoreSub = live
+        ? (g.inning == null ? "live" : `${this.halfWord(g.half).toLowerCase()} ${g.inning}`)
+        : final ? "final" : "first pitch";
+      const cta = live ? "Live feed →" : final ? "Recap →" : "Preview →";
+      const chev = open ? "▾" : "▸";
+      const jump = `data-act="goLiveGame" data-arg="${esc(g.pk)}"`;
+      const chevBtn = (style) =>
+        `<button data-act="homeMeta" data-arg="${esc(g.pk)}" title="Game metadata" aria-expanded="${open}" style="${style}border:0;background:transparent;color:${C.mut};font-weight:700;cursor:pointer;line-height:1;">${chev}</button>`;
+
+      if (mobile) {
+        return `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;">
+          <div style="display:flex;flex-direction:column;gap:7px;padding:10px 11px;">
+            <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+              ${this.slateChipHtml(g, true)}
+              <button ${jump} style="border:0;background:transparent;padding:0;cursor:pointer;font-family:inherit;font-size:13px;font-weight:800;color:${C.txt};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;">${esc(label)}</button>
+              <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:700;color:${scoreFg};white-space:nowrap;">${esc(g.score || "—")}</span>
+              ${chevBtn("font-size:13px;padding:6px 2px;")}
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+              ${this.basesHtml(true)}
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.dim};white-space:nowrap;">${esc(g.count || "—")} · ${esc(g.outs == null ? "—" : `${g.outs} out`)}</span>
+              <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:${C.faint};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;">${esc(sub)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:14px;flex-wrap:wrap;padding-top:7px;border-top:1px solid ${C.row};">
+              <span title="${esc(this.mlCaption(g.phase))}" style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:9px;font-weight:800;color:${C.faint};">ML</span><b style="font-size:12px;font-weight:800;">${esc(ml.pick)}</b><span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${ml.prob == null ? C.faint : this.accColor(ml.prob)};">${this.pct(ml.prob)}</span></span>
+              <span style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:9px;font-weight:800;color:${C.faint};">TOT</span><b style="font-size:12px;font-weight:800;">${esc(tot.pick)}</b><span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${tot.prob == null ? C.faint : this.accColor(tot.prob)};">${this.pct(tot.prob)}</span></span>
+              <button ${jump} style="margin-left:auto;border:0;background:transparent;color:${C.grn};font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:6px 0;">${esc(cta)}</button>
+            </div>
+          </div>
+          ${open ? this.slateMetaHtml(g, true) : ""}
+        </div>`;
+      }
+
+      // Between 1024 and 1240 there is no room for the CTA column at the
+      // design's widths, and a fixed 210px matchup column pushes the page into
+      // a horizontal scroll. The matchup flexes and the CTA drops — the pill
+      // body still navigates, so nothing becomes unreachable.
+      const tight = this.narrow();
+      const cols = tight
+        ? "78px minmax(0,1fr) 120px 104px 128px 128px 26px"
+        : "86px minmax(0,1fr) 150px 118px 152px 152px 128px 30px";
+      return `<div class="ph-card-hover" style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;">
+        <div style="display:grid;grid-template-columns:${cols};gap:${tight ? 10 : 12}px;align-items:center;padding:11px 14px;">
+          ${this.slateChipHtml(g, false)}
+          <button ${jump} style="border:0;background:transparent;padding:0;text-align:left;cursor:pointer;font-family:inherit;color:${C.txt};display:flex;flex-direction:column;gap:2px;min-width:0;">
+            <b style="font-size:13.5px;font-weight:800;letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">${esc(label)}</b>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:${C.mut};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%;">${esc(sub)}</span>
+          </button>
+          <span style="display:flex;align-items:baseline;gap:8px;font-family:'IBM Plex Mono',monospace;min-width:0;">
+            <b style="font-size:19px;font-weight:700;color:${scoreFg};white-space:nowrap;">${esc(g.score || "—")}</b>
+            <span style="font-size:10.5px;color:${C.faint};white-space:nowrap;">${esc(scoreSub)}</span>
+          </span>
+          <span style="display:flex;align-items:center;gap:10px;">
+            ${this.basesHtml(false)}
+            <span style="display:flex;flex-direction:column;gap:1px;font-family:'IBM Plex Mono',monospace;">
+              <b style="font-size:12.5px;font-weight:600;color:${C.txt};">${esc(g.count || "—")}</b>
+              <span style="font-size:10px;color:${C.faint};">${esc(g.outs == null ? "—" : `${g.outs} out`)}</span>
+            </span>
+          </span>
+          ${this.gameLineCell(ml.pick, ml.prob, this.mlCaption(g.phase), false)}
+          ${this.gameLineCell(tot.pick, tot.prob, "TOTAL · PREGAME", false)}
+          ${tight ? "" : `<button ${jump} style="justify-self:end;border:1px solid ${C.bd};background:${C.chip};color:${C.dim};font-family:inherit;font-size:11px;font-weight:700;padding:6px 11px;border-radius:999px;cursor:pointer;white-space:nowrap;">${esc(cta)}</button>`}
+          ${chevBtn("justify-self:end;font-size:14px;padding:4px;")}
+        </div>
+        ${open ? this.slateMetaHtml(g, false) : ""}
+      </div>`;
+    }
+
+    // The three groups, plus the states that are not "a list of games".
+    slatePillsHtml(mobile) {
+      const C = this.C;
+      const rows = this.homeSlate();
+      const box = (body) =>
+        `<div style="padding:1.6rem 1rem;border:1px solid ${C.bd};border-radius:12px;background:${C.panel};color:${C.mut};">${body}</div>`;
+      if (rows === null) return box(`<span style="font-style:italic;">Loading today's games…</span>`);
+      if (!rows.length) {
+        return RECAP_ERR
+          ? box(`Couldn't reach the schedule feed — a connection problem, not an empty slate.`)
+          : box(`No MLB games on today's schedule.`);
+      }
+      return this.slateGroups(rows).filter((grp) => grp.games.length).map((grp) => `
+        <div style="margin-bottom:${mobile ? 14 : 18}px;">
+          <div style="display:flex;align-items:center;gap:${mobile ? 8 : 9}px;margin-bottom:${mobile ? 7 : 8}px;">
+            <span style="font-size:${mobile ? 9.5 : 10}px;font-weight:800;letter-spacing:.08em;color:${grp.fg};">${grp.title}</span>
+            ${mobile ? "" : `<span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:${C.faint};">${grp.games.length} game${grp.games.length === 1 ? "" : "s"}</span>`}
+            <span style="flex:1;height:1px;background:${C.row};"></span>
+          </div>
+          <div style="display:flex;flex-direction:column;gap:6px;">
+            ${grp.games.map((g) => this.slatePillHtml(g, mobile)).join("")}
+          </div>
+        </div>`).join("");
+    }
+
+    // Bring a game's pill into the viewport after jumping to the Live Feed.
+    // scrollIntoView is banned here (it hijacks the scroll container and
+    // fights the poll's re-render), so the offset is measured and set.
+    scrollToPill(pk) {
+      requestAnimationFrame(() => {
+        const el = this.root.querySelector(`[data-ph-pill="${pk}"]`);
+        const y = el ? Math.max(0, el.getBoundingClientRect().top + window.pageYOffset - 84) : 0;
+        window.scrollTo(0, y);
+      });
     }
 
 
@@ -1118,7 +1435,7 @@
             ${chev}${matchup}${scoreCell}${topCell}${accCell}${pitchCell}
           </button>`;
 
-      return `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;">
+      return `<div data-ph-pill="${esc(m.pk)}" style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;">
         ${head}
         ${open ? this.gameBodyHtml(m, st, mobile) : ""}
       </div>`;
