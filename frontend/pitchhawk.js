@@ -123,6 +123,10 @@
         // game_pk; `gameCtx` caches GET /game/{pk}/context per game so the
         // tier is fetched once on first expand rather than on every poll.
         homeOpen: {}, gameCtx: {},
+        // Which game the Live Feed hero describes. "top" is the most confident
+        // open call across every live game (the board's original behaviour);
+        // a gamePk pins the hero and the current-at-bat panel to that game.
+        heroSel: "top",
         // Every micro-market prediction, and the slate it belongs to, keyed by
         // America/New_York date. Per date rather than one "current day": the
         // Live Feed is always about today while the Data Feed walks the
@@ -132,9 +136,29 @@
         // Per-day, per-market accuracy from /accuracy. Never pruned, so this is
         // the one series that outlives the raw predictions.
         accuracy: { days: [], markets: [], loaded: false, err: false },
-        // Which slate the graded log is showing, as an America/New_York
-        // date. null means today; the Yesterday chip sets the prior date.
-        dfDate: null,
+        // The Data Feed's window, and the history accordion's open paths.
+        // The single-day stepper this replaced could only ever describe one
+        // slate, so every analytic on the tab was pinned to one slate too.
+        dfRange: "7d",              // today | 7d | 14d | 30d | custom
+        dfFrom: "", dfTo: "",       // America/New_York dates, custom range only
+        // Keyed by path — "d-2026-08-22", "d-2026-08-22/g-823507",
+        // "d-2026-08-22/g-823507/ab-14" — so a game open under one day cannot
+        // drag the same game open under another, and none of it lives in the
+        // DOM the 8s poll throws away.
+        dfOpen: {},
+        // Row-level scoping for the analytic half of the tab. These four bind
+        // to dimensions only the per-pitch rows carry — the nightly rollup has
+        // no team, player or side — which is why they scope the KPI tiles and
+        // the charts but never the history accordion.
+        dfTeam: "", dfPlayer: "", dfSide: "all", dfRole: "all",
+        // The entity overlay. `entity` is what is open; `entityProfile` caches
+        // the warehouse lookups per player_id so re-opening the same name does
+        // not re-request, and the 8s poll never does.
+        entity: null, entityProfile: {},
+        // Profitable trends. Server-ranked, so this holds a page rather than a
+        // dataset — `loaded` stays false until the first request settles so the
+        // panel is absent rather than flashing empty.
+        trends: { rows: [], baseline: null, horizon: null, loaded: false, err: false },
         dark: initialDark(), t: 0,
         // Phase 4 aggregates. `loaded` stays false until the first fetch
         // settles, so the panels are absent rather than flashing empty.
@@ -165,6 +189,12 @@
       // never lands mid-keystroke. Combined with the focus guard in render(),
       // typing in a filter box survives the 8s poll.
       this.root.addEventListener("change", (e) => this._onFilterChange(e));
+      // A modal that cannot be dismissed from the keyboard is a trap. One
+      // document-level handler rather than a per-element one, so it survives
+      // the innerHTML swap like every other listener on the board.
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && this.state.entity) this.setState({ entity: null });
+      });
     }
 
     _onFilterChange(e) {
@@ -187,6 +217,23 @@
       if (!el) return;
       const key = el.getAttribute("data-feedfilter");
       const val = (el.value || "").trim();
+      // The Data Feed's custom window rides the same delegation as the history
+      // filters below, so it inherits render()'s focus guard for free — the 8s
+      // poll cannot yank the date picker out from under a half-made choice.
+      // Every Data Feed control that is a <select> or an <input> routes here,
+      // so all of them are covered by render()'s data-feedfilter focus guard
+      // and none can be re-rendered out from under a half-made choice.
+      if (key === "dfFrom" || key === "dfTo" || key === "dfTeam" || key === "dfPlayer") {
+        if (this.state[key] === val) return;
+        this.state[key] = val;
+        // The choice is made, so release focus before repainting — otherwise
+        // the guard holds every poll off until the reader clicks away.
+        if (el.blur) el.blur();
+        // dfPlayer is applied to the returned page rather than sent, so it is
+        // the one control here that does not need a refetch.
+        if (key !== "dfPlayer") this.syncTrends().catch(() => {});
+        return this.render();
+      }
       if (this.state.feedF[key] === val) return;
       this.state.feedF[key] = val;
       this.syncFeed();
@@ -255,6 +302,7 @@
         // The metadata tier. Context is fetched on first expand and cached, so
         // collapsing and re-opening costs nothing and the 8s poll never
         // re-requests it.
+        case "heroSel": return this.setState({ heroSel: arg });
         case "homeMeta": {
           const o = Object.assign({}, this.state.homeOpen);
           o[arg] = !o[arg];
@@ -289,16 +337,60 @@
           this.syncFeed();
           return this.render();
         }
-        case "dfDate": {
-          // "today" -> null so the request omits `date` and the server applies
-          // its own America/New_York today, which is the authority.
-          this.setState({ dfDate: arg === "today" ? null : arg });
-          // The drill-down, the KPI tiles and three of the four charts all read
-          // the same day, so stepping the date moves the whole tab. Paints off
-          // the old rows first, again when the new day lands.
-          this.syncDay();
-          // The scouting panels describe a game, so they follow it too.
-          this.syncScouting();
+        // arg is "kind|id|name" — a name can hold spaces and periods but
+        // never a pipe, so the first two separators are the split points.
+        case "entity": {
+          const i1 = arg.indexOf("|"), i2 = arg.indexOf("|", i1 + 1);
+          const kind = arg.slice(0, i1);
+          const id = arg.slice(i1 + 1, i2);
+          const name = arg.slice(i2 + 1);
+          this.setState({ entity: { kind, id: id || null, name } });
+          if (id) this.loadEntityProfile(id, kind);
+          return;
+        }
+        case "entityClose": return this.setState({ entity: null });
+        case "dfSide": {
+          this.state.dfSide = arg;
+          this.syncTrends().catch(() => {});
+          return this.render();
+        }
+        case "dfRole": {
+          this.state.dfRole = arg;
+          // The player list is per role, so a batter left selected under the
+          // Pitchers role would scope everything to nothing.
+          this.state.dfPlayer = "";
+          this.syncTrends().catch(() => {});
+          return this.render();
+        }
+        // Clears the four row filters and leaves the window alone — the window
+        // is not a filter, it is what the page is about.
+        case "dfClear": {
+          Object.assign(this.state, { dfTeam: "", dfPlayer: "", dfSide: "all", dfRole: "all" });
+          this.syncTrends().catch(() => {});
+          return this.render();
+        }
+        case "dfRange": {
+          this.state.dfRange = arg;
+          // The accuracy rollup for the whole retained span is already held, so
+          // the window is a filter over it — but trends is ranked server-side
+          // per window and has to be re-asked.
+          this.syncTrends().catch(() => {});
+          return this.render();
+        }
+        // One toggle for all four levels of the history accordion. The arg is
+        // the full path, so the same handler opens a day, a game under it, and
+        // an at-bat under that.
+        case "dfOpen": {
+          const o = Object.assign({}, this.state.dfOpen);
+          o[arg] = !o[arg];
+          this.setState({ dfOpen: o });
+          // Opening a day is what loads it: the window can span thirty slates
+          // and no browser is paging thirty days of per-pitch rows up front.
+          if (o[arg] && /^d-\d{4}-\d{2}-\d{2}$/.test(arg)) {
+            const date = arg.slice(2);
+            this.loadDayMeta(date).then(() => this.render()).catch(() => {});
+            this.loadDayRows(date).then((c) => { if (c) this.render(); }).catch(() => {});
+          }
           return;
         }
         // Drill-down toggles. These MUST write to state: render() replaces the
@@ -592,8 +684,14 @@
             // games.home_score/away_score are 0, not null, before first pitch,
             // so a scheduled game reported a 0–0 score it had not played.
             score: has && g.phase !== "pregame" ? `${g.score.away} – ${g.score.home}` : null,
+            // The whole market map, not just the two game-level calls: a
+            // scheduled game's body reads the four micro-market opening calls
+            // straight off it.
+            m: g.m || null,
             ml: (g.m && g.m.game_moneyline) || null,
             tot: (g.m && g.m.game_total) || null,
+            mlPre: (g.mPre && g.mPre.game_moneyline) || null,
+            totPre: (g.mPre && g.mPre.game_total) || null,
             modelVersion: g.modelVersion || null,
           };
         });
@@ -612,7 +710,7 @@
           startTs: g.start_ts, venue: g.venue_name || null,
           inning: null, half: null, count: null, outs: null,
           score: has && phase !== "pregame" ? `${g.away_score} – ${g.home_score}` : null,
-          ml: null, tot: null, modelVersion: null,
+          m: null, ml: null, tot: null, mlPre: null, totPre: null, modelVersion: null,
         };
       });
     }
@@ -623,14 +721,17 @@
     slateGroups(rows) {
       const of = (p) => (rows || []).filter((g) => g.phase === p);
       const innKey = (g) => (g.inning == null ? -1 : g.inning * 2 + (g.half === "▼" ? 1 : 0));
+      // Live first, latest inning at the top (bottom 9 above top 1), then what
+      // is still to come, then what is already over. Finals sit last because a
+      // finished game is the least urgent thing on the page.
       return [
         { title: "LIVE NOW", fg: this.C.grn, games: of("live").slice().sort((a, b) => innKey(b) - innKey(a)) },
-        { title: "FINAL", fg: this.C.mut, games: of("final") },
         {
           title: "UPCOMING", fg: this.C.blue,
           games: of("pregame").slice().sort((a, b) =>
             Date.parse(a.startTs || 0) - Date.parse(b.startTs || 0)),
         },
+        { title: "FINAL", fg: this.C.mut, games: of("final") },
       ];
     }
 
@@ -662,28 +763,59 @@
       </span>`;
     }
 
-    // A game-level call — moneyline or total — as pick + probability. Both are
-    // written once before first pitch and never updated, which the caption
-    // says out loud rather than implying a line that moves.
-    gameLineCell(pick, prob, caption, mobile) {
+    // A game-level call as pick + probability, with the frozen pregame call
+    // beside it once a game is under way.
+    //
+    // The two are genuinely different numbers on a live game: live-poll
+    // overwrites game_moneyline with an MLB live win probability every poll,
+    // so the headline is "who wins from here" and the PRE value is the log5
+    // call the model opened with. game_total is written once by game-predict
+    // and never updated, so its two values are the same row and only one is
+    // drawn. `pre` is passed as null whenever there is nothing to compare.
+    gameLineCell(main, pre, caption, tight) {
       const C = this.C;
+      const val = (pick, prob, size, fg) => `<b style="font-size:${size}px;font-weight:800;white-space:nowrap;color:${fg || "inherit"};">${esc(pick)}</b><span style="font-family:'IBM Plex Mono',monospace;font-size:${size}px;font-weight:600;color:${prob == null ? C.faint : fg || this.accColor(prob)};">${this.pct(prob)}</span>`;
+      // PRE gets its own line rather than sitting inline. Inline, a cell wraps
+      // or does not depending on how long the two team abbreviations happen to
+      // be, so one pill in the list is a line taller than the next — the list
+      // reads as broken. A fixed three-line cell is uniform at every width.
+      const preCell = pre
+        ? `<span title="${esc(COPY.pregameCallNote)}" style="display:flex;align-items:baseline;gap:4px;white-space:nowrap;">
+            <span style="font-size:9px;font-weight:800;letter-spacing:.05em;color:${C.faint};">PRE</span>
+            ${val(pre.pick, pre.prob, tight ? 10.5 : 11, C.mut)}
+          </span>`
+        : "";
       return `<span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
-        <span style="display:flex;align-items:baseline;gap:6px;">
-          <b style="font-size:12.5px;font-weight:800;white-space:nowrap;">${esc(pick)}</b>
-          <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:${prob == null ? C.faint : this.accColor(prob)};">${this.pct(prob)}</span>
+        <span style="display:flex;align-items:baseline;gap:${tight ? 5 : 6}px;white-space:nowrap;">
+          ${val(main.pick, main.prob, 12.5)}
         </span>
+        ${preCell}
         <span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;color:${C.faint};white-space:nowrap;">${esc(caption)}</span>
       </span>`;
     }
-    // Moneyline recommendation is "home"/"away"; the pill names the side it
-    // picked rather than the word, because the pill is about this game.
-    mlPick(g) {
-      const rec = g.ml && g.ml.recommendation;
+    // Moneyline recommendation is "home"/"away"; the cell names the side it
+    // picked rather than the word, because the cell is about this game.
+    mlPickOf(mkt, g) {
+      const rec = mkt && mkt.recommendation;
       if (!rec) return { pick: "—", prob: null };
       return {
         pick: rec === "home" ? g.home : rec === "away" ? g.away : (this.outLabel(rec) || "—"),
-        prob: g.ml.modelProb,
+        prob: mkt.modelProb,
       };
+    }
+    totPickOf(mkt) {
+      const rec = mkt && mkt.recommendation;
+      if (!rec) return { pick: "—", prob: null };
+      const side = rec === "over" ? "O" : rec === "under" ? "U" : this.outLabel(rec) || "—";
+      const line = mkt.line == null ? "" : ` ${Number(mkt.line)}`;
+      return { pick: `${side}${line}`, prob: mkt.modelProb };
+    }
+    // Show the pregame call beside the headline only when the game has started
+    // AND the pregame row is a different call from the one being shown. Before
+    // first pitch the headline IS the pregame call, and repeating it is noise.
+    preOf(main, pre, phase) {
+      if (phase === "pregame" || !pre || pre.prob == null) return null;
+      return pre.pick === main.pick && pre.prob === main.prob ? null : pre;
     }
     // What the two game-level cells are actually showing, which is not what the
     // handoff assumed. `game_total` is written once by game-predict and never
@@ -691,19 +823,15 @@
     // live-poll writes an MLB live win probability every poll (mlb_winprob_v1)
     // over the pregame log5 call, and slatePayloads prefers that row — so a
     // live game's moneyline is a live number and a finished game's is the win
-    // probability at its last pitch. Only a game that has not started shows the
-    // pregame call, and only it is captioned PREGAME.
+    // probability at its last pitch.
     mlCaption(phase) {
       return phase === "live" ? "MONEYLINE · LIVE"
         : phase === "final" ? "MONEYLINE · AT FINAL"
           : "MONEYLINE · PREGAME";
     }
-    totPick(g) {
-      const rec = g.tot && g.tot.recommendation;
-      if (!rec) return { pick: "—", prob: null };
-      const side = rec === "over" ? "O" : rec === "under" ? "U" : this.outLabel(rec) || "—";
-      const line = g.tot.line == null ? "" : ` ${Number(g.tot.line)}`;
-      return { pick: `${side}${line}`, prob: g.tot.modelProb };
+    totCaption(phase, hasPre) {
+      if (!hasPre) return "TOTAL · PREGAME";
+      return phase === "live" ? "TOTAL · LIVE" : phase === "final" ? "TOTAL · AT FINAL" : "TOTAL · PREGAME";
     }
 
     // ── the metadata tier ────────────────────────────────────────────────
@@ -776,7 +904,9 @@
       const open = !!this.state.homeOpen[g.pk];
       const live = g.phase === "live";
       const final = g.phase === "final";
-      const ml = this.mlPick(g), tot = this.totPick(g);
+      const ml = this.mlPickOf(g.ml, g), tot = this.totPickOf(g.tot);
+      const mlPre = this.preOf(ml, this.mlPickOf(g.mlPre, g), g.phase);
+      const totPre = this.preOf(tot, this.totPickOf(g.totPre), g.phase);
       const label = `${g.away} @ ${g.home}`;
       const until = g.phase === "pregame" ? this.untilText(g.startTs) : null;
       const sub = [g.venue, until].filter(Boolean).join(" · ") || "—";
@@ -809,6 +939,11 @@
               <span style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:9px;font-weight:800;color:${C.faint};">TOT</span><b style="font-size:12px;font-weight:800;">${esc(tot.pick)}</b><span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${tot.prob == null ? C.faint : this.accColor(tot.prob)};">${this.pct(tot.prob)}</span></span>
               <button ${jump} style="margin-left:auto;border:0;background:transparent;color:${C.grn};font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:6px 0;">${esc(cta)}</button>
             </div>
+            ${mlPre || totPre ? `<div title="${esc(COPY.pregameCallNote)}" style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;font-size:10.5px;color:${C.mut};">
+              <span style="font-size:9px;font-weight:800;letter-spacing:.05em;color:${C.faint};">PREGAME</span>
+              ${mlPre ? `<span style="display:flex;align-items:baseline;gap:4px;"><span style="font-size:9px;font-weight:800;color:${C.faint};">ML</span><b style="font-weight:800;">${esc(mlPre.pick)}</b><span style="font-family:'IBM Plex Mono',monospace;font-weight:600;">${this.pct(mlPre.prob)}</span></span>` : ""}
+              ${totPre ? `<span style="display:flex;align-items:baseline;gap:4px;"><span style="font-size:9px;font-weight:800;color:${C.faint};">TOT</span><b style="font-weight:800;">${esc(totPre.pick)}</b><span style="font-family:'IBM Plex Mono',monospace;font-weight:600;">${this.pct(totPre.prob)}</span></span>` : ""}
+            </div>` : ""}
           </div>
           ${open ? this.slateMetaHtml(g, true) : ""}
         </div>`;
@@ -840,8 +975,8 @@
               <span style="font-size:10px;color:${C.faint};">${esc(g.outs == null ? "—" : `${g.outs} out`)}</span>
             </span>
           </span>
-          ${this.gameLineCell(ml.pick, ml.prob, this.mlCaption(g.phase), false)}
-          ${this.gameLineCell(tot.pick, tot.prob, "TOTAL · PREGAME", false)}
+          ${this.gameLineCell(ml, mlPre, this.mlCaption(g.phase), tight)}
+          ${this.gameLineCell(tot, totPre, this.totCaption(g.phase, !!totPre), tight)}
           ${tight ? "" : `<button ${jump} style="justify-self:end;border:1px solid ${C.bd};background:${C.chip};color:${C.dim};font-family:inherit;font-size:11px;font-weight:700;padding:6px 11px;border-radius:999px;cursor:pointer;white-space:nowrap;">${esc(cta)}</button>`}
           ${chevBtn("justify-self:end;font-size:14px;padding:4px;")}
         </div>
@@ -929,9 +1064,41 @@
 
     // The date a view is about. The Live Feed is today by definition; the Data
     // Feed is wherever its stepper has been left.
-    viewDate(view) {
-      const v = view || this.state.view;
-      return v === "data" ? (this.state.dfDate || PH.mlbDate(0)) : PH.mlbDate(0);
+    // The date a view's ROW-derived surfaces are about. Both tabs are now
+    // today: the Data Feed's history is a window of day pills, each of which
+    // owns its own date, and its KPI/chart surfaces say which days they cover
+    // rather than silently following a stepper.
+    viewDate() { return PH.mlbDate(0); }
+
+    // ── the Data Feed window ─────────────────────────────────────────────
+    DF_RANGES = [["today", "Today"], ["7d", "7 days"], ["14d", "14 days"], ["30d", "30 days"], ["custom", "Custom"]];
+    dfWindow() {
+      const to = PH.mlbDate(0);
+      const r = this.state.dfRange || "7d";
+      if (r === "custom") {
+        const floor = PH.mlbDate(-(this.ACC_SPAN_DAYS - 1));
+        const t = this.state.dfTo || to;
+        let f = this.state.dfFrom || PH.mlbDate(-6);
+        // Past the retained span the rollup has nothing, so an unclamped
+        // picker would render an empty window as if the model had said nothing.
+        if (f < floor) f = floor;
+        return { from: f > t ? t : f, to: t };
+      }
+      const days = r === "today" ? 1 : Number(String(r).replace("d", "")) || 7;
+      return { from: PH.mlbDate(-(days - 1)), to };
+    }
+    dfWindowLabel() {
+      const r = this.state.dfRange || "7d";
+      const hit = this.DF_RANGES.find(([k]) => k === r);
+      if (r !== "custom") return (hit ? hit[1] : r).toLowerCase();
+      const w = this.dfWindow();
+      return `${w.from} to ${w.to}`;
+    }
+    // True when everything on the tab is about one slate — the only window in
+    // which the row-derived surfaces below cover the whole of it.
+    dfSingleDay() {
+      const w = this.dfWindow();
+      return w.from === w.to;
     }
     dayState(date) { return this.state.days[date] || this.EMPTY_DAY; }
     setDay(date, patch) {
@@ -942,7 +1109,14 @@
       const keys = Object.keys(days);
       if (keys.length > this.DAY_CACHE) {
         keys.slice(0, keys.length - this.DAY_CACHE).forEach((k) => {
-          if (k !== date && k !== PH.mlbDate(0)) delete days[k];
+          if (k === date || k === PH.mlbDate(0)) return;
+          delete days[k];
+          // The fetch gate and the built models have to go with the rows.
+          // Without this an evicted day stayed "already fetched" forever, so
+          // re-opening its pill in the history showed an empty slate rather
+          // than reloading it.
+          delete this._dayRowsSig[k];
+          delete this._models[k];
         });
       }
       this.state.days = days;
@@ -1066,9 +1240,16 @@
     // Per-day, per-market accuracy for the trend chart. Rolled up nightly and
     // never pruned, so it is the one series that outlives the 21-day
     // raw-prediction horizon everything else on this tab is bounded by.
-    async loadAccuracy(days) {
+    // Fetched once for the widest window the server allows, not per window
+    // chip. It is one row per (day, market) — a few hundred for four months —
+    // so re-requesting it every time the reader changes the window was pure
+    // latency, and holding the whole span is what lets the tab tell "nothing
+    // was graded in these days" apart from "the nightly rollup has not run for
+    // them yet".
+    ACC_SPAN_DAYS = 120;
+    async loadAccuracy() {
       const to = PH.mlbDate(0);
-      const from = PH.mlbDate(-(days - 1));
+      const from = PH.mlbDate(-(this.ACC_SPAN_DAYS - 1));
       const sig = `${from}..${to}`;
       if (this._accSig === sig) return false;
       this._accSig = sig;
@@ -1242,6 +1423,11 @@
         team: half == null ? null : half === "▼" ? home : away,
         batter: pick("batter_name"),
         pitcher: pick("pitcher_name"),
+        // Ids ride along so the entity overlay can reach the warehouse
+        // aggregates, which are keyed on player_id. The rows have always
+        // carried them; nothing kept them.
+        batterId: pick("batter_id"),
+        pitcherId: pick("pitcher_id"),
         predLabel: abr ? abr.recommendation : null,
         predProb: abr && abr.confidence != null ? +abr.confidence : null,
         actual: abr ? abr.actual_label : null,
@@ -1288,7 +1474,15 @@
     }
 
     // ── small formatters ─────────────────────────────────────────────────
-    ratio(c, n) { return n ? `${c}/${n}` : "—"; }
+    // Every record the board prints carries its own percentage, in the same
+    // mono face and the same accuracy colour as the ratio: "14/19 · 74%". One
+    // helper, used at every site, so the rounding and the em-dash rule cannot
+    // drift between two surfaces. The bare `ratio()` this replaced is gone —
+    // a record without its rate made the reader do the division.
+    ratioPct(c, n) {
+      if (!n) return "—";
+      return `${c}/${n} · ${Math.round((c / n) * 100)}%`;
+    }
     rate(c, n) { return n ? c / n : null; }
     accBand(r) { return r == null ? null : r >= 0.66 ? "good" : r >= 0.5 ? "amber" : "bad"; }
     accColor(r) { return r == null ? this.C.dim : this.grd(this.accBand(r)).fg; }
@@ -1303,18 +1497,53 @@
     // The single most confident open call on the board, across the four
     // micro-markets and every live game. It is what the hero describes, and
     // its game is the one the board drills into by default.
+    bestCallIn(g) {
+      let best = null;
+      this.MICRO.forEach((key) => {
+        const m = g.m && g.m[key];
+        if (!m || !m.covered || m.modelProb == null) return;
+        if (!best || m.modelProb > best.prob) {
+          best = { game: g, market: key, prob: m.modelProb, m };
+        }
+      });
+      return best;
+    }
     bestCall() {
       let best = null;
       this.liveGames().forEach((g) => {
-        this.MICRO.forEach((key) => {
-          const m = g.m && g.m[key];
-          if (!m || !m.covered || m.modelProb == null) return;
-          if (!best || m.modelProb > best.prob) {
-            best = { game: g, market: key, prob: m.modelProb, m };
-          }
-        });
+        const b = this.bestCallIn(g);
+        if (b && (!best || b.prob > best.prob)) best = b;
       });
       return best;
+    }
+    // What the hero is about, given the Showing selection. A pinned game that
+    // has since ended is not an error state — the selection silently falls back
+    // to "top" rather than stranding the reader on a hero that cannot be drawn.
+    heroSubject() {
+      const sel = this.state.heroSel || "top";
+      if (sel !== "top") {
+        const g = this.liveGames().find((x) => String(x.gamePk) === String(sel));
+        if (g) return { best: this.bestCallIn(g), game: g, pinned: true };
+      }
+      const best = this.bestCall();
+      return { best, game: best ? best.game : null, pinned: false };
+    }
+    // One chip per live game, plus the cross-game default. Hidden entirely when
+    // nothing is live: a selector over an empty set is furniture, not a control.
+    heroChipsHtml(mobile) {
+      const C = this.C;
+      const live = this.liveGames();
+      if (!live.length) return "";
+      const sel = this.state.heroSel || "top";
+      const chip = (arg, label, on) =>
+        `<button data-act="heroSel" data-arg="${esc(arg)}" style="flex:none;border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${on ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:${mobile ? 11.5 : 12}px;padding:${mobile ? "7px 12px" : "6px 12px"};border-radius:999px;cursor:pointer;white-space:nowrap;">${esc(label)}</button>`;
+      const chips = chip("top", "★ Top at-bat", sel === "top")
+        + live.map((g) => chip(String(g.gamePk), `${g.away} @ ${g.home}`, String(sel) === String(g.gamePk))).join("");
+      return mobile
+        ? `<div style="display:flex;gap:6px;overflow-x:auto;margin-bottom:11px;padding-bottom:2px;">${chips}</div>`
+        : `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:12px;">
+            <span style="font-size:10px;font-weight:800;letter-spacing:.06em;color:${C.faint};">SHOWING</span>${chips}
+          </div>`;
     }
 
     // Open the live game and its at-bat in progress on first paint, then never
@@ -1368,6 +1597,19 @@
     phFilter(pk) {
       return this.state.phFilters[pk] || { team: "", batter: "", pitcher: "" };
     }
+    // The drill-down is shared by both tabs, but its open state is not. The
+    // Live Feed keys a game on its game_pk (`openG`) so the Home pill can hand
+    // it a game to open; the Data Feed keys everything on a path under a day
+    // (`dfOpen`), so the same game expanded under Friday does not also expand
+    // under Saturday. `scope` is null for the Live Feed and { path } for the
+    // Data Feed, and the three methods below are the only places that differ.
+    abKey(scope, m, ab) {
+      return scope ? `${scope.path}/ab-${ab.abi}` : `${m.pk}:${ab.abi}`;
+    }
+    abIsOpen(scope, key) {
+      return scope ? !!this.state.dfOpen[key] : !!this.state.openAb[key];
+    }
+    abAct(scope) { return scope ? "dfOpen" : "phAb"; }
     phFilterDirty(f) { return !!(f.team || f.batter || f.pitcher); }
     // A <select> is the only control on the board that is not a chip, so it
     // carries its own styling. `selected` has to be written into the markup:
@@ -1382,11 +1624,15 @@
     }
 
     // Collapsed pill + everything it reveals.
-    gamePillHtml(m, mobile, date) {
+    gamePillHtml(m, mobile, date, scope) {
       const C = this.C;
       const meta = this.gameMeta(m.pk, date);
       const st = this.gameStats(m.abs);
-      const open = !!this.state.openG[m.pk];
+      // Inside the Data Feed's accordion a game is keyed by its path under a
+      // day; on its own it falls back to the flat game_pk key.
+      const gkey = scope ? scope.path : m.pk;
+      const gact = scope ? "dfOpen" : "phGame";
+      const open = scope ? !!this.state.dfOpen[gkey] : !!this.state.openG[m.pk];
       const accR = this.rate(st.abC, st.abN);
       const accC = this.accColor(accR);
       // The game's most confident at-bat call, graded or not — "what did the
@@ -1415,34 +1661,34 @@
       </span>`;
       const accCell = `<span style="display:flex;flex-direction:column;gap:3px;">
         <span style="display:flex;align-items:baseline;gap:6px;">
-          <b style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:${accC};">${this.ratio(st.abC, st.abN)}</b>
+          <b style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:${accC};">${this.ratioPct(st.abC, st.abN)}</b>
           <span style="font-size:10.5px;color:${C.faint};">at-bat calls</span>
         </span>
         <span style="height:5px;background:${C.panel2};border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:${accC};width:${Math.round((accR || 0) * 100)}%;"></span></span>
       </span>`;
       const pitchCell = `<span style="display:flex;flex-direction:column;gap:2px;text-align:right;">
-        <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:${C.dim};">${this.ratio(st.pC, st.pN)} <span style="font-size:10px;color:${C.faint};">pitch</span></span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:${this.accColor(this.rate(st.pC, st.pN))};">${this.ratioPct(st.pC, st.pN)} <span style="font-size:10px;color:${C.faint};">pitch</span></span>
         <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:${C.dim};">${this.maeText(st.mae)} <span style="font-size:10px;color:${C.faint};">mph MAE</span></span>
       </span>`;
 
       const head = mobile
-        ? `<button data-act="phGame" data-arg="${esc(m.pk)}" style="width:100%;display:flex;flex-direction:column;gap:8px;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:11px 12px;cursor:pointer;">
+        ? `<button data-act="${gact}" data-arg="${esc(gkey)}" style="width:100%;display:flex;flex-direction:column;gap:8px;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:11px 12px;cursor:pointer;">
             <span style="display:flex;align-items:center;gap:10px;width:100%;">${chev}${matchup}<span style="margin-left:auto;">${scoreCell}</span></span>
             <span style="display:grid;grid-template-columns:minmax(0,1fr) 116px;gap:10px;align-items:center;width:100%;">${accCell}${pitchCell}</span>
             <span style="width:100%;min-width:0;">${topCell}</span>
           </button>`
-        : `<button data-act="phGame" data-arg="${esc(m.pk)}" class="ph-card-hover" style="width:100%;display:grid;grid-template-columns:18px 168px 128px minmax(0,1fr) 150px 138px;gap:14px;align-items:center;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:12px 14px;cursor:pointer;">
+        : `<button data-act="${gact}" data-arg="${esc(gkey)}" class="ph-card-hover" style="width:100%;display:grid;grid-template-columns:18px 168px 128px minmax(0,1fr) 150px 138px;gap:14px;align-items:center;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:12px 14px;cursor:pointer;">
             ${chev}${matchup}${scoreCell}${topCell}${accCell}${pitchCell}
           </button>`;
 
       return `<div data-ph-pill="${esc(m.pk)}" style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;">
         ${head}
-        ${open ? this.gameBodyHtml(m, st, mobile) : ""}
+        ${open ? this.gameBodyHtml(m, st, mobile, scope) : ""}
       </div>`;
     }
 
     // The at-bat list, its scoped filters, and the filtered readout.
-    gameBodyHtml(m, st, mobile) {
+    gameBodyHtml(m, st, mobile, scope) {
       const C = this.C;
       const f = this.phFilter(m.pk);
       const uniq = (key) => [...new Set(
@@ -1460,9 +1706,13 @@
         (a, x) => (x.predProb != null && (a == null || x.predProb > a) ? x.predProb : a), null,
       );
 
+      const fact = (label, body) =>
+        `<span style="white-space:nowrap;">${label ? `${esc(label)} ` : ""}${body}</span>`;
+      const tinted = (c2, n2) =>
+        `<span style="color:${this.accColor(this.rate(c2, n2))};">${this.ratioPct(c2, n2)}</span>`;
       const readout = dirty
-        ? `${abs.length} of ${m.abs.length} at-bats · ${this.ratio(fst.abC, fst.abN)} calls · MAE ${this.maeText(fst.mae)}`
-        : `all ${m.abs.length} at-bats · pitch ${this.ratio(st.pC, st.pN)} · MAE ${this.maeText(st.mae)}`;
+        ? fact(`${abs.length} of ${m.abs.length} at-bats`, "") + fact("calls", tinted(fst.abC, fst.abN)) + fact("MAE", this.maeText(fst.mae))
+        : fact(`all ${m.abs.length} at-bats`, "") + fact("pitch", tinted(st.pC, st.pN)) + fact("MAE", this.maeText(st.mae));
 
       const filters = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:11px;">
         <span style="font-size:10px;font-weight:800;letter-spacing:.06em;color:${C.faint};">FILTER</span>
@@ -1470,7 +1720,7 @@
         ${this.phSelectHtml(m.pk, "batter", "All batters", uniq("batter"), f.batter, mobile)}
         ${this.phSelectHtml(m.pk, "pitcher", "All pitchers", uniq("pitcher"), f.pitcher, mobile)}
         ${dirty ? `<button data-act="phClear" data-arg="${esc(m.pk)}" style="border:1px solid ${C.bd};background:transparent;color:${C.dim};font-family:inherit;font-size:11px;font-weight:600;padding:5px 9px;border-radius:7px;cursor:pointer;">Clear</button>` : ""}
-        <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.mut};">${esc(readout)}</span>
+        <span style="margin-left:auto;display:flex;gap:14px;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.mut};">${readout}</span>
       </div>`;
 
       const cols = "16px 34px minmax(0,1fr) minmax(0,1fr) 208px 96px 88px";
@@ -1480,7 +1730,7 @@
       </div>`;
 
       const body = abs.length
-        ? `<div style="display:flex;flex-direction:column;gap:4px;">${abs.map((ab, i) => this.abRowHtml(m, ab, cols, mobile, i + 1, topProb)).join("")}</div>`
+        ? `<div style="display:flex;flex-direction:column;gap:4px;">${abs.map((ab, i) => this.abRowHtml(m, ab, cols, mobile, i + 1, topProb, scope)).join("")}</div>`
         : `<div style="padding:16px 8px;font-size:12px;color:${C.faint};">No at-bats match this filter.</div>`;
 
       return `<div style="border-top:1px solid ${C.bd};background:${C.panel2};padding:12px ${mobile ? 10 : 14}px 14px;">
@@ -1488,10 +1738,11 @@
       </div>`;
     }
 
-    abRowHtml(m, ab, cols, mobile, ord, topProb) {
+    abRowHtml(m, ab, cols, mobile, ord, topProb, scope) {
       const C = this.C;
-      const key = `${m.pk}:${ab.abi}`;
-      const open = !!this.state.openAb[key];
+      const key = this.abKey(scope, m, ab);
+      const open = this.abIsOpen(scope, key);
+      const act = this.abAct(scope);
       const s = this.abStats(ab);
       const pAcc = this.rate(s.c, s.n);
       // Graded green/red; an at-bat still in progress stays neutral rather than
@@ -1509,32 +1760,32 @@
         <span style="font-size:10px;color:${C.faint};">→ ${esc(this.outLabel(ab.actual) || "pending")}</span>
       </span>`;
       const batter = `<span style="display:flex;align-items:center;gap:6px;min-width:0;">
-        ${ab.team ? `<span style="font-size:9.5px;font-weight:800;color:${C.blue};">${esc(ab.team)}</span>` : ""}
-        <span style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(this.shortName(ab.batter))}</span>
+        ${ab.team ? this.entityLinkHtml("TEAM", null, ab.team, esc(ab.team), `font-size:9.5px;font-weight:800;color:${C.blue};`) : ""}
+        ${this.entityLinkHtml("BATTER", ab.batterId, ab.batter, esc(this.shortName(ab.batter)), "font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}
         ${isTop ? `<span style="font-size:9.5px;font-weight:800;color:${C.grn};background:rgba(74,222,128,.13);padding:2px 5px;border-radius:4px;white-space:nowrap;">TOP</span>` : ""}
         ${ab.back ? this.bfTag() : ""}
       </span>`;
 
       const head = mobile
-        ? `<button data-act="phAb" data-arg="${esc(key)}" style="width:100%;display:flex;flex-direction:column;gap:6px;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:9px 10px;cursor:pointer;">
+        ? `<button data-act="${act}" data-arg="${esc(key)}" style="width:100%;display:flex;flex-direction:column;gap:6px;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:9px 10px;cursor:pointer;">
             <span style="display:flex;align-items:center;gap:8px;width:100%;min-width:0;">
               <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};">${esc(ab.inn)}</span>
               ${batter}
             </span>
             <span style="display:flex;align-items:center;gap:8px;width:100%;min-width:0;">
               ${call}
-              <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${this.accColor(pAcc)};white-space:nowrap;">${this.ratio(s.c, s.n)}</span>
+              <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${this.accColor(pAcc)};white-space:nowrap;">${this.ratioPct(s.c, s.n)}</span>
             </span>
-            <span style="font-size:11px;color:${C.faint};">vs ${esc(this.shortName(ab.pitcher))}</span>
+            <span style="font-size:11px;color:${C.faint};">vs ${this.entityLinkHtml("PITCHER", ab.pitcherId, ab.pitcher, esc(this.shortName(ab.pitcher)), `color:${C.faint};`)}</span>
           </button>`
-        : `<button data-act="phAb" data-arg="${esc(key)}" style="width:100%;display:grid;grid-template-columns:${cols};gap:10px;align-items:center;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:8px;cursor:pointer;">
+        : `<button data-act="${act}" data-arg="${esc(key)}" style="width:100%;display:grid;grid-template-columns:${cols};gap:10px;align-items:center;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:8px;cursor:pointer;">
             <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};" title="at_bat_index ${esc(ab.abi)}">${ord}</span>
             <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.dim};">${esc(ab.inn)}</span>
             ${batter}
-            <span style="font-size:12px;color:${C.dim};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(this.shortName(ab.pitcher))}</span>
+            ${this.entityLinkHtml("PITCHER", ab.pitcherId, ab.pitcher, esc(this.shortName(ab.pitcher)), `font-size:12px;color:${C.dim};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`)}
             ${call}
             <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.dim};text-align:right;">${ab.actPitches} / ${ab.projPitches == null ? "—" : ab.projPitches.toFixed(1)}</span>
-            <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${this.accColor(pAcc)};text-align:right;">${this.ratio(s.c, s.n)}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${this.accColor(pAcc)};text-align:right;">${this.ratioPct(s.c, s.n)}</span>
           </button>`;
 
       return `<div style="border:1px solid ${C.row};border-radius:9px;background:${C.panel};overflow:hidden;">
@@ -1604,7 +1855,7 @@
       }).join("");
 
       const footer = `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:9px;padding-top:8px;border-top:1px solid ${C.panel};font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.mut};">
-        <span>pitch result ${this.ratio(s.c, s.n)}</span>
+        <span>pitch result <span style="color:${this.accColor(this.rate(s.c, s.n))};">${this.ratioPct(s.c, s.n)}</span></span>
         <span>velo MAE ${this.maeText(s.mae)} mph</span>
         <span>proj pitches ${ab.projPitches == null ? "—" : ab.projPitches.toFixed(1)} · actual ${ab.actPitches}</span>
       </div>`;
@@ -1666,12 +1917,207 @@
     // a day the model said nothing about.
     DF_RETAIN_DAYS = 20;
 
+    // == LIVE FEED PILLS ==================================================
+    // Every game on the slate, not only the ones with graded rows. A scheduled
+    // game has no at-bat history -- it has the frozen pregame call the model
+    // opened with, which is what its body shows.
+
+    // The model's opening read on a game that has not started. game-predict
+    // scores all four micro-markets pregame against both probable starters and
+    // a league-average batter (it cannot know the lineup), so this is a real
+    // published call, not a placeholder.
+    openingCall(g) {
+      const pres = g.m && g.m.pitch_result;
+      if (!pres || !pres.covered || pres.modelProb == null) return null;
+      return { label: this.outLabel(pres.recommendation) || "—", prob: pres.modelProb };
+    }
+    // The call chip and its one-line summary, per phase.
+    liveCallCell(g, model, mobile) {
+      const C = this.C;
+      let chipText, chipFg, chipBg, text;
+      if (g.phase === "pregame") {
+        const oc = this.openingCall(g);
+        chipText = "FIRST AB"; chipFg = C.blue; chipBg = "#16294a";
+        text = oc ? `${oc.label} ${this.pct(oc.prob)} · opening call` : "no opening call published yet";
+      } else {
+        const top = ((model && model.abs) || []).reduce(
+          (a, b) => (b.predProb != null && (!a || b.predProb > a.predProb) ? b : a), null,
+        );
+        const liveG = g.phase === "live";
+        chipText = liveG ? "TOP CALL" : "GRADED";
+        chipFg = liveG ? C.grn : C.mut;
+        chipBg = liveG ? "rgba(74,222,128,.13)" : C.chip;
+        text = top
+          ? `${this.outLabel(top.predLabel) || "—"} ${this.pct(top.predProb)} · ${this.shortName(top.batter)}`
+          : "no at-bat call yet";
+      }
+      return `<span style="display:flex;align-items:center;gap:8px;min-width:0;">
+        <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:${chipFg};background:${chipBg};padding:2px 6px;border-radius:5px;white-space:nowrap;">${chipText}</span>
+        <span style="font-size:${mobile ? 11.5 : 12}px;color:${C.dim};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;">${esc(text)}</span>
+      </span>`;
+    }
+    // At-bat record with its percentage and a progress bar. A game with nothing
+    // graded shows an em-dash and an empty track, never 0%.
+    liveAccCell(model, mobile) {
+      const C = this.C;
+      const st = model ? this.gameStats(model.abs) : { abC: 0, abN: 0 };
+      const r = this.rate(st.abC, st.abN);
+      const fg = this.accColor(r);
+      return `<span style="display:flex;flex-direction:column;gap:3px;min-width:0;">
+        <span style="display:flex;align-items:baseline;gap:6px;">
+          <b style="font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 12 : 13}px;font-weight:600;color:${fg};white-space:nowrap;">${this.ratioPct(st.abC, st.abN)}</b>
+          <span style="font-size:10.5px;color:${C.faint};white-space:nowrap;">at-bat calls</span>
+        </span>
+        <span style="height:5px;background:${C.panel2};border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:${fg};width:${Math.round((r || 0) * 100)}%;"></span></span>
+      </span>`;
+    }
+    // The body of a game that has not started: the four opening calls, and the
+    // note saying what is still missing and why.
+    openingBodyHtml(g, mobile) {
+      const C = this.C;
+      const cells = this.MICRO.map((key) => {
+        const m = g.m && g.m[key];
+        const covered = !!(m && m.covered && m.modelProb != null);
+        const val = !covered ? "—"
+          : m.kind === "ou"
+            ? `${this.outLabel(m.recommendation) || "—"}${m.line == null ? "" : ` ${Number(m.line)}`}`
+            : (this.outLabel(m.recommendation) || "—");
+        const proj = covered && m.kind === "ou" && m.predictedValue != null
+          ? `proj ${Number(m.predictedValue).toFixed(1)}` : "";
+        return `<span style="display:flex;flex-direction:column;gap:3px;min-width:0;">
+          <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:${C.faint};">${esc((this.MICRO_LABEL[key] || key).toUpperCase())}</span>
+          <span style="display:flex;align-items:baseline;gap:6px;">
+            <b style="font-size:12.5px;font-weight:700;color:${covered ? C.txt : C.faint};">${esc(val)}</b>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${covered ? C.grn : C.faint};">${this.pct(covered ? m.modelProb : null)}</span>
+          </span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:${C.faint};">${esc(proj)}</span>
+        </span>`;
+      }).join("");
+      return `<div style="border-top:1px solid ${C.bd};background:${C.panel2};padding:12px ${mobile ? 10 : 14}px 14px;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px;">
+          <span style="font-size:10px;font-weight:800;letter-spacing:.06em;color:${C.faint};">OPENING AT-BAT PREDICTIONS</span>
+          <span style="font-size:11px;color:${C.faint};">${esc(COPY.openingCallNote)}</span>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(${mobile ? 2 : 4},minmax(0,1fr));gap:12px 18px;">${cells}</div>
+      </div>`;
+    }
+
+    liveGamePillHtml(g, model, mobile) {
+      const C = this.C;
+      const open = !!this.state.openG[g.pk];
+      const live = g.phase === "live";
+      const final = g.phase === "final";
+      const ml = this.mlPickOf(g.ml, g), tot = this.totPickOf(g.tot);
+      const mlPre = this.preOf(ml, this.mlPickOf(g.mlPre, g), g.phase);
+      const until = g.phase === "pregame" ? this.untilText(g.startTs) : null;
+      const sub = [g.venue, until].filter(Boolean).join(" · ") || "—";
+      const scoreFg = live ? C.txt : final ? C.dim : C.faint;
+      const scoreSub = live
+        ? (g.inning == null ? "live" : `${this.halfWord(g.half).toLowerCase()} ${g.inning}`)
+        : final ? "final" : "first pitch";
+      const chev = open ? "▾" : "▸";
+      const bd = live ? C.gbd : C.bd;
+      // One column carries both game-level calls, per the design: the moneyline
+      // on the value line, the total in the caption beneath it.
+      const mlTag = live ? "ML LIVE" : final ? "ML AT FINAL" : "ML PREGAME";
+      const linesCell = `<span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+        <span style="display:flex;align-items:baseline;gap:6px;white-space:nowrap;">
+          <b style="font-size:12.5px;font-weight:800;">${esc(ml.pick)}</b>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:${ml.prob == null ? C.faint : this.accColor(ml.prob)};">${this.pct(ml.prob)}</span>
+          ${mlPre ? `<span title="${esc(COPY.pregameCallNote)}" style="font-size:9px;font-weight:800;letter-spacing:.05em;color:${C.faint};">PRE</span><span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:${C.mut};">${esc(mlPre.pick)} ${this.pct(mlPre.prob)}</span>` : ""}
+        </span>
+        <span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;color:${C.faint};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(`${mlTag} · ${tot.pick} ${this.pct(tot.prob)} TOTAL`)}</span>
+      </span>`;
+
+      const head = mobile
+        ? `<button data-act="phGame" data-arg="${esc(g.pk)}" style="width:100%;display:flex;flex-direction:column;gap:7px;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:10px 11px;cursor:pointer;">
+            <span style="display:flex;align-items:center;gap:8px;width:100%;min-width:0;">
+              <span style="font-size:13px;color:${C.dim};line-height:1;">${chev}</span>
+              ${this.slateChipHtml(g, true)}
+              <b style="font-size:13px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;">${esc(`${g.away} @ ${g.home}`)}</b>
+              <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;color:${scoreFg};white-space:nowrap;">${esc(g.score || "—")}</span>
+            </span>
+            <span style="display:flex;align-items:center;gap:12px;width:100%;min-width:0;">
+              ${this.basesHtml(true)}
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.dim};white-space:nowrap;">${esc(g.count || "—")} · ${esc(g.outs == null ? "—" : `${g.outs} out`)}</span>
+              <span style="margin-left:auto;min-width:0;">${linesCell}</span>
+            </span>
+            <span style="width:100%;min-width:0;">${this.liveCallCell(g, model, true)}</span>
+            <span style="width:100%;min-width:0;">${this.liveAccCell(model, true)}</span>
+          </button>`
+        : `<button data-act="phGame" data-arg="${esc(g.pk)}" style="width:100%;display:grid;grid-template-columns:${this.narrow()
+            ? "16px 74px minmax(0,1fr) 112px 88px 148px minmax(0,1fr) 126px"
+            : "18px 84px 190px 132px 118px 150px minmax(0,1fr) 140px"};gap:${this.narrow() ? 10 : 12}px;align-items:center;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:12px 14px;cursor:pointer;">
+            <span style="font-size:15px;font-weight:700;color:${C.dim};line-height:1;">${chev}</span>
+            ${this.slateChipHtml(g, false)}
+            <span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+              <b style="font-size:13.5px;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(`${g.away} @ ${g.home}`)}</b>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:${C.mut};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(sub)}</span>
+            </span>
+            <span style="display:flex;align-items:baseline;gap:8px;font-family:'IBM Plex Mono',monospace;min-width:0;">
+              <b style="font-size:18px;font-weight:700;color:${scoreFg};white-space:nowrap;">${esc(g.score || "—")}</b>
+              <span style="font-size:10.5px;color:${C.faint};white-space:nowrap;">${esc(scoreSub)}</span>
+            </span>
+            <span style="display:flex;align-items:center;gap:8px;min-width:0;">
+              ${this.basesHtml(false)}
+              <span style="display:flex;flex-direction:column;gap:1px;font-family:'IBM Plex Mono',monospace;">
+                <b style="font-size:12.5px;font-weight:600;">${esc(g.count || "—")}</b>
+                <span style="font-size:10px;color:${C.faint};">${esc(g.outs == null ? "—" : `${g.outs} out`)}</span>
+              </span>
+            </span>
+            ${linesCell}
+            ${this.liveCallCell(g, model, false)}
+            ${this.liveAccCell(model, false)}
+          </button>`;
+
+      let body = "";
+      if (open) {
+        body = g.phase === "pregame"
+          ? this.openingBodyHtml(g, mobile)
+          : model
+            ? this.gameBodyHtml(model, this.gameStats(model.abs), mobile, null)
+            : `<div style="border-top:1px solid ${C.bd};background:${C.panel2};padding:14px;font-size:12.5px;color:${C.faint};line-height:1.5;">${esc(COPY.noGradedRows)}</div>`;
+      }
+      return `<div data-ph-pill="${esc(g.pk)}" style="border:1px solid ${bd};border-radius:12px;background:${C.panel};overflow:hidden;">
+        ${head}${body}
+      </div>`;
+    }
+
+    // The whole Live Feed list: the slate in live -> final -> upcoming order,
+    // each game matched to its built model where one exists.
+    liveGamePillsHtml(models, mobile, date) {
+      const C = this.C;
+      const rows = this.homeSlate();
+      const dr = this.dayState(date);
+      const box = (body) =>
+        `<div style="padding:2.6rem 1rem;text-align:center;border:1px solid ${C.bd};border-radius:14px;background:${C.panel};color:${C.mut};font-size:.92rem;">${body}</div>`;
+      if (rows === null) return box("Loading today's games…");
+      if (!rows.length) {
+        return box(RECAP_ERR
+          ? "Couldn't reach the schedule feed — a connection problem, not an empty slate."
+          : "No MLB games on today's schedule.");
+      }
+      const byPk = new Map((models || []).map((m) => [m.pk, m]));
+      const ordered = [].concat.apply([], this.slateGroups(rows).map((grp) => grp.games));
+      // Notes are about what is still missing, never a caveat on what is shown:
+      // a game is spliced in whole, so a pill that is up is final.
+      const notes = [
+        dr.pending ? `Loading calls for ${dr.pending} more game${dr.pending === 1 ? "" : "s"}…` : null,
+        dr.err ? "Couldn't reach the prediction feed — the game lines above are unaffected." : null,
+        dr.partial ? "Some games on this slate couldn't be loaded and show no at-bat record." : null,
+      ].filter(Boolean).map((t) =>
+        `<div style="font-size:11.5px;color:${dr.partial || dr.err ? C.amb : C.mut};padding:0 2px 6px;">${esc(t)}</div>`).join("");
+      return `${notes}<div style="display:flex;flex-direction:column;gap:7px;">${
+        ordered.map((g) => this.liveGamePillHtml(g, byPk.get(g.pk) || null, mobile)).join("")
+      }</div>`;
+    }
+
     // ── Live Feed ────────────────────────────────────────────────────────
     // Hero on top of the shared drill-down. The hero reads /live, which is
     // ~8s fresh; the pills read the graded feed, which lags by the settle job.
     // Mixing them is deliberate: the call being made now and the record of
     // calls already graded are different questions.
-    heroHtml(best, models, mobile) {
+    heroHtml(best, models, mobile, pinned) {
       const C = this.C;
       const g = best.game;
       const m = best.m;
@@ -1683,7 +2129,17 @@
       const label = m.kind === "ou"
         ? `${this.outLabel(m.recommendation) || "—"}${m.line == null ? "" : ` ${m.line}`}`
         : (this.outLabel(m.recommendation) || "—");
-      const why = `${esc(this.shortName(g.batter.name))} vs ${esc(this.shortName(g.pitcher.name))} — the model's most confident open call across the ${covered === 1 ? "one covered micro-market" : `${covered} covered micro-markets`}.`;
+      // The subject changed with the Showing selector, so the badge and the
+      // note have to say which question is being answered — otherwise a pinned
+      // game reads as a claim that it holds the board's best call.
+      const badge = pinned ? "SELECTED GAME" : "TOP AT-BAT · ALL GAMES";
+      const openN = this.liveGames().reduce((a2, x) => a2 + (this.bestCallIn(x) ? 1 : 0), 0);
+      const note = pinned
+        ? "the open at-bat in this game"
+        : `highest model probability of ${openN} open at-bat${openN === 1 ? "" : "s"}`;
+      const why = pinned
+        ? `${esc(this.shortName(g.batter.name))} vs ${esc(this.shortName(g.pitcher.name))} — the model's most confident open call in this game, across the ${covered === 1 ? "one covered micro-market" : `${covered} covered micro-markets`}.`
+        : `${esc(this.shortName(g.batter.name))} vs ${esc(this.shortName(g.pitcher.name))} — the model's most confident open call across the ${covered === 1 ? "one covered micro-market" : `${covered} covered micro-markets`}.`;
 
       // The distribution is the pitch_result market's own probs, straight off
       // /live. The graded feed does not carry them — pitchfeed.ts selects
@@ -1705,9 +2161,9 @@
 
       return `<div style="border:1px solid ${C.gbd};border-radius:14px;background:${C.gbg};padding:16px 18px;">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
-          <span style="font-size:10px;font-weight:800;letter-spacing:.09em;color:${C.grn};background:rgba(74,222,128,.14);padding:3px 7px;border-radius:5px;">BEST CALL NOW</span>
+          <span style="font-size:10px;font-weight:800;letter-spacing:.09em;color:${C.grn};background:rgba(74,222,128,.14);padding:3px 7px;border-radius:5px;">${esc(badge)}</span>
           <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.gsub};">${esc(g.away)} @ ${esc(g.home)} · ${esc(g.half || "")}${esc(g.inning == null ? "" : g.inning)} · ${esc(g.count || "0-0")}</span>
-          <span style="margin-left:auto;font-size:11.5px;color:${C.gsub};">highest confidence of ${covered} open call${covered === 1 ? "" : "s"}</span>
+          <span style="margin-left:auto;font-size:11.5px;color:${C.gsub};">${esc(note)}</span>
         </div>
         <div style="display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;margin-bottom:4px;">
           <span style="font-size:${mobile ? 24 : 30}px;font-weight:800;letter-spacing:-.03em;line-height:1;">${esc(label)}</span>
@@ -1719,7 +2175,7 @@
         <div style="display:flex;gap:22px;flex-wrap:wrap;border-top:1px solid ${C.gbd};padding-top:12px;">
           ${tile(spd.predictedValue == null ? "—" : Number(spd.predictedValue).toFixed(1), "PROJ VELO (MPH)")}
           ${tile(abp.predictedValue == null ? "—" : Number(abp.predictedValue).toFixed(1), "PROJ PITCHES IN AB")}
-          ${tile(this.ratio(gs.abC, gs.abN), "CALLS CORRECT THIS GAME", C.grn)}
+          ${tile(this.ratioPct(gs.abC, gs.abN), "CALLS CORRECT THIS GAME", gs.abN ? this.accColor(this.rate(gs.abC, gs.abN)) : C.dim)}
         </div>
       </div>`;
     }
@@ -1768,11 +2224,11 @@
       return `<div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};padding:14px 16px;">
         <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:12px;">
           <span style="font-size:10px;font-weight:800;letter-spacing:.09em;color:${C.faint};">CURRENT AT-BAT</span>
-          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.mut};">pitch ${this.ratio(c, n)} · MAE ${this.maeText(mae)}</span>
+          <span style="margin-left:auto;display:flex;gap:14px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.mut};"><span style="white-space:nowrap;">pitch <span style="color:${this.accColor(this.rate(c, n))};">${this.ratioPct(c, n)}</span></span><span style="white-space:nowrap;">MAE ${this.maeText(mae)}</span></span>
         </div>
         <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:3px;">
-          <span style="font-size:16px;font-weight:700;">${esc(g.batter.name)}</span>
-          <span style="font-size:11.5px;color:${C.mut};">vs ${esc(g.pitcher.name)}</span>
+          ${this.entityLinkHtml("BATTER", g.batter.id, g.batter.name, esc(g.batter.name), "font-size:16px;font-weight:700;")}
+          <span style="font-size:11.5px;color:${C.mut};">vs ${this.entityLinkHtml("PITCHER", g.pitcher.id, g.pitcher.name, esc(g.pitcher.name), `color:${C.mut};`)}</span>
         </div>
         <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};margin-bottom:12px;">${esc(g.half || "")}${esc(g.inning == null ? "" : g.inning)} · ${esc(g.count || "0-0")} count · ${pitches.length} pitch${pitches.length === 1 ? "" : "es"} seen</div>
         <div style="display:flex;flex-direction:column;gap:3px;">${rows || `<div style="font-size:12px;color:${C.faint};font-style:italic;">No pitches thrown in this at-bat yet.</div>`}</div>
@@ -1785,29 +2241,42 @@
       // Always today, whatever date the Data Feed's stepper has been left on.
       const date = PH.mlbDate(0);
       const models = this.models(date);
-      const best = this.bestCall();
+      const sub = this.heroSubject();
+      const best = sub.best;
       const all = this.allAbs(models);
       const gs = this.gameStats(all);
 
+      // A pinned game with no covered market is a real state — the game is
+      // live but nothing has been scored into the current at-bat yet — and it
+      // is not the same as "nothing is live".
+      const emptyHero = (title, body) =>
+        `<div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};padding:18px 20px;margin-bottom:22px;">
+          <div style="font-size:10px;font-weight:800;letter-spacing:.09em;color:${C.faint};">${sub.pinned ? "SELECTED GAME" : "TOP AT-BAT · ALL GAMES"}</div>
+          <div style="font-size:15px;font-weight:700;margin-top:6px;">${esc(title)}</div>
+          <div style="font-size:12.5px;color:${C.mut};margin-top:5px;line-height:1.5;">${esc(body)}</div>
+        </div>`;
+
       const hero = best
         ? `<div style="display:grid;grid-template-columns:${mobile || this.narrow() ? "minmax(0,1fr)" : "1.55fr minmax(0,1fr)"};gap:14px;margin-bottom:26px;align-items:start;">
-            ${this.heroHtml(best, models, mobile)}
+            ${this.heroHtml(best, models, mobile, sub.pinned)}
             ${this.currentAbHtml(best.game, mobile)}
           </div>`
-        : `<div style="border:1px solid ${C.bd};border-radius:14px;background:${C.panel};padding:18px 20px;margin-bottom:22px;">
-            <div style="font-size:10px;font-weight:800;letter-spacing:.09em;color:${C.faint};">BEST CALL NOW</div>
-            <div style="font-size:15px;font-weight:700;margin-top:6px;">Nothing live right now</div>
-            <div style="font-size:12.5px;color:${C.mut};margin-top:5px;line-height:1.5;">The hero returns the moment a game is in progress. Today's record is below either way.</div>
-          </div>`;
+        : sub.pinned && sub.game
+          ? `<div style="display:grid;grid-template-columns:${mobile || this.narrow() ? "minmax(0,1fr)" : "1.55fr minmax(0,1fr)"};gap:14px;margin-bottom:26px;align-items:start;">
+              ${emptyHero(`No open call in ${sub.game.away} @ ${sub.game.home}`, COPY.heroNoCallInGame)}
+              ${this.currentAbHtml(sub.game, mobile)}
+            </div>`
+          : emptyHero("Nothing live right now", COPY.heroNothingLive);
 
       return `<div style="padding:${mobile ? "14px 14px 24px" : "20px 26px 48px"};max-width:1240px;margin:0 auto;">
+        ${this.heroChipsHtml(mobile)}
         ${hero}
         <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 10px;">
-          <span style="font-size:15px;font-weight:800;letter-spacing:-.01em;">Today's games</span>
-          <span style="font-size:11.5px;color:${C.faint};">expand a game for at-bat calls, then an at-bat for pitch by pitch</span>
-          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.mut};">${this.ratio(gs.abC, gs.abN)} at-bat calls · ${this.ratio(gs.pC, gs.pN)} pitch calls · MAE ${this.maeText(gs.mae)}</span>
+          <span style="font-size:15px;font-weight:800;letter-spacing:-.01em;">All of today's games</span>
+          ${mobile ? "" : `<span style="font-size:11.5px;color:${C.faint};">${esc(COPY.liveListHint)}</span>`}
+          <span style="margin-left:auto;display:flex;gap:16px;flex-wrap:wrap;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.mut};"><span style="white-space:nowrap;"><span style="color:${this.accColor(this.rate(gs.abC, gs.abN))};">${this.ratioPct(gs.abC, gs.abN)}</span> at-bat calls</span><span style="white-space:nowrap;"><span style="color:${this.accColor(this.rate(gs.pC, gs.pN))};">${this.ratioPct(gs.pC, gs.pN)}</span> pitch calls</span><span style="white-space:nowrap;">MAE ${this.maeText(gs.mae)}</span></span>
         </div>
-        ${this.gamePillsHtml(models, mobile, date)}
+        ${this.liveGamePillsHtml(models, mobile, date)}
       </div>`;
     }
 
@@ -2071,8 +2540,8 @@
 
       return `<div style="padding:${bare ? "0 0 18px" : (mobile ? "14px 14px 4px" : "18px 24px 6px")};">
         <div style="display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:10px;">
-          <span style="font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">Prediction history</span>
-          <span style="font-size:11.5px;color:${C.faint};">stored server-side · survives reload</span>
+          <span style="font-size:11px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;color:${C.faint};">${esc(COPY.feedPanelTitle)}</span>
+          <span style="font-size:11.5px;color:${C.faint};">${esc(COPY.feedPanelSub)}</span>
         </div>
         ${filters}
         ${summary}
@@ -2097,29 +2566,101 @@
       return `<div style="font-size:12.5px;color:${this.C.faint};font-style:italic;line-height:1.55;">${esc(msg)}</div>`;
     }
 
+    // The graded record for the whole window, summed from /accuracy. That
+    // rollup is per (day, market) and is never pruned, so it can answer for a
+    // 30-day window without the browser paging 300,000 per-pitch rows — which
+    // is the only reason these tiles can describe more than one slate.
+    windowAcc() {
+      const w = this.dfWindow();
+      const days = (this.state.accuracy.days || [])
+        .filter((d) => d.day >= w.from && d.day <= w.to);
+      const of = (market) => days.filter((d) => d.market === market).reduce(
+        (a, d) => ({
+          w: a.w + Number(d.wins || 0),
+          l: a.l + Number(d.losses || 0),
+          n: a.n + Number(d.n_graded || 0),
+        }), { w: 0, l: 0, n: 0 },
+      );
+      return {
+        ab: of("ab_result"), pitch: of("pitch_result"),
+        days: [...new Set(days.map((d) => d.day))].length,
+      };
+    }
+
     kpiTilesHtml(models, mobile) {
       const C = this.C;
-      const abs = this.allAbs(models);
-      const gs = this.gameStats(abs);
-      const abR = this.rate(gs.abC, gs.abN);
-      const pR = this.rate(gs.pC, gs.pN);
-      // High-confidence accuracy is the one number that says whether the
-      // model's own confidence means anything: calls it was sure about should
-      // land more often than calls it was not.
-      const hi = abs.filter((ab) => ab.ok != null && ab.predProb != null && ab.predProb >= this.CONF_TOP);
+      const acc = this.state.accuracy;
+      const wa = this.windowAcc();
+      const dirty = this.dfFilterDirty();
+      const scope = this.dfRowScope();
+
+      // Tiles 1 and 2 answer "how good is the record" and have two possible
+      // sources. Unfiltered they come from the nightly rollup, which covers the
+      // whole window in one request. The moment a row-level filter is set the
+      // rollup cannot answer — it has no team or player — so they switch to the
+      // per-pitch rows, and their subtitle names the slates that covers. The
+      // number moves when you filter because it is a different question, and
+      // the subtitle is what says so.
+      const abDecided = wa.ab.w + wa.ab.l;
+      const pDecided = wa.pitch.w + wa.pitch.l;
+      const rowAbs = this.allAbs(models);
+      const rowGs = this.gameStats(rowAbs);
+
+      const abR = dirty ? this.rate(rowGs.abC, rowGs.abN) : this.rate(wa.ab.w, abDecided);
+      const pR = dirty ? this.rate(rowGs.pC, rowGs.pN) : this.rate(wa.pitch.w, pDecided);
+
+      // MAE and high-confidence accuracy are NOT in the daily rollup — it
+      // carries wins/losses/pushes and mean confidence, nothing about how far a
+      // velocity call missed by. They come from rows always, so they cover the
+      // loaded slates and say so.
+      const hi = rowAbs.filter((ab) => ab.ok != null && ab.predProb != null && ab.predProb >= this.CONF_TOP);
       const hiR = this.rate(hi.filter((ab) => ab.ok).length, hi.length);
+      const emptySub = this.dfStaleNote()
+        ? `rollup has nothing since ${this.accNewestDay()}`
+        : "nothing graded in this window";
+      // "Nothing loaded" and "nothing matched" are different failures and must
+      // not share a message: the first is fixed by opening a day, the second by
+      // relaxing a filter.
+      const noRows = this.dfRowModels().length
+        ? "no calls match these filters"
+        : "no slate loaded — pick Today, or open a day below";
+
       const tiles = [
-        { big: abR == null ? "—" : this.pct(abR), label: "At-bat call accuracy", sub: `${gs.abC} of ${gs.abN} graded at-bats`, c: C.txt },
-        { big: pR == null ? "—" : this.pct(pR), label: "Pitch result accuracy", sub: `${gs.pC} of ${gs.pN} graded pitches`, c: C.txt },
-        { big: this.maeText(gs.mae == null ? null : gs.mae), label: "Velo MAE (mph)", sub: "mean abs error, all graded pitches", c: gs.mae == null ? C.dim : this.grd(this.veloBand(gs.mae)).fg },
-        { big: hiR == null ? "—" : this.pct(hiR), label: "High-confidence accuracy", sub: `${hi.length} calls at ${Math.round(this.CONF_TOP * 100)}%+`, c: hiR == null ? C.dim : this.accColor(hiR) },
-        { big: String(models.length), label: "Games graded", sub: esc(this.viewDate("data")), c: C.dim },
+        {
+          big: dirty ? this.pct(abR) : (acc.loaded ? this.pct(abR) : "—"),
+          label: "At-bat call accuracy",
+          sub: dirty
+            ? (rowGs.abN ? `${rowGs.abC} of ${rowGs.abN} graded · ${scope}` : noRows)
+            : (abDecided ? `${wa.ab.w} of ${abDecided} graded at-bats` : emptySub),
+          c: abR == null ? C.dim : this.accColor(abR),
+        },
+        {
+          big: dirty ? this.pct(pR) : (acc.loaded ? this.pct(pR) : "—"),
+          label: "Pitch result accuracy",
+          sub: dirty
+            ? (rowGs.pN ? `${rowGs.pC} of ${rowGs.pN} graded · ${scope}` : noRows)
+            : (pDecided ? `${wa.pitch.w} of ${pDecided} graded pitches` : emptySub),
+          c: pR == null ? C.dim : this.accColor(pR),
+        },
+        {
+          big: this.maeText(rowGs.mae), label: "Velo MAE (mph)",
+          sub: rowGs.mae == null ? noRows : `mean abs error · ${scope}`,
+          c: rowGs.mae == null ? C.dim : this.grd(this.veloBand(rowGs.mae)).fg,
+        },
+        {
+          big: hiR == null ? "—" : this.pct(hiR), label: "High-confidence accuracy",
+          sub: hiR == null ? noRows : `${hi.length} calls at ${Math.round(this.CONF_TOP * 100)}%+ · ${scope}`,
+          c: hiR == null ? C.dim : this.accColor(hiR),
+        },
+        dirty || this.dfSingleDay()
+          ? { big: String(models.length), label: "Games graded", sub: scope, c: C.dim }
+          : { big: acc.loaded ? String(wa.days) : "—", label: "Days graded", sub: this.dfWindowLabel(), c: C.dim },
       ];
       return `<div style="display:grid;grid-template-columns:repeat(${mobile ? 2 : 5},minmax(0,1fr));gap:10px;margin-bottom:16px;">
         ${tiles.map((k) => `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};padding:12px 13px;display:flex;flex-direction:column;gap:5px;min-width:0;">
           <span style="font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:700;color:${k.c};line-height:1;">${esc(k.big)}</span>
           <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:${C.mut};text-transform:uppercase;">${esc(k.label)}</span>
-          <span style="font-size:11px;color:${C.faint};">${k.sub}</span>
+          <span style="font-size:11px;color:${C.faint};">${esc(k.sub)}</span>
         </div>`).join("")}
       </div>`;
     }
@@ -2130,14 +2671,22 @@
       const acc = this.state.accuracy;
       if (!acc.loaded) return this.chartEmpty("Loading the accuracy history…");
       if (acc.err) return this.chartEmpty("Couldn't reach the accuracy rollup. The other three panels are computed from the day's rows and are unaffected.");
+      // The whole retained span is held in state; this chart draws the window.
+      // Without the filter it kept plotting days the reader had just excluded.
+      const w = this.dfWindow();
       const byMkt = new Map();
       (acc.days || []).forEach((d) => {
+        if (d.day < w.from || d.day > w.to) return;
         if (!this.MICRO.includes(d.market) || d.win_rate == null) return;
         const arr = byMkt.get(d.market) || [];
         arr.push(d);
         byMkt.set(d.market, arr);
       });
-      if (!byMkt.size) return this.chartEmpty("No graded days in the window yet. The rollup runs nightly, so a market appears here the morning after its first graded slate.");
+      if (!byMkt.size) {
+        const stale = this.dfStaleNote();
+        return this.chartEmpty(stale
+          || "No graded days in this window yet. The rollup runs nightly, so a market appears here the morning after its first graded slate.");
+      }
 
       const rows = this.MICRO.filter((k) => byMkt.has(k)).map((k) => {
         const series = byMkt.get(k).slice(-14);
@@ -2252,8 +2801,9 @@
       (models || []).forEach((g) => g.abs.forEach((ab) => {
         if (!ab.batter) return;
         const e = bt[ab.batter] || (bt[ab.batter] = {
-          name: ab.batter, ab: 0, ok: 0, graded: 0, str: 0, pn: 0, mix: {},
+          name: ab.batter, id: ab.batterId, ab: 0, ok: 0, graded: 0, str: 0, pn: 0, mix: {},
         });
+        if (e.id == null && ab.batterId != null) e.id = ab.batterId;
         e.ab += 1;
         if (ab.ok != null) { e.graded += 1; if (ab.ok) e.ok += 1; }
         if (ab.actual) e.mix[ab.actual] = (e.mix[ab.actual] || 0) + 1;
@@ -2280,7 +2830,7 @@
         const mix = OUT_KEYS.filter((k) => e.mix[k]).map((k) =>
           `<span title="${esc(this.outLabel(k))} ${e.mix[k]}" style="display:block;height:100%;background:${this.OUT_COLOR[k]};width:${(e.mix[k] / mixTotal) * 100}%;"></span>`).join("");
         return `<div style="display:grid;grid-template-columns:${cols};gap:8px;align-items:center;padding:7px 2px;border-bottom:1px solid ${C.row};">
-          <span style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(this.shortName(e.name))}</span>
+          ${this.entityLinkHtml("BATTER", e.id, e.name, esc(this.shortName(e.name)), "font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;")}
           <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.dim};text-align:right;">${e.ab}</span>
           ${mobile ? "" : `<span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.dim};text-align:right;">${e.pn ? Math.round((e.str / e.pn) * 100) + "%" : "—"}</span>`}
           <span style="display:flex;height:8px;border-radius:999px;overflow:hidden;background:${C.panel2};">${mix}</span>
@@ -2295,84 +2845,701 @@
         </div>`;
     }
 
-    // Which slate the tab is showing, and the controls that walk the retained
-    // window. `dfDate` is an America/New_York date so it lines up with
-    // games.official_date, which is what the server filters on — a UTC-derived
-    // date is a different day all evening.
-    dayPickerHtml() {
+    // ── the window ───────────────────────────────────────────────────────
+    // Replaces the single-day stepper. Everything on the tab that CAN describe
+    // more than one slate now does; everything that cannot says so.
+    dfWindowChipsHtml(mobile) {
       const C = this.C;
-      const today = PH.mlbDate(0);
-      const yesterday = PH.mlbDate(-1);
-      const dfDate = this.state.dfDate;
+      const cur = this.state.dfRange || "7d";
       const chip = (arg, label, on) =>
-        `<button data-act="dfDate" data-arg="${esc(arg)}" style="border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${on ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;">${label}</button>`;
-      const chips = chip("today", "Today", dfDate == null)
-        + chip(yesterday, "Yesterday", dfDate === yesterday);
+        `<button data-act="dfRange" data-arg="${esc(arg)}" style="border:1px solid ${on ? C.acc : C.bd};background:${on ? "#12301f" : C.chip};color:${on ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;white-space:nowrap;">${esc(label)}</button>`;
+      const chips = this.DF_RANGES.map(([k, l]) => chip(k, l, cur === k)).join("");
+      const w = this.dfWindow();
+      // The two date boxes are `change`-driven and carry data-feedfilter, so
+      // render()'s focus guard already holds the 8s poll off while one of them
+      // has the caret.
+      const dateInput = (key, val, max, min) =>
+        `<input type="date" data-feedfilter="${key}" value="${esc(val)}" max="${esc(max)}"${min ? ` min="${esc(min)}"` : ""} style="border:1px solid ${C.bd};background:${C.panel};color:${C.txt};font-family:inherit;font-size:11.5px;padding:5px 8px;border-radius:7px;color-scheme:dark;" />`;
+      const custom = cur === "custom"
+        ? `<span style="display:inline-flex;align-items:center;gap:6px;">
+            ${dateInput("dfFrom", this.state.dfFrom || w.from, w.to, PH.mlbDate(-(this.ACC_SPAN_DAYS - 1)))}
+            <span style="font-size:11px;color:${C.faint};">to</span>
+            ${dateInput("dfTo", this.state.dfTo || w.to, PH.mlbDate(0))}
+          </span>`
+        : "";
+      return `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">${chips}${custom}</div>`;
+    }
 
-      // Movement is by offset from today rather than by date arithmetic on the
-      // string: PH.mlbDate resolves through America/New_York, and adding 86400s
-      // to a naive date crosses the wrong boundary on DST days.
-      const curDate = dfDate || today;
-      const dayOff = Math.round(
-        (Date.parse(today + "T00:00:00Z") - Date.parse(curDate + "T00:00:00Z")) / 86400000,
-      );
-      const stepBtn = (target, glyph, title) => {
-        const live = target != null;
-        return `<button ${live ? `data-act="dfDate" data-arg="${esc(target)}"` : "disabled"} title="${title}" style="border:1px solid ${C.bd};background:${C.chip};color:${live ? C.dim : C.faint};font-family:inherit;font-weight:700;font-size:12px;padding:6px 10px;border-radius:999px;cursor:${live ? "pointer" : "default"};opacity:${live ? 1 : .45};">${glyph}</button>`;
+    // ── row-level filters ────────────────────────────────────────────────
+    // Team, player, home/away and role are dimensions of the per-pitch rows and
+    // of nothing else: prediction_accuracy_daily is keyed (day, market) and has
+    // no idea who was batting. So these four scope the surfaces built from rows
+    // — the KPI tiles and the charts — and deliberately never touch the history
+    // accordion, which follows the window alone.
+    dfFilters() {
+      return {
+        team: this.state.dfTeam || "",
+        player: this.state.dfPlayer || "",
+        side: this.state.dfSide || "all",
+        role: this.state.dfRole || "all",
       };
-      // Older clamps at the retention edge; newer clamps at today, where the
-      // "Today" chip takes over as the live view.
-      const olderArg = dayOff < this.DF_RETAIN_DAYS ? PH.mlbDate(-(dayOff + 1)) : null;
-      const newerArg = dayOff > 0
-        ? (dayOff === 1 ? "today" : PH.mlbDate(-(dayOff - 1)))
-        : null;
-      return `<div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
-        ${chips}
-        <span style="display:inline-flex;align-items:center;gap:6px;margin-left:4px;">
-          ${stepBtn(olderArg, "◀", "Older slate")}
-          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.mut};min-width:74px;text-align:center;">${esc(curDate)}</span>
-          ${stepBtn(newerArg, "▶", "Newer slate")}
-        </span>
+    }
+    dfFilterDirty() {
+      const f = this.dfFilters();
+      return !!(f.team || f.player || f.side !== "all" || f.role !== "all");
+    }
+    // Bottom of an inning is the home side batting, so the pitching side is
+    // whichever team is not batting. Both are derived from `half` plus the
+    // game label — no API row names a batting team.
+    dfBatTeam(m, ab) { return ab.team; }
+    dfPitTeam(m, ab) {
+      if (ab.half == null) return null;
+      return ab.half === "▼" ? m.away : m.home;
+    }
+    dfIsHome(m, ab, role) {
+      if (ab.half == null) return null;
+      const battingHome = ab.half === "▼";
+      return role === "pitcher" ? !battingHome : battingHome;
+    }
+    abMatchesDf(m, ab, f) {
+      const roles = f.role === "all" ? ["batter", "pitcher"] : [f.role];
+      // "All" matches if EITHER side of the matchup satisfies the filters, so
+      // a team filter under All finds that team's at-bats and its pitching.
+      return roles.some((role) => {
+        if (f.team) {
+          const t = role === "batter" ? this.dfBatTeam(m, ab) : this.dfPitTeam(m, ab);
+          if (t !== f.team) return false;
+        }
+        if (f.player) {
+          const nm = role === "batter" ? ab.batter : ab.pitcher;
+          if (nm !== f.player) return false;
+        }
+        if (f.side !== "all") {
+          const home = this.dfIsHome(m, ab, role);
+          if (home == null || home !== (f.side === "home")) return false;
+        }
+        return true;
+      });
+    }
+    dfApplyFilters(models) {
+      if (!this.dfFilterDirty()) return models;
+      const f = this.dfFilters();
+      const out = [];
+      (models || []).forEach((m) => {
+        const abs = m.abs.filter((ab) => this.abMatchesDf(m, ab, f));
+        if (abs.length) out.push(Object.assign({}, m, { abs }));
+      });
+      return out;
+    }
+
+    // Which slates in the window are actually in memory. Rows are paged one
+    // slate at a time, so this is today plus whatever days the reader has
+    // opened in the history — and it is what every row-derived surface below
+    // is honestly about.
+    dfLoadedDates() {
+      const w = this.dfWindow();
+      return Object.keys(this.state.days)
+        .filter((date) => {
+          if (date < w.from || date > w.to) return false;
+          const dr = this.state.days[date];
+          return !!(dr && dr.loaded && !dr.pending && (dr.rows || []).length);
+        })
+        .sort();
+    }
+    dfRowModels() {
+      const out = [];
+      this.dfLoadedDates().forEach((date) => out.push(...this.models(date)));
+      return out;
+    }
+    dfRowScope() {
+      const dates = this.dfLoadedDates();
+      if (!dates.length) return "no slate loaded";
+      return dates.length === 1 ? dates[0] : `${dates.length} loaded slates`;
+    }
+
+    // Options come from the loaded slates rather than from a hard-coded league
+    // list: an option that cannot match anything is worse than a shorter menu.
+    dfTeamOptions(models) {
+      const set = new Set();
+      (models || []).forEach((m) => { if (m.away) set.add(m.away); if (m.home) set.add(m.home); });
+      // Also whatever the trends page names. Without this the select was empty
+      // on any day with no slate paged in — off-hours, or before first pitch —
+      // even though /trends could answer a team filter perfectly well.
+      ((this.state.trends && this.state.trends.rows) || []).forEach((r) => {
+        if (r.team) set.add(r.team);
+      });
+      return [...set].sort();
+    }
+    dfPlayerOptions(models) {
+      const f = this.dfFilters();
+      const set = new Set();
+      (models || []).forEach((m) => m.abs.forEach((ab) => {
+        if (f.role !== "pitcher" && ab.batter) set.add(ab.batter);
+        if (f.role !== "batter" && ab.pitcher) set.add(ab.pitcher);
+      }));
+      return [...set].sort();
+    }
+
+    dfSelectHtml(key, allLabel, opts, val, mobile) {
+      const C = this.C;
+      const opt = (v, label, on) =>
+        `<option value="${esc(v)}"${on ? " selected" : ""}>${esc(label)}</option>`;
+      const body = [opt("", allLabel, !val)]
+        .concat(opts.map((o) => opt(o, o, o === val)))
+        // A value that is no longer in the option list (its slate was evicted)
+        // still has to appear, or the select would silently show "All" while
+        // the filter was still applied.
+        .concat(val && opts.indexOf(val) === -1 ? [opt(val, `${val} (not in loaded slates)`, true)] : [])
+        .join("");
+      return `<select data-feedfilter="${key}" style="background:${C.panel};color:${C.txt};border:1px solid ${val ? C.acc : C.bd};border-radius:7px;font-family:inherit;font-size:11.5px;font-weight:600;padding:6px 9px;max-width:${mobile ? 150 : 190}px;cursor:pointer;min-width:0;${mobile ? "flex:1 1 132px;" : ""}">${body}</select>`;
+    }
+    dfSegHtml(act, cur, items) {
+      const C = this.C;
+      return `<span style="display:inline-flex;gap:3px;background:${C.chip};border:1px solid ${C.bd};border-radius:999px;padding:2px;">
+        ${items.map(([k, l]) => {
+          const on = cur === k;
+          return `<button data-act="${act}" data-arg="${esc(k)}" style="border:0;background:${on ? "#12301f" : "transparent"};color:${on ? C.grn : C.dim};font-family:inherit;font-weight:600;font-size:11.5px;padding:4px 10px;border-radius:999px;cursor:pointer;white-space:nowrap;">${esc(l)}</button>`;
+        }).join("")}
+      </span>`;
+    }
+
+    dfFilterBarHtml(mobile) {
+      const C = this.C;
+      const f = this.dfFilters();
+      const all = this.dfRowModels();
+      const dirty = this.dfFilterDirty();
+      const scoped = this.dfApplyFilters(all);
+      const abN = scoped.reduce((a, m) => a + m.abs.length, 0);
+
+      // Label and control travel as one unit. Emitted as siblings they got
+      // split by the wrap on a phone, leaving "PLAYER" stranded at the end of
+      // the row above the select it names.
+      const field = (t, control) =>
+        `<span style="display:inline-flex;align-items:center;gap:7px;min-width:0;${mobile ? "flex:1 1 auto;" : ""}">
+          <span style="font-size:9.5px;font-weight:800;letter-spacing:.06em;color:${C.faint};white-space:nowrap;">${t}</span>${control}
+        </span>`;
+      const divider = `<span style="width:1px;height:18px;background:${C.bd2};"></span>`;
+      const summary = [
+        f.team || "All teams",
+        f.player ? this.shortName(f.player) : "All players",
+        f.side === "all" ? "home + away" : f.side,
+        f.role === "all" ? "batters + pitchers" : `${f.role}s`,
+        this.dfWindowLabel(),
+      ].join(" · ");
+
+      return `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel2};padding:11px 13px;margin-bottom:14px;display:flex;align-items:center;gap:${mobile ? 8 : 10}px;flex-wrap:wrap;">
+        ${field("TEAM", this.dfSelectHtml("dfTeam", "All teams", this.dfTeamOptions(all), f.team, mobile))}
+        ${field("PLAYER", this.dfSelectHtml("dfPlayer", "All players", this.dfPlayerOptions(all), f.player, mobile))}
+        ${mobile ? "" : divider}
+        ${field("SPLIT", this.dfSegHtml("dfSide", f.side, [["all", "Both"], ["home", "Home"], ["away", "Away"]]))}
+        ${field("ROLE", this.dfSegHtml("dfRole", f.role, [["all", "All"], ["batter", "Batters"], ["pitcher", "Pitchers"]]))}
+        ${dirty ? `<button data-act="dfClear" style="border:1px solid ${C.bd};background:transparent;color:${C.dim};font-family:inherit;font-size:11.5px;font-weight:600;padding:5px 10px;border-radius:999px;cursor:pointer;">Clear</button>` : ""}
+        <span style="${mobile
+          // On a phone the summary is its own full-width line that wraps. Left
+          // nowrap it ran to ~660px and took the whole page into a sideways
+          // scroll, which the design system does not allow.
+          ? `flex:1 0 100%;white-space:normal;line-height:1.5;`
+          : `margin-left:auto;white-space:nowrap;`}font-family:'IBM Plex Mono',monospace;font-size:11px;color:${C.faint};">${esc(summary)} — ${abN} at-bat${abN === 1 ? "" : "s"} · ${esc(this.dfRowScope())}</span>
       </div>`;
+    }
+
+    // ── profitable trends ────────────────────────────────────────────────
+    // The sample floor is the whole point of the panel: without it a 4-for-5
+    // stretch tops the table and the reader learns nothing. It is enforced
+    // server-side; this is the value the board asks for.
+    TRENDS_MIN_GRADED = 20;
+    // Streaks are the only part of /trends that scales with page size, so the
+    // board asks for a panel's worth rather than a dataset's.
+    TRENDS_LIMIT = 12;
+
+    trendsPanelHtml(mobile) {
+      const C = this.C;
+      const t = this.state.trends;
+      const f = this.dfFilters();
+      const card = (body, note) => `<div style="border:1px solid ${C.gbd};border-radius:12px;background:${C.panel};padding:14px 16px;min-width:0;grid-column:1/-1;">
+        <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:2px;">
+          <span style="font-size:12.5px;font-weight:700;">Profitable trends</span>
+          <span style="font-size:11px;color:${C.faint};">${esc(note)}</span>
+        </div>
+        <div style="margin-top:12px;">${body}</div>
+      </div>`;
+
+      const base = t.baseline;
+      const baseRate = base && base.win_rate != null ? base.win_rate : null;
+      const note = baseRate == null
+        ? COPY.trendsNote
+        : `${COPY.trendsNote} · baseline ${this.pct(baseRate)} over ${Number(base.wins + base.losses).toLocaleString()} graded calls`;
+
+      if (!t.loaded) return card(this.chartEmpty("Loading the trends table…"), note);
+      if (t.err) return card(this.chartEmpty("Couldn't reach the trends endpoint. The panels around it are computed from other sources and are unaffected."), note);
+
+      // The player filter is a name, and the route keys on id, so it is applied
+      // to the page rather than sent.
+      const rows = f.player ? t.rows.filter((r) => r.name === f.player) : t.rows;
+      if (!rows.length) {
+        return card(this.chartEmpty(
+          f.player
+            ? `${f.player} is not in the ranked page, or has fewer than ${this.TRENDS_MIN_GRADED} graded calls in this window.`
+            : `No player has ${this.TRENDS_MIN_GRADED} or more graded calls under these filters yet.`,
+        ), note);
+      }
+
+      // Edge bars share one scale so two rows can be compared by length.
+      const maxEdge = rows.reduce((a, r) => Math.max(a, Math.abs(r.edge_pt || 0)), 1);
+      const cols = mobile
+        ? "minmax(0,1fr) 74px 62px"
+        : "minmax(0,1.1fr) 58px 66px 128px minmax(0,1fr) 72px 62px";
+      const head = (mobile
+        ? ["PLAYER", "GRADED", "EDGE"]
+        : ["PLAYER", "ROLE", "SPLIT", "GRADED CALLS", "EDGE VS BASELINE", "UNITS", "STREAK"])
+        .map((h, i) => `<span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:${C.faint};${i >= (mobile ? 1 : 5) ? "text-align:right;" : ""}">${h}</span>`).join("");
+
+      const body = rows.map((r) => {
+        const decided = (r.wins || 0) + (r.losses || 0);
+        const rate = r.win_rate;
+        const edge = r.edge_pt;
+        const edgeFg = edge == null ? C.faint : edge >= 0 ? C.grn : this.GRD.bad.fg;
+        const units = r.profit_units;
+        const unitFg = units == null ? C.faint : units >= 0 ? C.grn : this.GRD.bad.fg;
+        // A streak of null is "no settled call inside the horizon", which is
+        // not a streak of zero — the dash says so.
+        const st = r.streak;
+        const stText = st == null ? "—" : `${st >= 0 ? "W" : "L"}${Math.abs(st)}`;
+        const stFg = st == null ? C.faint : st >= 0 ? C.grn : this.GRD.bad.fg;
+        // Spelled out rather than the design's BAT/PIT: "PIT" is also
+        // Pittsburgh's abbreviation, and the row above it shows the team — so a
+        // Pirates pitcher rendered as "PIT / PIT".
+        const roleTag = r.role === "pitcher" ? "PITCHER" : "BATTER";
+        const roleFg = r.role === "pitcher" ? "#b49bff" : C.blue;
+        const hr = r.splits && r.splits.home ? r.splits.home.win_rate : null;
+        const ar = r.splits && r.splits.away ? r.splits.away.win_rate : null;
+        // One line saying why this player is on the table, in words.
+        const reason = `${this.pct(rate)} on ${decided} graded${edge == null ? "" : `, ${edge >= 0 ? "+" : "−"}${Math.abs(edge).toFixed(1)} pt vs baseline`}`;
+        const name = this.entityLinkHtml(
+          r.role === "pitcher" ? "PITCHER" : "BATTER", r.player_id, r.name || "—",
+          esc(this.shortName(r.name)), "font-size:12.5px;font-weight:700;",
+        );
+        const bar = `<span style="display:flex;align-items:center;gap:7px;min-width:0;">
+          <span style="flex:1;height:7px;background:${C.panel2};border-radius:999px;overflow:hidden;display:block;min-width:24px;">
+            <span style="display:block;height:100%;border-radius:999px;background:${edgeFg};width:${Math.round((Math.abs(edge || 0) / maxEdge) * 100)}%;"></span>
+          </span>
+          <b style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:${edgeFg};white-space:nowrap;">${edge == null ? "—" : `${edge >= 0 ? "+" : "−"}${Math.abs(edge).toFixed(1)} pt`}</b>
+        </span>`;
+
+        if (mobile) {
+          return `<div style="display:grid;grid-template-columns:${cols};gap:8px;align-items:center;padding:8px 2px;border-bottom:1px solid ${C.row};">
+            <span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+              ${name}
+              <span style="font-size:10px;color:${C.faint};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"><span style="color:${roleFg};font-weight:800;">${roleTag}</span> ${esc(r.team || "—")} · ${esc(reason)}</span>
+            </span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${this.accColor(rate)};text-align:right;white-space:nowrap;">${this.ratioPct(r.wins, decided)}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:${edgeFg};text-align:right;white-space:nowrap;">${edge == null ? "—" : `${edge >= 0 ? "+" : "−"}${Math.abs(edge).toFixed(1)}`}</span>
+          </div>`;
+        }
+        return `<div style="display:grid;grid-template-columns:${cols};gap:10px;align-items:center;padding:8px 2px;border-bottom:1px solid ${C.row};">
+          <span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+            ${name}
+            <span style="font-size:10.5px;color:${C.faint};white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${esc(reason)}</span>
+          </span>
+          <span style="display:flex;flex-direction:column;gap:1px;min-width:0;">
+            <b style="font-size:9.5px;font-weight:800;color:${roleFg};">${roleTag}</b>
+            ${this.entityLinkHtml("TEAM", null, r.team || "", esc(r.team || "—"), `font-size:10.5px;color:${C.mut};`)}
+          </span>
+          <span style="display:flex;flex-direction:column;gap:1px;font-family:'IBM Plex Mono',monospace;font-size:10.5px;">
+            <span style="color:${hr == null ? C.faint : this.accColor(hr)};">H ${this.pct(hr)}</span>
+            <span style="color:${ar == null ? C.faint : this.accColor(ar)};">A ${this.pct(ar)}</span>
+          </span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:${this.accColor(rate)};white-space:nowrap;">${this.ratioPct(r.wins, decided)}</span>
+          ${bar}
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:${unitFg};text-align:right;white-space:nowrap;">${units == null ? "—" : `${units >= 0 ? "+" : "−"}${Math.abs(units).toFixed(0)}`}</span>
+          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:${stFg};text-align:right;">${stText}</span>
+        </div>`;
+      }).join("");
+
+      const foot = `<div style="margin-top:9px;font-size:10.5px;color:${C.faint};line-height:1.5;">${esc(COPY.trendsFloorNote.replace("{n}", String(this.TRENDS_MIN_GRADED)))}${t.horizon ? ` ${COPY.trendsStreakNote.replace("{d}", String(t.horizon))}` : ""}</div>`;
+
+      return card(`<div style="display:grid;grid-template-columns:${cols};gap:${mobile ? 8 : 10}px;padding:0 2px 7px;border-bottom:1px solid ${C.bd};">${head}</div>${body}${foot}`, note);
+    }
+
+    // ── the history accordion: day -> game -> at-bat -> pitch ────────────
+    // The day list comes from /accuracy, not from the raw rows: the rollup is
+    // never pruned and is one row per (day, market), so a window of thirty
+    // slates costs one request. Rows for a day are paged only when its pill is
+    // opened.
+    dfDays() {
+      const w = this.dfWindow();
+      const by = new Map();
+      (this.state.accuracy.days || []).forEach((d) => {
+        if (d.day < w.from || d.day > w.to) return;
+        const e = by.get(d.day) || { day: d.day, mk: {} };
+        e.mk[d.market] = d;
+        by.set(d.day, e);
+      });
+      return [...by.values()].sort((a, b) => (a.day < b.day ? 1 : -1));
+    }
+    // Midday UTC, formatted in UTC: a date-only string parsed as local midnight
+    // renders as the previous day for anyone west of Greenwich.
+    dfDayLabel(day) {
+      const d = new Date(Date.parse(`${day}T12:00:00Z`));
+      if (isNaN(d)) return day;
+      const opt = (o) => d.toLocaleDateString(undefined, Object.assign({ timeZone: "UTC" }, o));
+      return `${opt({ weekday: "short" })} · ${opt({ month: "short", day: "numeric" })}`;
+    }
+    // The most recent day the nightly rollup has written. When this trails
+    // today the tab is not empty because nothing happened — it is empty
+    // because the job has not run, and the two must not read the same.
+    accNewestDay() {
+      const days = (this.state.accuracy.days || []).map((d) => d.day);
+      return days.length ? days.reduce((a, b) => (a > b ? a : b)) : null;
+    }
+    // A window that contains no rolled-up day, on a rollup that has older
+    // days, is a stale job rather than a quiet week.
+    dfStaleNote() {
+      const newest = this.accNewestDay();
+      if (!newest) return null;
+      const w = this.dfWindow();
+      if (newest >= w.from) return null;
+      return `The nightly accuracy rollup has not run since ${newest}. Every day in this window is missing from it — this is a job that has stopped, not a stretch with nothing graded.`;
+    }
+    dfDayAged(day) {
+      return day < PH.mlbDate(-this.DF_RETAIN_DAYS);
+    }
+
+    dfDayPillHtml(d, mobile) {
+      const C = this.C;
+      const path = `d-${d.day}`;
+      const open = !!this.state.dfOpen[path];
+      const today = d.day === PH.mlbDate(0);
+      const aged = this.dfDayAged(d.day);
+      const rec = (mk) => {
+        const r = d.mk[mk];
+        if (!r) return { c: 0, n: 0 };
+        return { c: Number(r.wins || 0), n: Number(r.wins || 0) + Number(r.losses || 0) };
+      };
+      const ab = rec("ab_result"), pit = rec("pitch_result");
+      const abR = this.rate(ab.c, ab.n);
+      // MAE and the game count are not in the rollup. They fill in for a day
+      // that has been opened, because opening it pages that slate's rows.
+      const dr = this.state.days[d.day];
+      const loaded = !!(dr && dr.loaded && !dr.pending);
+      const mae = loaded ? this.gameStats(this.allAbs(this.models(d.day))).mae : null;
+      const slate = (this.state.dayMeta[d.day] || []).length
+        || (today ? (PH.games || []).length : 0);
+      const note = aged ? "individual calls aged out"
+        : today ? "settling as games finish"
+          : "settled";
+
+      const cell = (main, label, fg) => `<span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+        <b style="font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 12 : 13}px;font-weight:600;color:${fg || C.dim};white-space:nowrap;">${main}</b>
+        <span style="font-size:10px;color:${C.faint};white-space:nowrap;">${esc(label)}</span>
+      </span>`;
+      const abCell = `<span style="display:flex;flex-direction:column;gap:3px;min-width:0;">
+        <span style="display:flex;align-items:baseline;gap:6px;">
+          <b style="font-family:'IBM Plex Mono',monospace;font-size:${mobile ? 12 : 13}px;font-weight:600;color:${this.accColor(abR)};white-space:nowrap;">${this.ratioPct(ab.c, ab.n)}</b>
+          <span style="font-size:10px;color:${C.faint};white-space:nowrap;">at-bat calls</span>
+        </span>
+        <span style="height:5px;background:${C.panel2};border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:${this.accColor(abR)};width:${Math.round((abR || 0) * 100)}%;"></span></span>
+      </span>`;
+
+      const head = mobile
+        ? `<button data-act="dfOpen" data-arg="${esc(path)}" style="width:100%;display:flex;flex-direction:column;gap:7px;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:11px 12px;cursor:pointer;">
+            <span style="display:flex;align-items:center;gap:9px;width:100%;">
+              <span style="font-size:14px;font-weight:700;color:${C.dim};line-height:1;">${open ? "▾" : "▸"}</span>
+              <b style="font-size:13.5px;font-weight:800;">${esc(this.dfDayLabel(d.day))}</b>
+              <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:${C.faint};">${slate ? `${slate} games` : "—"} · ${esc(note)}</span>
+            </span>
+            <span style="width:100%;">${abCell}</span>
+            <span style="display:flex;gap:16px;width:100%;">
+              ${cell(this.ratioPct(pit.c, pit.n), "pitch calls", this.accColor(this.rate(pit.c, pit.n)))}
+              ${cell(mae == null ? "—" : this.maeText(mae), "mph MAE")}
+            </span>
+          </button>`
+        : `<button data-act="dfOpen" data-arg="${esc(path)}" class="ph-card-hover" style="width:100%;display:grid;grid-template-columns:18px 150px 190px minmax(0,1fr) 150px 108px;gap:14px;align-items:center;text-align:left;border:0;background:transparent;color:${C.txt};font-family:inherit;padding:12px 14px;cursor:pointer;">
+            <span style="font-size:15px;font-weight:700;color:${C.dim};line-height:1;">${open ? "▾" : "▸"}</span>
+            <b style="font-size:13.5px;font-weight:800;white-space:nowrap;">${esc(this.dfDayLabel(d.day))}</b>
+            <span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.dim};">${slate ? `${slate} games` : "—"}</span>
+              <span style="font-size:10px;color:${C.faint};">${esc(note)}</span>
+            </span>
+            ${abCell}
+            ${cell(this.ratioPct(pit.c, pit.n), "pitch calls", this.accColor(this.rate(pit.c, pit.n)))}
+            ${cell(mae == null ? "—" : this.maeText(mae), "mph MAE")}
+          </button>`;
+
+      return `<div style="border:1px solid ${C.bd};border-radius:12px;background:${C.panel};overflow:hidden;">
+        ${head}
+        ${open ? this.dfDayBodyHtml(d.day, mobile) : ""}
+      </div>`;
+    }
+
+    // A day's games, keyed under that day's path so the same game under two
+    // days keeps two open states.
+    dfDayBodyHtml(date, mobile) {
+      const C = this.C;
+      const wrap = (body) =>
+        `<div style="border-top:1px solid ${C.bd};background:${C.panel2};padding:12px ${mobile ? 10 : 14}px 14px;">${body}</div>`;
+      if (this.dfDayAged(date)) {
+        return wrap(`<div style="font-size:12.5px;color:${C.faint};line-height:1.55;">${esc(COPY.dfAgedOut)}</div>`);
+      }
+      const dr = this.dayState(date);
+      if (!dr.loaded || dr.pending) {
+        return wrap(`<div style="font-size:12.5px;color:${C.mut};font-style:italic;">Loading this slate's calls${dr.pending ? ` · ${dr.pending} game${dr.pending === 1 ? "" : "s"} to go` : ""}…</div>`);
+      }
+      if (dr.err) {
+        return wrap(`<div style="font-size:12.5px;color:${C.faint};line-height:1.55;">Couldn't reach the prediction feed for this slate. The day's record above comes from the nightly rollup and is unaffected.</div>`);
+      }
+      const models = this.models(date);
+      if (!models.length) {
+        return wrap(`<div style="font-size:12.5px;color:${C.faint};">No individual calls stored for this slate.</div>`);
+      }
+      return wrap(`<div style="display:flex;flex-direction:column;gap:6px;">${
+        models.map((m) => this.gamePillHtml(m, mobile, date, { path: `d-${date}/g-${m.pk}` })).join("")
+      }</div>`);
+    }
+
+    dfHistoryHtml(mobile) {
+      const C = this.C;
+      const acc = this.state.accuracy;
+      const box = (body) =>
+        `<div style="padding:2rem 1rem;text-align:center;border:1px solid ${C.bd};border-radius:12px;background:${C.panel};color:${C.mut};font-size:.92rem;">${body}</div>`;
+      if (!acc.loaded) return box("Loading the graded record…");
+      if (acc.err) return box("Couldn't reach the accuracy rollup — a connection problem, not an empty record.");
+      const days = this.dfDays();
+      if (!days.length) {
+        const stale = this.dfStaleNote();
+        return stale
+          ? `<div style="padding:1.1rem 1.2rem;border:1px solid ${C.bd};border-left:3px solid ${C.amb};border-radius:12px;background:${C.panel};">
+              <div style="font-size:13px;font-weight:700;">No graded days in this window</div>
+              <div style="font-size:12px;color:${C.mut};margin-top:5px;line-height:1.5;">${esc(stale)}</div>
+            </div>`
+          : box(`Nothing graded in the ${esc(this.dfWindowLabel())} window yet.`);
+      }
+      return `<div style="display:flex;flex-direction:column;gap:7px;">${
+        days.map((d) => this.dfDayPillHtml(d, mobile)).join("")
+      }</div>`;
     }
 
     dataHtml() {
       const C = this.C;
       const mobile = this.mob();
-      const date = this.viewDate("data");
-      const models = this.models(date);
+      // Everything row-derived reads the slates actually in memory within the
+      // window — today, plus any day opened in the history — scoped by the
+      // filter bar. The accordion below deliberately ignores the filters: it is
+      // the record, and a record you have filtered is not the record.
+      const models = this.dfApplyFilters(this.dfRowModels());
       const flat = this.flatPitches(models);
-      const gs = this.gameStats(this.allAbs(models));
+      const scope = this.dfRowScope();
+      const note = (base) => `${base} · ${scope}`;
+      const anyLoaded = this.dfRowModels().length > 0;
+      const rowChart = (body) => (models.length ? body
+        : this.chartEmpty(anyLoaded ? COPY.dfNoMatch : COPY.dfRowChartWide));
 
       const charts = `<div style="display:grid;grid-template-columns:${mobile ? "minmax(0,1fr)" : "minmax(0,1fr) minmax(0,1fr)"};gap:12px;">
-        ${this.chartCard("Accuracy over time by market", "share of calls graded correct, per game day", this.accuracyChartHtml(mobile), mobile)}
-        ${this.chartCard("Pitch-result accuracy by count", "how well the model reads each count it predicts into", this.countChartHtml(flat), mobile)}
-        ${this.chartCard("Pitch mix and velocity trend", "mix across the slate, mean velo by pitcher workload", this.mixChartHtml(flat), mobile)}
-        ${this.chartCard("Batter tendencies", "most-seen batters, how their at-bats ended and how often we called them", this.batterChartHtml(models, mobile), mobile)}
+        ${this.trendsPanelHtml(mobile)}
+        ${this.chartCard("Accuracy over time by market", `share of calls graded correct, per game day · ${this.dfWindowLabel()}${this.dfFilterDirty() ? " · unfiltered" : ""}`, this.accuracyChartHtml(mobile), mobile)}
+        ${this.chartCard("Pitch-result accuracy by count", note("how well the model reads each count it predicts into"), rowChart(this.countChartHtml(flat)), mobile)}
+        ${this.chartCard("Pitch mix and velocity trend", note("mix across the slate, mean velo by pitcher workload"), rowChart(this.mixChartHtml(flat)), mobile)}
+        ${this.chartCard("Batter tendencies", note("most-seen batters, how their at-bats ended and how often we called them"), rowChart(this.batterChartHtml(models, mobile)), mobile)}
       </div>`;
 
       return `<div style="padding:${mobile ? "14px 14px 24px" : "20px 26px 48px"};max-width:1240px;margin:0 auto;">
-        <div style="margin-bottom:14px;">
-          <h1 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.dataTitle)}</h1>
-          <p style="margin:.3rem 0 0;color:${C.mut};font-size:.95rem;">${esc(COPY.dataSub)}</p>
+        <div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap;margin-bottom:14px;">
+          <div style="min-width:0;">
+            <h1 style="font-size:clamp(1.4rem,3vw,1.9rem);font-weight:800;letter-spacing:-.02em;margin:0;">${esc(COPY.dataTitle)}</h1>
+            <p style="margin:.3rem 0 0;color:${C.mut};font-size:.95rem;">${esc(COPY.dataSub)}</p>
+          </div>
+          <div style="margin-left:auto;">${this.dfWindowChipsHtml(mobile)}</div>
         </div>
 
-        <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px;">
-          <span style="font-size:15px;font-weight:800;letter-spacing:-.01em;">Model performance</span>
-          <span style="margin-left:auto;">${this.dayPickerHtml()}</span>
-        </div>
+        ${this.dfFilterBarHtml(mobile)}
         ${this.kpiTilesHtml(models, mobile)}
         ${charts}
 
         <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:26px 0 10px;">
-          <span style="font-size:15px;font-weight:800;letter-spacing:-.01em;">Graded game history</span>
-          <span style="font-size:11.5px;color:${C.faint};">same drill-down as the live feed, fully settled</span>
-          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.mut};">${this.ratio(gs.abC, gs.abN)} at-bat calls · ${this.ratio(gs.pC, gs.pN)} pitch calls · MAE ${this.maeText(gs.mae)}</span>
+          <span style="font-size:15px;font-weight:800;letter-spacing:-.01em;">Prediction history</span>
+          ${mobile ? "" : `<span style="font-size:11.5px;color:${C.faint};">${esc(COPY.dfHistoryHint)}</span>`}
+          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:${C.faint};">${esc(this.dfWindowLabel())}${this.dfFilterDirty() ? " · unfiltered" : ""}</span>
         </div>
-        ${this.gamePillsHtml(models, mobile, date)}
+        ${this.dfFilterDirty() ? `<div style="font-size:11.5px;color:${C.faint};margin:-4px 0 8px 2px;">${esc(COPY.dfHistoryUnfiltered)}</div>` : ""}
+        ${this.dfHistoryHtml(mobile)}
 
         <div style="margin-top:30px;">${this.feedHtml(true)}</div>
         <div style="margin-top:18px;">${this.scoutingHtml()}</div>
+      </div>`;
+    }
+
+    // ══ ENTITY OVERLAY ═══════════════════════════════════════════════════
+    // A name on this board is a thing you can ask about. Clicking a batter, a
+    // pitcher or a team opens one card describing it.
+    //
+    // It reads two sources with different reaches, and says which is which:
+    //   • the per-pitch rows already in memory — real graded calls, but only
+    //     for the slates that have been paged in (today, plus days opened in
+    //     the history), so its scope is named rather than claimed as 30 days;
+    //   • /player/{id}/profile — the nightly warehouse aggregate, which really
+    //     is a d30 window, and is the only source for zone/chase/whiff.
+    //
+    // A per-player, per-day accuracy series for a true 30 bars does not exist
+    // in any endpoint today. That is the same gap the trends work covers, and
+    // the chart says so rather than drawing a shorter series as if it were 30.
+
+    // The mark on a clickable name. A span, not a button: at-bat rows are
+    // themselves buttons and a nested button is invalid markup the browser
+    // will not lay out. Delegation still lands here, because closest() finds
+    // the innermost data-act.
+    entityLinkHtml(kind, id, name, inner, style) {
+      if (!name) return inner || "—";
+      const arg = `${kind}|${id == null ? "" : id}|${name}`;
+      return `<span data-act="entity" data-arg="${esc(arg)}" title="${esc(name)}" style="${style || ""}cursor:pointer;text-decoration:underline;text-decoration-color:${this.C.bd2};text-underline-offset:3px;">${inner == null ? esc(name) : inner}</span>`;
+    }
+
+    async loadEntityProfile(id, kind) {
+      const key = String(id);
+      if (this.state.entityProfile[key]) return;
+      this.state.entityProfile = Object.assign({}, this.state.entityProfile, { [key]: { pending: true } });
+      const [profile, fatigue] = await Promise.all([
+        fetchJson(`/player/${key}/profile`),
+        kind === "PITCHER" ? fetchJson(`/player/${key}/fatigue`) : Promise.resolve(null),
+      ]);
+      this.setState({
+        entityProfile: Object.assign({}, this.state.entityProfile, {
+          [key]: { pending: false, profile, fatigue },
+        }),
+      });
+    }
+
+    // Every at-bat in memory that this entity was part of, tagged with its day.
+    entityAbs(ent) {
+      const out = [];
+      Object.keys(this.state.days).sort().forEach((date) => {
+        const dr = this.state.days[date];
+        if (!dr || !dr.loaded || !(dr.rows || []).length) return;
+        this.models(date).forEach((m) => m.abs.forEach((ab) => {
+          let hit = false;
+          if (ent.kind === "BATTER") hit = ab.batter === ent.name;
+          else if (ent.kind === "PITCHER") hit = ab.pitcher === ent.name;
+          else hit = this.dfBatTeam(m, ab) === ent.name || this.dfPitTeam(m, ab) === ent.name;
+          if (hit) out.push({ date, m, ab });
+        }));
+      });
+      return out;
+    }
+
+    entityStats(rows) {
+      let abC = 0, abN = 0, pC = 0, pN = 0, es = 0, en = 0;
+      const games = new Set();
+      const byDay = new Map();
+      const mix = { strike_foul: 0, ball: 0, in_play: 0 };
+      let mixN = 0;
+      rows.forEach(({ date, m, ab }) => {
+        games.add(m.pk);
+        const day = byDay.get(date) || { day: date, c: 0, n: 0 };
+        if (ab.ok != null) { abN += 1; day.n += 1; if (ab.ok) { abC += 1; day.c += 1; } }
+        byDay.set(date, day);
+        (ab.pitches || []).forEach((pt) => {
+          if (pt.ok != null) { pN += 1; if (pt.ok) pC += 1; }
+          if (pt.err != null) { es += Math.abs(pt.err); en += 1; }
+          if (pt.result && mix[pt.result] != null) { mix[pt.result] += 1; mixN += 1; }
+        });
+      });
+      return {
+        abC, abN, pC, pN, mae: en ? es / en : null,
+        games: games.size, days: [...byDay.values()].sort((a, b) => (a.day < b.day ? -1 : 1)),
+        mix, mixN,
+      };
+    }
+
+    entityHtml() {
+      const ent = this.state.entity;
+      if (!ent) return "";
+      const C = this.C;
+      const mobile = this.mob();
+      const rows = this.entityAbs(ent);
+      const st = this.entityStats(rows);
+      const scope = this.dfRowScope();
+      const cached = ent.id ? this.state.entityProfile[String(ent.id)] : null;
+
+      const tile = (big, label, fg) => `<div style="border:1px solid ${C.bd};border-radius:11px;background:${C.panel};padding:11px 12px;display:flex;flex-direction:column;gap:4px;min-width:0;">
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:${fg || C.txt};line-height:1;">${big}</span>
+        <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:${C.mut};text-transform:uppercase;">${esc(label)}</span>
+      </div>`;
+      const abR = this.rate(st.abC, st.abN);
+      const tiles = `<div style="display:grid;grid-template-columns:repeat(${mobile ? 2 : 4},minmax(0,1fr));gap:9px;margin-bottom:15px;">
+        ${tile(abR == null ? "—" : this.pct(abR), "call accuracy", this.accColor(abR))}
+        ${tile(this.ratioPct(st.abC, st.abN), "graded calls", this.accColor(abR))}
+        ${tile(this.maeText(st.mae), "velo MAE", st.mae == null ? C.dim : this.grd(this.veloBand(st.mae)).fg)}
+        ${tile(String(st.games), "games", C.dim)}
+      </div>`;
+
+      // Per-day accuracy. One bar per loaded slate, which is not thirty — and
+      // the note under it says so rather than letting a three-bar chart read as
+      // a month.
+      const bars = st.days.length
+        // Bars are capped rather than stretched: with one loaded slate a
+        // flex:1 bar filled the whole row and read as a solid block instead of
+        // a one-day chart.
+        ? `<div style="display:flex;align-items:flex-end;gap:4px;height:46px;">
+            ${st.days.map((d) => {
+              const r = this.rate(d.c, d.n);
+              return `<span title="${esc(d.day)} · ${this.ratioPct(d.c, d.n)}" style="flex:1 1 0;min-width:6px;max-width:42px;border-radius:2px 2px 0 0;background:${this.accColor(r)};height:${Math.max(4, Math.round((r || 0) * 44))}px;display:block;"></span>`;
+            }).join("")}
+            <span style="flex:1 1 auto;"></span>
+          </div>
+          <div style="display:flex;gap:4px;margin-top:5px;">
+            ${st.days.map((d) => `<span style="flex:1 1 0;min-width:6px;max-width:42px;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:9px;color:${C.faint};">${esc(d.day.slice(5))}</span>`).join("")}
+            <span style="flex:1 1 auto;"></span>
+          </div>`
+        : `<div style="font-size:12px;color:${C.faint};font-style:italic;">No graded calls in the loaded slates.</div>`;
+
+      // Tendencies. The first three are counted from the rows in memory; the
+      // rest come from the warehouse profile and are a genuine 30-day window,
+      // so the two groups are labelled separately.
+      const pctOf = (k) => (st.mixN ? `${Math.round((st.mix[k] / st.mixN) * 100)}%` : "—");
+      const row = (k, v, sub) => `<div style="display:flex;align-items:baseline;justify-content:space-between;gap:10px;padding:4px 0;border-bottom:1px solid ${C.row};">
+        <span style="font-size:12px;color:${C.dim};">${esc(k)}${sub ? `<span style="color:${C.faint};font-size:10.5px;"> ${esc(sub)}</span>` : ""}</span>
+        <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;">${v}</span>
+      </div>`;
+      const prof = cached && cached.profile && cached.profile.found
+        ? [].concat(cached.profile.pitcher || [], cached.profile.batter || [])
+          .find((x) => x.scope === "d30")
+        : null;
+      const p30 = (v) => (v == null ? "—" : `${Math.round(Number(v) * 100)}%`);
+      const warehouse = ent.kind === "TEAM"
+        ? `<div style="font-size:11.5px;color:${C.faint};line-height:1.5;">${esc(COPY.entityTeamNote)}</div>`
+        : !ent.id
+          ? `<div style="font-size:11.5px;color:${C.faint};line-height:1.5;">${esc(COPY.entityNoId)}</div>`
+          : cached && cached.pending
+            ? `<div style="font-size:11.5px;color:${C.faint};font-style:italic;">Loading the published profile…</div>`
+            : prof
+              ? row("Zone rate", p30(prof.zone_rate)) + row("Chase rate", p30(prof.chase_rate))
+                + row("Whiff rate", p30(prof.whiff_rate)) + row("K rate", p30(prof.k_rate))
+                + row("Walk rate", p30(prof.bb_rate))
+              : `<div style="font-size:11.5px;color:${C.faint};line-height:1.5;">${esc(COPY.entityNoProfile)}</div>`;
+
+      const section = (title, note, body) => `<div style="margin-bottom:15px;">
+        <div style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:8px;">
+          <span style="font-size:10px;font-weight:800;letter-spacing:.06em;color:${C.faint};">${esc(title)}</span>
+          <span style="font-size:10.5px;color:${C.faint};">${esc(note)}</span>
+        </div>
+        ${body}
+      </div>`;
+
+      return `<div style="position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center;padding:${mobile ? 12 : 24}px;">
+        <div data-act="entityClose" style="position:absolute;inset:0;background:rgba(6,11,20,.72);"></div>
+        <div role="dialog" aria-modal="true" style="position:relative;width:min(640px,100%);max-height:88vh;overflow:auto;background:${C.bg};border:1px solid ${C.bd};border-radius:16px;box-shadow:0 24px 70px rgba(0,0,0,.5);">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:15px 17px 12px;border-bottom:1px solid ${C.bd};position:sticky;top:0;background:${C.bg};">
+            <span style="font-size:10px;font-weight:800;letter-spacing:.07em;color:${C.blue};">${esc(ent.kind)}</span>
+            <b style="font-size:17px;font-weight:800;letter-spacing:-.01em;">${esc(ent.name)}</b>
+            <button data-act="entityClose" style="margin-left:auto;border:1px solid ${C.bd};background:${C.chip};color:${C.dim};font-family:inherit;font-size:11.5px;font-weight:700;padding:5px 12px;border-radius:999px;cursor:pointer;">Close</button>
+          </div>
+          <div style="padding:15px 17px 18px;">
+            ${section("Graded record", scope, tiles + bars)}
+            ${section(ent.kind === "TEAM" ? "Pitch outcomes" : "Pitch outcomes seen", scope,
+              row("Strike / foul", pctOf("strike_foul")) + row("Ball", pctOf("ball")) + row("In play", pctOf("in_play")))}
+            ${section("Tendencies", ent.kind === "TEAM" ? "" : "past 30 days · nightly warehouse", warehouse)}
+            <div style="font-size:11px;color:${C.faint};line-height:1.55;">${esc(COPY.entityScopeNote)}</div>
+          </div>
+        </div>
       </div>`;
     }
 
@@ -2425,10 +3592,21 @@
       }
       this._bindMq();
       const wide = view !== "home";
+      // The overlay is rendered with everything else rather than appended,
+      // because the poll replaces this tree wholesale — an appended node would
+      // vanish eight seconds after it opened.
+      let overlay = "";
+      try {
+        overlay = this.entityHtml();
+      } catch (e) {
+        console.error("[pitchhawk] entity overlay failed to render", e);
+        this.state.entity = null;
+      }
       this.root.innerHTML = `
         ${this.headerHtml()}
         <main class="ph-main${wide ? " phv-wide" : ""}">${main}</main>
-        ${wide ? "" : this.footerHtml()}`;
+        ${wide ? "" : this.footerHtml()}
+        ${overlay}`;
     }
 
     // ── data lifecycle ────────────────────────────────────────────────────
@@ -2483,6 +3661,41 @@
         this.state.feed = Object.assign({}, this.state.feed, { loaded: true, err: true });
       }
       this.render();
+    }
+
+    // Players the model has read better or worse than its own baseline.
+    // Signature-gated on the window plus the row filters, so the 8s poll never
+    // re-requests an unchanged panel and changing a chip fetches exactly once.
+    //
+    // The team filter is sent as an abbreviation and the side/role filters
+    // straight through; the player filter is NOT sent, because the route keys
+    // on player_id and the board only knows the name — it is applied to the
+    // returned page below instead.
+    async syncTrends(force) {
+      const w = this.dfWindow();
+      const f = this.dfFilters();
+      const sig = JSON.stringify([w.from, w.to, f.team, f.side, f.role]);
+      if (!force && sig === this._trendsSig) return false;
+      this._trendsSig = sig;
+      try {
+        const res = await PH.loadTrends(API_BASE, {
+          from: w.from, to: w.to,
+          team: f.team || null,
+          side: f.side === "all" ? null : f.side,
+          role: f.role === "all" ? null : f.role,
+          min_graded: this.TRENDS_MIN_GRADED,
+          limit: this.TRENDS_LIMIT,
+        });
+        this.state.trends = {
+          rows: res.players || [], baseline: res.baseline || null,
+          horizon: res.streak_horizon_days || null,
+          loaded: true, err: false,
+        };
+      } catch (_e) {
+        this.state.trends = Object.assign({}, this.state.trends, { loaded: true, err: true });
+      }
+      this.render();
+      return true;
     }
 
     // Everything the drill-down needs for one slate, in one call: the rows,
@@ -2578,9 +3791,10 @@
       // The day's calls and the accuracy history, on boot. Both feeds are
       // built from them, and neither should wait for the first poll.
       this.syncDay(true);
-      this.loadAccuracy(30)
+      this.loadAccuracy()
         .then((changed) => { if (changed) this.render(); })
         .catch(() => {});
+      this.syncTrends(true).catch(() => {});
       this.checkHealth();
       this._scheduleNextPoll();
       document.addEventListener("visibilitychange", () => {

@@ -253,13 +253,26 @@ window.PITCHHAWK = (function () {
     (edgeRows || []).forEach((r) => { if (r && r.market) edgeByMarket[r.market] = r; });
     const liveByMarket = {};
     (lg.markets || []).forEach((m) => { if (m && m.market) liveByMarket[m.market] = m; });
+    // The frozen pregame call for the game-level markets, served alongside the
+    // live one. They are NOT the same row: live-poll rewrites game_moneyline
+    // with an MLB live win probability every poll, so `m.game_moneyline` on a
+    // game in progress is a live number and `mPre.game_moneyline` is the log5
+    // call it opened with.
+    const preByMarket = {};
+    (lg.markets_pregame || []).forEach((m) => { if (m && m.market) preByMarket[m.market] = m; });
 
     const m = {};
+    const mPre = {};
     for (const key of Object.keys(MARKETS)) {
       const meta = MARKETS[key];
       m[key] = meta.kind === "ou"
         ? ouFromLive(key, liveByMarket[key], edgeByMarket[key])
         : catFromLive(key, liveByMarket[key], edgeByMarket[key]);
+      // No edge row: an edge is priced against a live quote, and the pregame
+      // call is being shown as a record of what was said, not as a price.
+      mPre[key] = meta.kind === "ou"
+        ? ouFromLive(key, preByMarket[key], null)
+        : catFromLive(key, preByMarket[key], null);
     }
 
     const label = lg.game_label || "";
@@ -306,7 +319,7 @@ window.PITCHHAWK = (function () {
       outs: sit.outs || 0,
       runners: { first: false, second: false, third: false },
       pitchCountPa: sit.pitch_count_pa != null ? sit.pitch_count_pa : pitches.length,
-      pitchCountGame: null, pitches, nextPred, lastPitch: sit.last_pitch_ts, stale, m,
+      pitchCountGame: null, pitches, nextPred, lastPitch: sit.last_pitch_ts, stale, m, mPre,
       modelVersion: lg.model_version || null,
       // Phase + coverage are what let the board render a scheduled game
       // honestly: which markets exist, which do not, and why the situation
@@ -404,6 +417,22 @@ window.PITCHHAWK = (function () {
   }
 
 
+  // Per-player trends for a window: graded record, edge against the model's own
+  // baseline over the same window, net units, current streak and a home/away
+  // split. Server-aggregated — the daily rows behind it run to tens of
+  // thousands, and the ranking has to be done where they live.
+  async function loadTrends(apiBase, filters, fetchImpl) {
+    const f = fetchImpl || ((...a) => fetch(...a));
+    const qs = new URLSearchParams();
+    Object.keys(filters || {}).forEach((k) => {
+      const v = filters[k];
+      if (v != null && v !== "" && v !== "all") qs.set(k, v);
+    });
+    const res = await f(`${apiBase}/trends?${qs.toString()}`);
+    if (!res.ok) throw new Error(`/trends ${res.status}`);
+    return await res.json();
+  }
+
   // Every prediction made in ONE game, all at-bats, newest first.
   //
   // /live only ever carries the current plate appearance, so the board used to
@@ -445,7 +474,7 @@ window.PITCHHAWK = (function () {
     MARKETS, OUTCOME_LABEL,
     games,
     mlbDate,
-    loadLive, loadBoard, loadFeed, loadGamePitches, loadAccuracy,
+    loadLive, loadBoard, loadFeed, loadGamePitches, loadAccuracy, loadTrends,
   };
 })();
 

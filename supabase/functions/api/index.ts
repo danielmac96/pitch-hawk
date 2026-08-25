@@ -54,6 +54,9 @@ const TTL: Record<string, number> = {
   // Permanent per-day accuracy rollup, rewritten once a night by
   // rollup_prediction_accuracy. Nothing about it moves during a slate.
   "accuracy": 300,
+  // Same source cadence: player_prediction_daily is rebuilt by the nightly
+  // rollup, so a slate in progress cannot move a trend.
+  "trends": 300,
   // Per-pitch graded history. 15s matches /edge: during a live game new rows
   // land every 30s and the Data Feed is the surface watching them arrive, so a
   // 60s cache would make it visibly lag the board it sits next to.
@@ -307,6 +310,20 @@ async function slatePayloads(date: string): Promise<any[]> {
     sample_size: 0,
   });
 
+  // The SAME markets, frozen at the pregame call. `gpBy` above prefers the live
+  // row, which is right for "what does the model say now" and wrong for "what
+  // did it say before a pitch was thrown" — and for game_moneyline those are
+  // different numbers, because live-poll overwrites the log5 call with an MLB
+  // live win probability every poll. Both are served so the board can show the
+  // live read next to the call it opened with.
+  const gpPre = new Map<number, Map<string, any>>();
+  for (const r of gpRows ?? []) {
+    if (r.phase !== "pregame") continue;
+    let m = gpPre.get(r.game_pk);
+    if (!m) { m = new Map(); gpPre.set(r.game_pk, m); }
+    if (!m.has(r.market)) m.set(r.market, r);
+  }
+
   const livePkSet = new Set(livePks);
 
   const payloads = slate.map((g: any) => {
@@ -443,6 +460,9 @@ async function slatePayloads(date: string): Promise<any[]> {
           home_score: g.home_score ?? null,
           away_score: g.away_score ?? null,
         },
+      // Pregame game-level calls, always, regardless of phase. Empty before
+      // game-predict has run for the slate.
+      markets_pregame: [...(gpPre.get(g.game_pk)?.values() ?? [])].map(marketOut),
       current_pa_pitches: isLive ? (raw.current_pa_pitches ?? []) : [],
       pa_predictions: paPredictions,
       markets,
@@ -644,6 +664,24 @@ function windowParams(url: URL, maxDays: number): { from: string; to: string } {
   return { from, to };
 }
 
+// How far back a streak looks. The raw calls it has to order are pruned at 21
+// days, but the binding constraint is cost, not retention: each (player, role)
+// is an index probe into at_bats plus a walk of that player's calls, measured
+// at ~75ms over 20 days and ~25ms over 7. A player gets roughly 30 settled
+// calls a game, so 7 days is about 200 calls deep — past any real run, and a
+// third of the work. Reported to the client as streak_horizon_days.
+const STREAK_DAYS = 7;
+// And a hard cap on how many players are asked about at once, independent of
+// `limit`. Streaks are the only part of this route that scales with the page
+// size; the panel shows a dozen rows, so a caller asking for 200 must not turn
+// one cached response into a 30-second query.
+const STREAK_MAX_PLAYERS = 25;
+// player_prediction_daily gained its `side` column on 2026-08-25; rows rolled
+// up before then cannot be split home/away, because the raw calls they came
+// from are already past the 21-day prune. Reported so a client can scope the
+// split honestly rather than presenting a partial one as complete.
+const SIDE_FROM = "2026-08-04";
+
 const posInt = (s: string | null) => {
   const n = Number(s);
   return Number.isInteger(n) && n > 0 ? n : null;
@@ -835,6 +873,184 @@ async function accuracy(url: URL): Promise<Response> {
     from, to,
     markets: [...new Set(days.map((d) => d.market))].sort(),
     days,
+  });
+}
+
+// ── /api/trends ────────────────────────────────────────────────────────────
+// Players the model has read better — or worse — than its own baseline over the
+// same window, under the same filters.
+//
+// Reads player_prediction_daily, which is per (day, player, role, market, side)
+// and kept for 90 days. The aggregation happens in Postgres rather than here:
+// a 90-day window is tens of thousands of daily rows and PostgREST would have
+// to page every one of them across the wire to sum six columns.
+//
+// The baseline travels once at the top level rather than repeated per row, for
+// the same reason /accuracy sums the model_version split server-side — every
+// client then draws the same comparison.
+async function trends(url: URL): Promise<Response> {
+  const sp = url.searchParams;
+  // 90 days: the player rollup's retention. The streak below reaches back only
+  // as far as the raw predictions do, which is far less.
+  const { from, to } = windowParams(url, 90);
+  const marketRaw = sp.get("market");
+  const market = marketRaw && ALL_MARKETS.includes(marketRaw) ? marketRaw : null;
+  const roleRaw = sp.get("role");
+  const role = roleRaw === "pitcher" || roleRaw === "batter" ? roleRaw : null;
+  const sideRaw = sp.get("side");
+  const side = sideRaw === "home" || sideRaw === "away" ? sideRaw : null;
+  const teamRaw = sp.get("team");
+  const teamIdParam = posInt(teamRaw);
+  const teamAbbr = teamIdParam ? null : safeAbbr(teamRaw);
+  // The sample floor is a parameter rather than a constant so it is visible and
+  // tunable, but it can never be removed: at 0 a 4-for-5 stretch outranks a
+  // 60-call edge, which is the exact failure this table invites.
+  const minGraded = Math.min(Math.max(posInt(sp.get("min_graded")) ?? 20, 1), 1000);
+  const limit = Math.min(Math.max(posInt(sp.get("limit")) ?? 50, 1), 200);
+  const orderRaw = sp.get("order");
+  const order = orderRaw === "units" || orderRaw === "win_rate" ? orderRaw : "edge";
+
+  const db = svc();
+
+  // There is no teams table, so an abbreviation is resolved through the
+  // schedule. A filter naming a team that played no game in the window selects
+  // nothing — answering it from the unfiltered table would be a wrong answer
+  // rather than an empty one.
+  let teamId = teamIdParam;
+  if (!teamId && teamAbbr) {
+    const { data } = await db.from("games")
+      .select("home_team_id,home_abbr,away_team_id,away_abbr")
+      .or(`home_abbr.eq.${teamAbbr},away_abbr.eq.${teamAbbr}`)
+      .limit(1);
+    const g = (data ?? [])[0];
+    if (g) teamId = g.home_abbr === teamAbbr ? g.home_team_id : g.away_team_id;
+    if (!teamId) {
+      return json({
+        from, to,
+        filters: { market, role, side, team: teamAbbr, min_graded: minGraded, order },
+        baseline: null, streak_horizon_days: STREAK_DAYS, players: [],
+      });
+    }
+  }
+
+  const args = {
+    p_from: from, p_to: to, p_market: market, p_role: role,
+    p_side: side, p_team_id: teamId ?? null,
+  };
+  const [{ data: rows, error: e1 }, { data: baseRows, error: e2 }] = await Promise.all([
+    db.rpc("player_trends", {
+      ...args, p_min_graded: minGraded, p_limit: limit, p_order: order,
+    }),
+    db.rpc("player_trends_baseline", args),
+  ]);
+  if (e1) return json({ error: e1.message }, 500);
+  if (e2) return json({ error: e2.message }, 500);
+
+  // deno-lint-ignore no-explicit-any
+  const list: any[] = rows ?? [];
+  // deno-lint-ignore no-explicit-any
+  const baseline: any = (baseRows ?? [])[0] ?? null;
+  const baseRate = baseline?.win_rate != null ? Number(baseline.win_rate) : null;
+
+  // Streaks, only for the players about to be returned. Asked for the whole
+  // table this would fan every prediction out to both participants; bounded to
+  // a page it is an at_bats probe.
+  const streakBy = new Map<string, number>();
+  const streakFloor = isoDate(new Date(Date.now() - (STREAK_DAYS - 1) * DAY_MS));
+  const streakFrom = from > streakFloor ? from : streakFloor;
+  const ids = [...new Set(list.map((r) => r.player_id))].slice(0, STREAK_MAX_PLAYERS);
+  // Non-fatal, and reported rather than swallowed: a streak is one column of
+  // this panel, so losing it must not lose the ranking — but a silent null is
+  // indistinguishable from "no settled calls", which is a different claim.
+  // Same treatment /coverage gives its per-pitch block.
+  let streaksError: string | null = null;
+  if (ids.length) {
+    const { data: st, error: e3 } = await db.rpc("player_streaks", {
+      p_from: streakFrom, p_to: to, p_player_ids: ids,
+    });
+    if (e3) streaksError = e3.message;
+    // deno-lint-ignore no-explicit-any
+    for (const r of (st ?? []) as any[]) {
+      streakBy.set(`${r.player_id}:${r.role}`, Number(r.streak));
+    }
+  }
+
+  // team_id -> abbreviation, from the same schedule rows.
+  const abbrBy = new Map<number, string>();
+  const teamIds = [...new Set(list.map((r) => r.team_id).filter(Boolean))];
+  if (teamIds.length) {
+    const { data: gs } = await db.from("games")
+      .select("home_team_id,home_abbr,away_team_id,away_abbr")
+      .gte("official_date", from).lte("official_date", to);
+    // deno-lint-ignore no-explicit-any
+    for (const g of (gs ?? []) as any[]) {
+      if (g.home_team_id && g.home_abbr) abbrBy.set(g.home_team_id, g.home_abbr);
+      if (g.away_team_id && g.away_abbr) abbrBy.set(g.away_team_id, g.away_abbr);
+    }
+  }
+
+  const num = (v: unknown) => (v == null ? null : Number(v));
+  const players = list.map((r) => {
+    const rate = num(r.win_rate);
+    const split = (graded: unknown, wins: unknown, rt: unknown) => ({
+      n_graded: Number(graded ?? 0), wins: Number(wins ?? 0), win_rate: num(rt),
+    });
+    return {
+      player_id: r.player_id,
+      name: r.name ?? null,
+      role: r.role,
+      team_id: r.team_id ?? null,
+      team: r.team_id != null ? abbrBy.get(r.team_id) ?? null : null,
+      n: Number(r.n ?? 0),
+      n_graded: Number(r.n_graded ?? 0),
+      wins: Number(r.wins ?? 0),
+      losses: Number(r.losses ?? 0),
+      pushes: Number(r.pushes ?? 0),
+      win_rate: rate,
+      // Percentage POINTS against the window baseline, not a ratio: "+11.4 pt"
+      // is the number the panel shows and the one a reader can add back.
+      edge_pt: rate != null && baseRate != null
+        ? Math.round((rate - baseRate) * 1000) / 10
+        : null,
+      profit_units: num(r.profit_units),
+      mean_abs_error: num(r.mean_abs_error),
+      // null, not 0: a player with no settled call in the streak horizon has no
+      // streak, which is not the same as a streak of length zero.
+      streak: streakBy.has(`${r.player_id}:${r.role}`)
+        ? streakBy.get(`${r.player_id}:${r.role}`)
+        : null,
+      splits: {
+        home: split(r.home_graded, r.home_wins, r.home_win_rate),
+        away: split(r.away_graded, r.away_wins, r.away_win_rate),
+      },
+    };
+  });
+
+  return json({
+    from, to,
+    filters: {
+      market, role, side, team: teamAbbr ?? teamId ?? null,
+      min_graded: minGraded, order,
+    },
+    baseline: baseline
+      ? {
+        n_graded: Number(baseline.n_graded ?? 0),
+        wins: Number(baseline.wins ?? 0),
+        losses: Number(baseline.losses ?? 0),
+        win_rate: num(baseline.win_rate),
+        profit_units: num(baseline.profit_units),
+      }
+      : null,
+    // How far back a streak can see. The daily rollup keeps 90 days but the raw
+    // calls it would have to order are pruned at 21, so a streak is null past
+    // this rather than silently truncated at the horizon.
+    streak_horizon_days: STREAK_DAYS,
+    streaks_error: streaksError,
+    // The split cannot cover rows rolled up before side existed as a column.
+    // Named here so a client can say so instead of showing a short split as if
+    // it were the whole record.
+    split_from: SIDE_FROM,
+    players,
   });
 }
 
@@ -1129,6 +1345,7 @@ Deno.serve(async (req) => {
       case "feed": return await hit("feed", TTL["feed"], () => feed(url));
       case "coverage": return await hit("coverage", TTL["coverage"], () => coverage(url));
       case "accuracy": return await hit("accuracy", TTL["accuracy"], () => accuracy(url));
+      case "trends": return await hit("trends", TTL["trends"], () => trends(url));
       case "pitches": return await hit("pitches", TTL["pitches"], () => pitches(url));
       case "picks/today": return await hit("picks/today", TTL["picks/today"], picksToday);
       case "odds/today": return await hit("odds/today", TTL["odds/today"], oddsToday);
