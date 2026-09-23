@@ -141,7 +141,7 @@ implementations reading the same upstream, and they deliberately disagree.**
 | Driver | `live-poll` edge fn, pg_cron 30 s | `warehouse.yml` nightly (was: manual backfill) |
 | Destination | Supabase `pitches` / `at_bats` (35-day hot window) | R2 Parquet (full history) |
 | Window | Today's in-progress games | 2015-04-05 → yesterday, extended nightly |
-| Fields per pitch | 17 columns, 6 measured | **51 columns, ~40 measured** |
+| Fields per pitch | 17 columns, 6 measured | **64 columns, ~53 measured** |
 | Purpose | Serve the live board within 30 s | Train models, compute deep aggregates |
 
 They are not a duplication to be collapsed. The live path optimises for latency
@@ -330,7 +330,139 @@ s3://pitch-hawk-warehouse/
   at_bats/season=…/month=…/day=….parquet                  2,011 files
   games/season=…/month=…/day=….parquet                    2,011 files
   players/snapshot.parquet                                overwritten in full
+  venues/snapshot.parquet                                 overwritten in full
+  game_weather/season=…/month=…/day=….parquet             one row per game
+  contact_quality/snapshot.parquet                        overwritten in full
 ```
+
+`contact_quality` is **the in-house xBA / xHR**: P(hit) and P(home run) given
+how a ball was struck, from 11 seasons of our own batted balls.
+
+Savant's `estimated_ba_using_speedangle` is itself a lookup on exit velocity
+and launch angle. We hold both plus the realised outcome, so this is *fitted*
+rather than scraped — and can therefore carry **spray**, which the
+two-variable version cannot.
+
+**Every rate is conditional on CONTACT.** P(hit) here is per ball in play,
+never per plate appearance — strikeouts and walks are not in the denominator.
+A per-PA figure is this multiplied by P(ball in play); conflating the two
+overstates a hitter by roughly a third.
+
+**Two grains, in one table, so the back-off is structural rather than
+remembered:** `ev_la_pull` (emitted only above a 25-observation floor) and
+`ev_la` (always populated). `warehouse.contact.lookup()` is the reference
+implementation of the fall-through. Counts ship beside the rates so any
+shrinkage is still possible downstream — no prior is baked in, because none
+has been validated.
+
+**Pull angle, not raw spray.** Spray is signed from the catcher's view
+(negative toward the left-field line); pull angle flips it for right-handers
+so positive is always "toward this batter's pull side". That makes the table
+handedness-agnostic and roughly doubles the sample per cell.
+
+*Measured, and the reason the column exists:* home runs average **+16.1°** of
+pull against **+4.2°** for all batted balls.
+
+Both derivations were checked against the feed rather than assumed. Spray was
+validated against `hit_location` — the fielder who actually took the ball —
+over 842 batted balls:
+
+| 3B | LF | SS | CF | 2B | RF | 1B |
+|---:|---:|---:|---:|---:|---:|---:|
+| −35.2 | −29.3 | −15.8 | **+1.1** | +22.3 | +30.8 | +48.8 |
+
+Monotonic left to right, with centre field at +1.1° — which is the calibration
+check on the origin constants.
+
+The surface it produces, *measured over 1,535 batted balls*:
+
+| launch angle | P(hit) | P(HR) | | exit velo (LA 20–40) | P(HR) |
+|---|---:|---:|---|---|---:|
+| < 0° | 0.142 | 0.000 | | 80–95 | 0.000 |
+| 10–20° | 0.646 | 0.013 | | 95–100 | 0.162 |
+| 20–30° | 0.447 | 0.169 | | 100–105 | 0.349 |
+| 40°+ | 0.049 | 0.008 | | 105–120 | **0.690** |
+
+Floored at 2017: `launch_speed` covers 87% of balls in play in 2015 and does
+not pass 99% until 2020, so an earlier cell measures tracking coverage rather
+than contact. *(Projected)* the full 2017+ corpus is ~1.1M balls in play
+across ~2,240 occupied fine cells, so the 25-observation floor rarely binds.
+
+```bash
+python -m warehouse contact                 # full-history scan, R2 egress free
+python -m warehouse contact --season-floor 2020
+```
+
+`game_weather` is Open-Meteo's reading at the UTC hour containing first pitch,
+one row per game, day-partitioned to match `games`.
+
+**Why a second weather source when `games.temp_f` exists.** That column is
+parsed from the **boxscore**, which exists only once a game is final — a
+pregame call cannot read it. Training a weather term on post-hoc observations
+and then serving it a forecast is a train/serve mismatch the model cannot
+show you. Open-Meteo has a forecast API *and* an archive reaching back
+decades, so both sides come from one source, one grid and one set of units.
+`games.temp_f` stays as MLB's own record; the two are independent and are not
+meant to agree exactly.
+
+**`wind_out_mph` is the column that matters.** Bare wind speed is near-useless
+for a home-run model — 15 mph across the field does nothing a 15 mph gale to
+center does. This is the wind projected onto home → center field using the
+venue's `azimuth_angle`, positive blowing out. The sign was validated against
+MLB's own labels over 61 games: `Out To …` averaged **+3.18 mph**, `In From …`
+**−3.20**, crosswinds **+0.90**. See `warehouse/weather.py`.
+
+**Cost.** Two batchings collapse a 26,957-game backfill to ~12 requests: a date
+range in one call, and multiple points in one call (the response is a list in
+the order the points were sent). *(Measured)* 30 venues × a full season × 6
+variables is ~8.7 MB in ~21 s.
+
+```bash
+python -m warehouse weather --season 2025      # one upstream call
+python -m warehouse weather --from 2026-09-18  # nightly
+python -m warehouse weather --from 2026-09-20 --forecast
+```
+
+> **The fetch window runs one day PAST the requested range, deliberately.**
+> MLB keys a game to its Eastern *official date*, and Eastern is UTC−4/−5, so a
+> West Coast night game on date D starts on D+1 in UTC — a 6:10pm PT first
+> pitch is 01:10Z. Stopping at `end` silently dropped every late game:
+> **4 of 15 on 2025-07-04** (Coors, Dodger Stadium, Chase Field, Sutter Health
+> Park), which is ~27% of a slate, every slate. It is not extended backwards
+> and does not need to be — midnight Eastern on date D is already D 04:00Z.
+
+> **Closed roofs are the gate on all of this.** `game_weather` holds the
+> *outdoor* reading, always. On 2025-07-04 the two largest disagreements with
+> MLB were Chase Field (100°F outdoors vs 76°F reported) and loanDepot park
+> (82 vs 72) — and those were exactly the two roof-closed games. Across the
+> other 13 the mean gap was ~1.5°F. The roof gate is a per-game MLB fact
+> (`games.weather_condition` reads `Dome` or `Roof Closed`), so it lives with
+> that column and **must be applied at read time**. 8 of 30 parks can be
+> covered.
+
+`venues` is venue × **season**, not venue. Park dimensions change — Camden
+Yards reports `left_center` 410 through 2022 and 376 from 2026 — so a
+current-state row would explain a 2017 home run with a 2026 fence. It also
+carries `latitude`/`longitude` (the join key for weather), `elevation_ft`,
+`roof_type` and `azimuth_angle`, the compass bearing that turns a wind
+direction into "blowing out toward the pull field".
+
+`/venues?sportId=1&season=YYYY` honours the season and returns every venue in
+one request, so the whole history is ~12 calls. Unlike `players`, the refresh
+is **not** merge-only: player attributes are immutable, fences are not, so the
+named seasons are replaced wholesale.
+
+All 30 active MLB venues carry the full field set *(measured 2026-09-18)*. The
+55–63 rows the endpoint returns also include spring-training and minor league
+parks, many of which do not — filter on the `venue_id`s present in `games`
+before reading a null as meaningful.
+
+**`roof_type` is not roof state.** It is the roof the park *has*. Whether the
+roof was *closed* for a given game is per-game and comes from the weather
+string: `condition` reads `Dome` or `Roof Closed`, with `wind` `0 mph, None`
+*(verified on live slates)*. That distinction matters for 8 of 30 parks — a
+forecast applied to a closed-roof game is not a weak feature, it is a wrong
+one.
 
 Keys are produced by `warehouse.config.object_key(dataset, day)` and
 `snapshot_key(dataset)`. Compression is **zstd**, always.
@@ -380,7 +512,7 @@ Per season:
 2020 is short because of COVID, not because of a gap. **Cost per pitch is ~70
 bytes of Parquet against 239 bytes per row in Postgres**, for 3× the columns.
 
-### 5.3 The pitch schema — 51 columns
+### 5.3 The pitch schema — 64 columns
 
 Declared in `warehouse/config.py:PITCH_SCHEMA`, grouped by purpose:
 
@@ -394,10 +526,31 @@ Declared in `warehouse/config.py:PITCH_SCHEMA`, grouped by purpose:
 **Outcome (6)** — `pitch_type`, `description`, `result_category`, `is_strike`,
 `is_ball`, `is_in_play`
 
-**Physics (15)** — `start_speed`, `end_speed`, `zone`, `plate_x`, `plate_z`,
+**Physics (28)** — `start_speed`, `end_speed`, `zone`, `plate_x`, `plate_z`,
 `sz_top`, `sz_bottom`, `spin_rate`, `spin_direction`,
 `break_vertical_induced`, `break_horizontal`, `break_angle`, `break_length`,
-`extension`, `plate_time`
+`extension`, `plate_time`, and — added 2026-09 — `release_pos_x/y/z`,
+`release_vel_x/y/z`, `accel_x/y/z`, `pfx_x`, `pfx_z`, `break_vertical`,
+`type_confidence`
+
+> **The 13 release/movement columns were always in the payload.**
+> `pitchData.coordinates` carries `x0/y0/z0`, `vX0/vY0/vZ0`, `aX/aY/aZ` and
+> `pfxX/pfxZ` on every pitch, and the flattener took only `pX`/`pZ` from it
+> until 2026-09. Capturing them cost no extra API call — only a re-ingest.
+>
+> **Four fields in the same payload are deliberately left out**, having been
+> checked against live games: `coordinates.x`/`.y` are Gameday display pixels;
+> `breaks.breakY` is a constant 24.0 (the measurement distance);
+> `strikeZoneWidth` is a constant 17.0 (the width of home plate); and
+> `strikeZoneDepth` is constant within a game and inconsistent between games,
+> so it measures nothing about the pitch either way. `sz_top`/`sz_bottom` do
+> vary per batter and are kept. `tests/warehouse/test_mlb_flatten.py` asserts
+> none of the four leak back in.
+>
+> **Per-season coverage of the new columns has not been measured.** Do not
+> assume it matches `plate_x`. `extension` looked complete too until someone
+> checked 2015 and found 0.1% — see §5.4, and add a row there once the numbers
+> exist.
 
 **Batted ball, balls in play only (8)** — `launch_speed`, `launch_angle`,
 `total_distance`, `trajectory`, `hit_hardness`, `hit_location`, `hit_coord_x`,
@@ -409,6 +562,37 @@ Declared in `warehouse/config.py:PITCH_SCHEMA`, grouped by purpose:
 `game_context` / `umpire_stats` tables were meant to hold: `hp_umpire_id`,
 `hp_umpire`, `weather_condition`, `temp_f`, `wind_mph`, `wind_direction`,
 `attendance`, `game_duration_min`.
+
+### 5.3.1 What game-level markets the stored columns support *(audited 2026-09-23)*
+
+The question behind expanding to every game-level hit and pitch market is
+whether the warehouse already holds the columns. It does — **16 of 16
+candidates are derivable** from the frozen schemas, with no new capture:
+
+| market | grain | from |
+|---|---|---|
+| batter hits / HR / total bases / RBIs | player-game | `at_bats.result`, `.result_detail`, `.rbi` |
+| pitcher strikeouts / hits allowed / walks | player-game | `at_bats.result` by `pitcher_id` |
+| pitcher pitch count | player-game | `pitches.pitch_of_game` (per-pitcher cumulative) |
+| team total hits / HR | team-game | `at_bats` + `top_inning` for batting side, `games` for the clubs |
+| game total hits / strikeouts | game | `at_bats.result` |
+| first-inning run, NRFI, runs by inning | game | `at_bats.inning`, `.top_inning`, `.rbi` |
+
+**Two need derivation care, and the audit was initially too generous on both:**
+
+- **Runs scored** is not `is_scoring_play` — that flags the at-bat that drove
+  runs *in*, not who crossed the plate. It is still derivable, because
+  `pitches.on_first/on_second/on_third` hold **player ids**, not flags
+  *(verified: 12 of 12 runner ids in a sample game matched batters in that
+  game)*. Scoring means tracking a runner leaving the bases without a matching
+  out — real work, but the inputs are there.
+- **Outs recorded** needs `at_bats.event`, not `.result`. `result` calls a
+  double play `out`, same as a groundout: one at-bat, two outs. `event`
+  distinguishes them (`Grounded Into DP`).
+
+Nothing in this list is blocked on ingestion. What it is blocked on is the
+read layer — cell SQL, specs, and a serving source for whatever features a
+market names.
 
 ### 5.4 Completeness and era boundaries *(measured over full seasons)*
 
@@ -710,6 +894,12 @@ Where these overlap with [`MODELS.md`](MODELS.md), that file wins.
    prior. Served probabilities are not raw model output.
 5. **`pitcher_bb_delta` trains as a hardcoded 0.0** but is computed for real at
    scoring time. Training and serving disagree on one of six `ab_result` features.
+   *Still true, but no longer invisible:* since 2026-09 a market must declare
+   such a feature in `MarketSpec.intercept_folded` or refuse to construct, so
+   `ab_result` now names `pitcher_bb_delta`, `batter_k_delta` and
+   `platoon_same` in its own spec file. Closing any of them is a cell-grain
+   change — add the bucket column to `cell_sql` and move the name into
+   `form_features`, which can now carry more than one dimension.
 6. **`ab_pitches_ou`'s `heuristic_v0` fallback went 2–2,484** across 2,596 rows —
    a defect in the missing-table-cell branch of `predictAbPitches`, not
    underperformance.
@@ -857,11 +1047,66 @@ larger. Leadership decision: depth of history vs. megabytes.
 
 ### 10.7 Lower priority
 
+> **`park_factors` shipped 2026-09**, as `park_hr_factors` — venue × season,
+> and *home-run* rather than run environment. See §10.9. `umpire_profiles`
+> remains unbuilt.
+
 | Table | Grain | Rows | MB | Unlocks |
 |---|---|---:|---:|---|
 | `umpire_profiles` | umpire × zone band | ~1,000 | < 1 | Called-strike-zone tendency per home-plate umpire. 99 distinct umpires measured; `hp_umpire_id` and `zone` are both captured. |
-| `park_factors` | venue × season | ~900 | < 1 | Run/HR environment from `venue_id` + `games` context. |
 | `h2h_recent` | pitcher × batter, last 3 meetings | ~24,000 | ~4 | "What happened last time" narrative panel. Subsumed by 10.6 if that ships with the PA floor. |
+
+### 10.9 `batted_ball_profile` and `park_hr_factors` *(shipped 2026-09)*
+
+Two aggregates added for the hit/home-run work. Both publish through the
+existing stage-then-swap contract; migration
+`20260919000001_batted_ball_and_park_hr.sql`.
+
+**`batted_ball_profile`** — player × role × scope. GB/FB/LD/popup,
+pull/oppo, **pull-in-the-air**, hard-hit (EV ≥ 95), mean EV and LA.
+
+Rates are over **balls in play**, never plate appearances — a hitter who
+strikes out half the time can still pull everything he touches, and that is a
+different fact from how often he touches anything.
+
+`pull_air_rate` is the column worth the build. Neither `pull_rate` nor
+`fb_rate` alone separates a pull hitter who beats the ball into the ground
+from one who lifts it, and pulled balls in the air are where home runs come
+from. *(Measured)* home runs average **+16.1°** of pull against **+4.2°** for
+all batted balls.
+
+`role` carries both sides: a pitcher's batted-ball profile is a real scouting
+fact and has no place in `batter_power_profile`. Statcast-floored at 2017.
+
+*Measured on live games*, batter side: GB 0.412, FB 0.277, LD 0.241, popup
+0.070, pull 0.438, oppo 0.273, pull-air 0.178, hard-hit 0.433. The four
+trajectory rates sum to exactly 1.000 on every row — bunt variants
+(`bunt_grounder`, ~0.8% of balls in play) fold into their base type rather
+than falling outside every category.
+
+**`park_hr_factors`** — venue × season. **Deliberately not the construction
+`park_factors()` uses.** That RPC divides a venue's runs per game by the
+league mean, which confounds the park with the clubs who play in it: a team
+built around power inflates its own venue, and a model applying the factor to
+a hitter then counts the roster twice.
+
+This is the paired form. For each team-season, the home-run rate across all
+plate appearances at that club's park — *both sides batting* — against the
+rate across all plate appearances in the parks it visits:
+
+```
+raw = (HR/PA at home) / (HR/PA away)
+```
+
+The home club appears on both sides of the ratio, so its own power largely
+divides out. Both the raw and a shrunk factor are stored, with the counts, so
+a consumer can shrink differently.
+
+Per venue-**season**, because fences move: Camden Yards reports `left_center`
+410 through 2022 and 376 from 2026. One all-history factor would average a
+park across two different shapes. A club that never travels produces **no
+row** — with no away rate there is no denominator, and emitting 1.0 would
+assert we measured a neutral park rather than that we could not measure one.
 
 ### 10.8 Frontend budget roll-up
 

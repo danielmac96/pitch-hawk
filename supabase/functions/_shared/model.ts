@@ -11,6 +11,12 @@ export const LEAGUE = {
   pitch_result: { strike_foul: 0.455, ball: 0.352, in_play: 0.193 },
   ab_result: { strikeout: 0.221, walk: 0.087, hit: 0.239, out: 0.453 },
   avg_pitches_pa: 3.85,
+  // Home runs per plate appearance. Measured over 8,855 PA across 117 games
+  // in 2025; re-derive from the full warehouse corpus when convenient. Used
+  // to centre batter_hr_delta / pitcher_hr_delta, and mirrored in
+  // modeling/score.py -- the two must agree or the shipped coefficients meet
+  // a differently-scaled input in production.
+  hr_rate: 0.032,
   speed_sigma: 5.4,
   // Runs per team per game. League total sits at ~8.8.
   avg_runs_per_team: 4.4,
@@ -35,7 +41,8 @@ export interface MarketPrediction {
   sample_size: number;
 }
 
-type Params = Record<string, any>;
+// Exported because _shared/batterprojection.ts scores with these directly.
+export type Params = Record<string, any>;
 
 export async function loadActiveModels(): Promise<Record<string, Params & { version: string }>> {
   const { data } = await svc()
@@ -109,6 +116,17 @@ function featureValue(name: string, ctx: ScoreContext): number {
     case "pitcher_whiff_delta": return p.whiff_rate != null ? Number(p.whiff_rate) - 0.24 : 0;
     case "pitcher_k_delta": return p.k_rate != null ? Number(p.k_rate) - al.strikeout : 0;
     case "pitcher_bb_delta": return p.bb_rate != null ? Number(p.bb_rate) - al.walk : 0;
+    // Home-run and hit rates, per plate appearance, for both sides.
+    //
+    // LEAGUE_HR_RATE is measured, not assumed: 0.0320 over 8,855 plate
+    // appearances across 117 games in 2025. Its exact value matters far less
+    // than train and serve agreeing on it -- a delta's centre shifts the
+    // intercept and nothing else -- which is why it is a shared constant and
+    // modeling/score.py mirrors it.
+    case "batter_hr_delta": return b.hr_rate != null ? Number(b.hr_rate) - LEAGUE.hr_rate : 0;
+    case "pitcher_hr_delta": return p.hr_rate != null ? Number(p.hr_rate) - LEAGUE.hr_rate : 0;
+    case "batter_hit_delta": return b.hit_rate != null ? Number(b.hit_rate) - al.hit : 0;
+    case "pitcher_hit_delta": return p.hit_rate != null ? Number(p.hit_rate) - al.hit : 0;
     case "batter_k_delta": return b.k_rate != null ? Number(b.k_rate) - al.strikeout : 0;
     case "batter_bb_delta": return b.bb_rate != null ? Number(b.bb_rate) - al.walk : 0;
     case "batter_chase_delta": return b.chase_rate != null ? Number(b.chase_rate) - 0.28 : 0;
@@ -319,6 +337,9 @@ export interface GameTotalContext {
   temp_f: number | null;
   wind_mph: number | null;
   wind_direction: string | null;
+  // True when the park was covered for this game. Optional so existing callers
+  // that predate pregame weather keep compiling and keep their old behaviour.
+  roof_closed?: boolean;
   // Games behind the team rates, for the league blend.
   sample_games: number;
 }
@@ -342,6 +363,11 @@ function starterMultiplier(prof: Record<string, any> | null): number {
 }
 
 function weatherMultiplier(ctx: GameTotalContext): number {
+  // Under a closed roof the reported temperature is the building's thermostat
+  // (~72F) and the wind is always "0 mph, None". Feeding that through would
+  // apply a small warm-air bump to a game that has no air to warm, so a
+  // covered park is neutral by construction rather than by coincidence.
+  if (ctx.roof_closed) return 1;
   let m = 1;
   // Warm air carries. ~0.4% per degree off a 70F baseline, capped either way.
   if (ctx.temp_f != null) m *= clamp(1 + 0.004 * (Number(ctx.temp_f) - 70), 0.94, 1.08);

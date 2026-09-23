@@ -86,7 +86,8 @@ Deno.serve(async (req) => {
     detail.player_rollup = rp;
 
     // Bound the bookkeeping tables (ingest_runs 7d, odds 14d, predictions 21d,
-    // game_predictions 35d, player_prediction_daily 90d).
+    // game_predictions 35d, player_game_projections 35d,
+    // player_prediction_daily 90d).
     const { data: pr, error: e4 } = await svc().rpc("prune_ingest_runs");
     const { data: po, error: e5 } = await svc().rpc("prune_odds");
     // Skip the prune if EITHER rollup failed, so a bad rollup can't silently
@@ -98,10 +99,21 @@ Deno.serve(async (req) => {
     // aggregates, not the source.
     const { data: pg, error: e7 } = await svc().rpc("prune_game_predictions");
     const { data: pd, error: e8 } = await svc().rpc("prune_player_prediction_daily");
-    for (const e of [e4, e5, e6, e7, e8]) if (e) errors.push(`prune: ${e.message}`);
+    // Batter projections, 35 days to match game_predictions. They are pregame
+    // rows for a slate and the board shows recent history.
+    //
+    // Unlike `predictions` this is NOT interlocked with a rollup, because
+    // there is nothing downstream that would lose information: the rows carry
+    // their own graded outcome, and `projection_calibration()` reads them
+    // directly rather than through an aggregate. If that ever gains a rollup,
+    // this prune needs the same guard predictions has.
+    const { data: pj, error: e9 } =
+      await svc().rpc("prune_player_game_projections");
+    for (const e of [e4, e5, e6, e7, e8, e9]) if (e) errors.push(`prune: ${e.message}`);
     detail.pruned = {
       ingest_runs: pr, odds: po, predictions: pp,
       game_predictions: pg, player_prediction_daily: pd,
+      player_game_projections: pj,
     };
 
     detail.errors = errors.slice(0, 10);

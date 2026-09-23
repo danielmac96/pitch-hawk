@@ -77,4 +77,10 @@ SPEC = MarketSpec(
     form_windows=("career", "d30", "d90"),
     to_params=to_params,
     bucket_step=ZONE_STEP,
+    spines=("form_spine",),
+    # Scored for real live from the batter's chase rate, but not carried by
+    # this cell grain, so it trains as zero and folds into the intercept.
+    # Closing it means adding a batter bucket column to cell_sql and moving
+    # the name into form_features.
+    intercept_folded=("batter_chase_delta",),
 )

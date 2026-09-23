@@ -68,5 +68,18 @@ SPEC = MarketSpec(
     form_windows=("career", "d30", "d90"),
     to_params=to_params,
     bucket_step=K_STEP,
+    spines=("form_spine_ab",),
     datasets=("at_bats",),
+    # Named by the model and scored for real live, but not carried by this
+    # cell grain, so they train as zero and fold into the intercept.
+    #
+    # `pitcher_bb_delta` is the one that bites: model.ts computes it from the
+    # pitcher's real walk rate at serving time, so training and production
+    # disagree on one of six features. Recorded as a known defect in
+    # docs/DATA-PIPELINE.md 8.5; declaring it here is what makes it visible
+    # from the spec instead of only from a doc.
+    #
+    # Closing any of these is a cell-grain change: add the bucket column to
+    # cell_sql and move the name into form_features.
+    intercept_folded=("pitcher_bb_delta", "batter_k_delta", "platoon_same"),
 )

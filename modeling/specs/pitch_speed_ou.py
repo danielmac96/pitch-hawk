@@ -69,6 +69,7 @@ SPEC = MarketSpec(
     form_windows=("career", "d30", "d90"),
     to_params=to_params,
     bucket_step=VELO_STEP,
+    spines=("form_spine",),
     bucket_col="velo_bucket",
     bucket_baseline=VELO_BASELINE,
 )

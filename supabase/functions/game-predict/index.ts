@@ -14,7 +14,15 @@
 
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
 import { ensurePlayers } from "../_shared/ingest.ts";
-import { getProbables, mlbToday } from "../_shared/mlb.ts";
+import {
+  isPlausible,
+  projectBatter,
+} from "../_shared/batterprojection.ts";
+import {
+  getProbables,
+  mlbToday,
+  type ProbableRow,
+} from "../_shared/mlb.ts";
 import { latestOdds, ouJoin } from "../_shared/market.ts";
 import {
   GameTotalContext, loadActiveModels, log5HomeProb, MarketPrediction,
@@ -53,6 +61,111 @@ function meanProbs(
 }
 const meanNum = (a: number | null, b: number | null) =>
   a == null ? b : b == null ? a : Math.round(((a + b) / 2) * 100) / 100;
+
+/**
+ * Score every posted lineup and upsert the batter projections.
+ *
+ * Re-scored on every run rather than frozen like the pregame markets, and the
+ * reason is the lineups: they are posted a few hours before first pitch, so
+ * the 10:00 ET pass usually sees none and a later pass sees all nine. Freezing
+ * would permanently keep whichever pass ran first, which for most of the slate
+ * is the one that knew least.
+ *
+ * Returns a small summary for the run log. Games with no posted lineup, no
+ * probable pitcher, or no trained model contribute nothing and are counted
+ * rather than raising -- all three are ordinary states, not failures.
+ */
+async function projectBatters(
+  db: ReturnType<typeof svc>,
+  date: string,
+  slate: any[],
+  probBy: Map<number, ProbableRow>,
+  rollBy: Map<number, any>,
+  models: Record<string, any>,
+): Promise<Record<string, number>> {
+  const summary = { games: 0, batters: 0, rows: 0, no_lineup: 0, implausible: 0 };
+
+  const wanted: Array<{
+    game: any; batterId: number; slot: number; isHome: boolean;
+    pitcherId: number | null;
+  }> = [];
+  for (const g of slate) {
+    const prob = probBy.get(g.game_pk);
+    if (!prob) continue;
+    const sides: Array<[number[], boolean, number | null]> = [
+      [prob.home_lineup, true, prob.away_pitcher_id],
+      [prob.away_lineup, false, prob.home_pitcher_id],
+    ];
+    let any = false;
+    for (const [lineup, isHome, pitcherId] of sides) {
+      if (!lineup.length) continue;
+      any = true;
+      lineup.forEach((batterId, i) => {
+        wanted.push({ game: g, batterId, slot: i + 1, isHome, pitcherId });
+      });
+    }
+    if (any) summary.games += 1; else summary.no_lineup += 1;
+  }
+  if (!wanted.length) return summary;
+
+  const batterIds = [...new Set(wanted.map((w) => w.batterId))];
+  summary.batters = batterIds.length;
+  // Names, so the surface can render a player rather than an id.
+  await ensurePlayers(batterIds);
+
+  const pitcherIds = [...new Set(
+    wanted.map((w) => w.pitcherId).filter((v): v is number => v != null))];
+  const [{ data: batRows }, { data: infoRows }] = await Promise.all([
+    db.from("batter_rolling_stats").select("*").in("batter_id", batterIds),
+    db.from("player_info").select("player_id,bat_side,pitch_hand")
+      .in("player_id", [...batterIds, ...pitcherIds]),
+  ]);
+  const batBy = new Map((batRows ?? []).map((r: any) => [r.batter_id, r]));
+  const infoBy = new Map((infoRows ?? []).map((r: any) => [r.player_id, r]));
+
+  const out: Record<string, unknown>[] = [];
+  for (const w of wanted) {
+    const ctx = {
+      balls: 0,
+      strikes: 0,
+      pitch_count_pa: 0,
+      pitcher: w.pitcherId != null ? (rollBy.get(w.pitcherId) ?? null) : null,
+      batter: batBy.get(w.batterId) ?? null,
+      pitcher_info: w.pitcherId != null ? (infoBy.get(w.pitcherId) ?? null) : null,
+      batter_info: infoBy.get(w.batterId) ?? null,
+    };
+    for (const market of ["batter_hit", "batter_hr"]) {
+      const p = projectBatter(market, models, ctx, w.slot);
+      if (!p) continue;
+      if (!isPlausible(market, p.probability)) { summary.implausible += 1; continue; }
+      out.push({
+        game_pk: w.game.game_pk,
+        player_id: w.batterId,
+        market,
+        official_date: date,
+        team_id: w.isHome ? w.game.home_team_id : w.game.away_team_id,
+        opponent_id: w.isHome ? w.game.away_team_id : w.game.home_team_id,
+        is_home: w.isHome,
+        lineup_slot: w.slot,
+        opposing_pitcher_id: w.pitcherId,
+        probability: p.probability,
+        expected_pa: p.expected_pa,
+        per_pa_probability: p.per_pa_probability,
+        model_version: p.model_version,
+        book: "model_fair",
+        updated_at: new Date().toISOString(),
+      });
+    }
+  }
+
+  if (out.length) {
+    const { error } = await db.from("player_game_projections")
+      .upsert(out, { onConflict: "game_pk,player_id,market" });
+    if (error) throw new Error(`player_game_projections: ${error.message}`);
+  }
+  summary.rows = out.length;
+  return summary;
+}
 
 Deno.serve(async (req) => {
   const denied = await requireCronSecret(req);
@@ -147,8 +260,11 @@ Deno.serve(async (req) => {
         strikes: 0,
         pitch_count_pa: 0,
         pitcher: pitcherId != null ? (rollBy.get(pitcherId) ?? null) : null,
-        // League-average batter: a pregame call cannot know who is at the plate,
-        // and inventing a lineup would be worse than saying "average hitter".
+        // League-average batter: a pregame call does not know who is at the
+        // plate for a given at-bat. (Confirmed lineups DO hydrate onto the
+        // slate call and would give the batting order; using them needs a
+        // batter-facing model, which does not exist yet. Until then an average
+        // hitter is the honest input, not a limitation of the feed.)
         batter: null,
         pitcher_info: null,
         batter_info: null,
@@ -246,11 +362,18 @@ Deno.serve(async (req) => {
       });
 
       // ── game_total: projected runs ───────────────────────────────────────
-      // Weather is deliberately null here. game_context is published nightly by
-      // the warehouse and only covers completed games, so a game starting in six
-      // hours has no row in it — the multiplier is 1 and the park factor carries
-      // the venue effect. Wiring a forecast in would mean a per-game MLB feed
-      // call on every run.
+      // Weather comes off the slate call, not from game_context.
+      //
+      // game_context is published nightly by the warehouse and only covers
+      // COMPLETED games, so a game starting in six hours has no row in it.
+      // This used to read `temp_f: null` with a comment saying a forecast
+      // would cost a per-game MLB call — it does not: `weather` hydrates onto
+      // the same slate-level /schedule request getProbables() already makes,
+      // so the whole slate's conditions arrive in zero extra requests.
+      //
+      // These are MLB's own pregame readings, which is also what the boxscore
+      // later reports, so the number the model sees before the game and the
+      // number the warehouse stores after it share a source.
       const totalCtx: GameTotalContext = {
         home_runs_scored_pg: homeRate?.rs_pg != null ? Number(homeRate.rs_pg) : null,
         home_runs_allowed_pg: homeRate?.ra_pg != null ? Number(homeRate.ra_pg) : null,
@@ -259,7 +382,10 @@ Deno.serve(async (req) => {
         home_starter: homePid != null ? (profBy.get(homePid) ?? null) : null,
         away_starter: awayPid != null ? (profBy.get(awayPid) ?? null) : null,
         park_factor: g.venue_id != null ? (parkBy.get(g.venue_id) ?? null) : null,
-        temp_f: null, wind_mph: null, wind_direction: null,
+        temp_f: prob?.temp_f ?? null,
+        wind_mph: prob?.wind_mph ?? null,
+        wind_direction: prob?.wind_direction ?? null,
+        roof_closed: prob?.roof_closed ?? false,
         sample_games: Number(homeRate?.games ?? 0),
       };
       const tot = predictGameTotal(totalCtx);
@@ -283,6 +409,23 @@ Deno.serve(async (req) => {
       if (error) throw new Error(`game_predictions: ${error.message}`);
     }
     detail.written = rows.length;
+
+    // ── the batter analytics surface ─────────────────────────────────────
+    // Per-batter P(hit) and P(home run), written to its OWN table. Nothing
+    // here touches predictions/picks/settle: these are published
+    // probabilities, not a graded wager record, and the player dimension
+    // those tables lack is exactly why this is separate.
+    //
+    // Deliberately AFTER the game_predictions write and wrapped in its own
+    // try: a failure to project batters must not cost the slate its moneyline
+    // and total, which is the part the board actually depends on.
+    try {
+      detail.batter_projections = await projectBatters(
+        db, date, slate, probBy, rollBy, models,
+      );
+    } catch (e) {
+      errors.push(`batter_projections: ${String(e)}`);
+    }
     detail.errors = errors.slice(0, 10);
 
     await logRun("game-predict", startedAt, errors.length === 0, detail);

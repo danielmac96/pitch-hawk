@@ -71,6 +71,127 @@ def test_every_featurevalue_case_is_mirrored():
             f"modeling/score.py does not")
 
 
+def _ts_league() -> dict:
+    """The LEAGUE object from model.ts, as a dict.
+
+    Parsed rather than duplicated: the point is to read what production
+    actually uses. Comments are stripped and the keys quoted so the object
+    literal becomes JSON.
+    """
+    import json
+    import re
+
+    ts = pathlib.Path("supabase/functions/_shared/model.ts").read_text(
+        encoding="utf-8")
+    body = ts.split("export const LEAGUE = ", 1)[1].split("\n};", 1)[0] + "\n}"
+    body = re.sub(r"//[^\n]*", "", body)          # line comments
+    body = re.sub(r",(\s*})", r"\1", body)        # trailing commas
+    body = re.sub(r"(\w+):", r'"\1":', body)      # bare keys
+    return json.loads(body)
+
+
+def test_league_constants_match_model_ts():
+    """`LEAGUE` exists in two languages and nothing was checking they agree.
+
+    Every `*_delta` feature is centred on one of these. Training and serving
+    have to subtract the SAME number or the shipped coefficients meet a
+    differently-scaled input in production -- the model would still score,
+    still look sane, and be quietly wrong by the size of the gap.
+
+    This gap was live: `hr_rate` was added to both files by hand for the
+    batter markets, with nothing asserting the two copies matched.
+    """
+    from modeling.score import LEAGUE as PY
+
+    ts = _ts_league()
+    assert set(ts) == set(PY), (
+        f"LEAGUE keys differ.\n  only in model.ts: {sorted(set(ts) - set(PY))}"
+        f"\n  only in score.py: {sorted(set(PY) - set(ts))}")
+    for key, want in ts.items():
+        assert PY[key] == want, (
+            f"LEAGUE[{key!r}] is {want} in model.ts and {PY[key]} in "
+            f"modeling/score.py")
+
+
+def test_inline_baselines_match_model_ts():
+    """featureValue() subtracts four constants inline rather than from LEAGUE.
+
+    Same failure mode as above, one layer down: score.py mirrors them as
+    module constants, and a change to either side alone is invisible.
+    """
+    import re
+
+    from modeling import score
+
+    ts = pathlib.Path("supabase/functions/_shared/model.ts").read_text(
+        encoding="utf-8")
+    body = ts.split("function featureValue(")[1].split("\nfunction ")[0]
+
+    for case, const in (("pitcher_zone_delta", score.ZONE_BASELINE),
+                        ("pitcher_whiff_delta", score.WHIFF_BASELINE),
+                        ("batter_chase_delta", score.CHASE_BASELINE),
+                        ("batter_contact_delta", score.CONTACT_BASELINE)):
+        line = next(ln for ln in body.splitlines() if f'case "{case}"' in ln)
+        found = re.search(r"-\s*(0?\.\d+)\s*:", line)
+        assert found, f"could not read the baseline out of: {line.strip()}"
+        assert float(found.group(1)) == const, (
+            f"{case} subtracts {found.group(1)} in model.ts and {const} in "
+            f"modeling/score.py")
+
+
+def test_scorable_features_matches_model_ts():
+    """`spec.SCORABLE_FEATURES` is the gate on what a market may name.
+
+    A spec naming something outside model.ts::featureValue() trains a
+    coefficient production never applies, because that switch ends in
+    `default: return 0`. The gate is only worth having if it tracks the real
+    switch, so it is read from the source here rather than trusted.
+
+    Drift in either direction is a bug:
+      * a name in model.ts but not in the set -- a real feature no spec can
+        use, and the error message would claim production cannot score it
+      * a name in the set but not in model.ts -- the gate waves through a
+        feature that silently scores 0.0 live, which is what it exists to stop
+    """
+    import re
+
+    from modeling.spec import SCORABLE_FEATURES
+
+    ts = pathlib.Path("supabase/functions/_shared/model.ts").read_text(
+        encoding="utf-8")
+    body = ts.split("function featureValue(")[1].split("\nfunction ")[0]
+    names = set(re.findall(r'case "([a-z0-9_]+)":', body))
+    assert names, "could not parse featureValue() -- did model.ts move?"
+
+    assert names == set(SCORABLE_FEATURES), (
+        f"SCORABLE_FEATURES has drifted from model.ts::featureValue().\n"
+        f"  only in model.ts: {sorted(names - set(SCORABLE_FEATURES))}\n"
+        f"  only in the set : {sorted(set(SCORABLE_FEATURES) - names)}")
+
+
+def test_every_spec_feature_is_scored_in_production():
+    """End to end: what the registry actually ships, against the real switch.
+
+    test_scorable_features_matches_model_ts pins the gate; this pins the
+    markets. A spec could otherwise pass construction and still name something
+    production ignores, if the gate were ever widened by mistake.
+    """
+    import re
+
+    from modeling.spec import all_markets, get_spec
+
+    ts = pathlib.Path("supabase/functions/_shared/model.ts").read_text(
+        encoding="utf-8")
+    body = ts.split("function featureValue(")[1].split("\nfunction ")[0]
+    names = set(re.findall(r'case "([a-z0-9_]+)":', body))
+
+    for market in all_markets():
+        spec = get_spec(market)
+        unknown = sorted(set(spec.feature_names) - names)
+        assert not unknown, (
+            f"{market} names {unknown}, which model.ts scores as 0.0")
+
+
 def _speed_cases():
     data = json.loads(GOLDEN.read_text())
     cases = data.get("speed_cases")

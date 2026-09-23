@@ -68,8 +68,18 @@ def _pitch_event(n, balls, strikes, code="C", speed=95.0):
                     "isBall": code == "B", "isInPlay": code == "X",
                     "type": {"code": "FF"}},
         "pitchData": {"startSpeed": speed, "zone": 5,
-                      "coordinates": {"pX": 0.1, "pZ": 2.4},
-                      "breaks": {"spinRate": 2300}},
+                      "typeConfidence": 0.9,
+                      "strikeZoneWidth": 1.66, "strikeZoneDepth": 0.83,
+                      # `x`/`y` are legacy Gameday pixel coordinates and are
+                      # here so the assertions below can prove we ignore them.
+                      "coordinates": {"pX": 0.1, "pZ": 2.4,
+                                      "x": 110.2, "y": 168.4,
+                                      "x0": -1.9, "y0": 50.0, "z0": 5.8,
+                                      "vX0": 6.2, "vY0": -138.4, "vZ0": -5.1,
+                                      "aX": -10.3, "aY": 29.7, "aZ": -14.2,
+                                      "pfxX": -5.6, "pfxZ": 9.1},
+                      "breaks": {"spinRate": 2300,
+                                 "breakVertical": -22.1, "breakY": 24.0}},
     }
 
 
@@ -217,3 +227,58 @@ def test_physics_fields_are_carried_through(game):
     assert p["plate_x"] == 0.1
     assert p["plate_z"] == 2.4
     assert p["spin_rate"] == 2300
+
+
+def test_release_and_movement_fields_are_carried_through(game):
+    """pitchData.coordinates beyond pX/pZ.
+
+    These rode along in the payload from the start and were dropped on the
+    floor until 2026-09. Capturing them costs no extra API call, which is why
+    the omission was worth correcting rather than scheduling.
+    """
+    pitches, _ = flatten_play_by_play(1, date(2025, 8, 20), game)
+    p = pitches[0]
+    assert (p["release_pos_x"], p["release_pos_y"], p["release_pos_z"]) == (
+        -1.9, 50.0, 5.8)
+    assert (p["release_vel_x"], p["release_vel_y"], p["release_vel_z"]) == (
+        6.2, -138.4, -5.1)
+    assert (p["accel_x"], p["accel_y"], p["accel_z"]) == (-10.3, 29.7, -14.2)
+    assert (p["pfx_x"], p["pfx_z"]) == (-5.6, 9.1)
+    assert p["break_vertical"] == -22.1
+    assert p["type_confidence"] == 0.9
+
+
+def test_constant_and_display_fields_are_not_captured(game):
+    """Fields present in the payload that carry no per-pitch information.
+
+    `coordinates.x`/`.y` are Gameday display pixels. `breaks.breakY` (24.0),
+    `strikeZoneWidth` (17.0) and `strikeZoneDepth` are plate geometry, measured
+    constant across live games -- 7.9M copies of a constant buy nothing.
+    The fixture supplies all of them precisely so a future widening of the
+    flattener cannot pull them in unnoticed under a plausible-looking name.
+    """
+    pitches, _ = flatten_play_by_play(1, date(2025, 8, 20), game)
+    values = set(pitches[0].values())
+    for unwanted in (110.2, 168.4, 24.0, 1.66, 0.83):
+        assert unwanted not in values, f"{unwanted} leaked into the pitch row"
+
+
+def test_flattener_emits_a_key_for_every_schema_column(game):
+    """Every PITCH_SCHEMA column must be produced by the flattener.
+
+    `ingest.to_parquet` shapes rows with `r.get(f.name)`, so a schema column
+    the flattener never sets does not raise -- it becomes an all-NULL column
+    that looks like missing data forever. The declared-schema invariant stops
+    DuckDB choking on it, but nothing else would report it.
+    """
+    from warehouse.config import PITCH_SCHEMA
+
+    pitches, _ = flatten_play_by_play(1, date(2025, 8, 20), game)
+    declared = {f.name for f in PITCH_SCHEMA}
+    emitted = set(pitches[0])
+    assert declared - emitted == set(), (
+        f"PITCH_SCHEMA columns with no flattener key: "
+        f"{sorted(declared - emitted)}")
+    assert emitted - declared == set(), (
+        f"flattener emits keys absent from PITCH_SCHEMA (they would be "
+        f"silently dropped at write time): {sorted(emitted - declared)}")

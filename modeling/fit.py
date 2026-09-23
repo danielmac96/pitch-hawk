@@ -59,33 +59,55 @@ def _design(spec, cells: pd.DataFrame, form_window: str,  # noqa: ANN001
         raise ValueError(
             f"unknown form_window {form_window!r}; "
             f"{spec.market} emits {spec.form_windows}")
-    # One generic form column per market, recovered from the bucket index as
-    # `baseline + index * step`. Which column, which step and which centre all
-    # come off the spec, which is what keeps this function free of market names.
-    form = (spec.bucket_baseline
-            + cells[f"{form_window}_{spec.bucket_col}"].to_numpy(float)
-            * spec.bucket_step)
+
     balls = cells["balls"].to_numpy(float)
     strikes = cells["strikes"].to_numpy(float)
     zeros = np.zeros(len(cells))
+
+    # Built from the cell grain itself, free to every market.
     columns = {
+        "bias": np.ones(len(cells)),
         "balls": balls,
         "strikes": strikes,
         "two_strikes": (strikes >= 2).astype(float),
         "three_balls": (balls >= 3).astype(float),
         "pitch_of_pa": (cells["pitch_of_pa"].to_numpy(float)
                         if "pitch_of_pa" in cells else zeros),
-        "pitcher_zone_delta": form,
-        "pitcher_k_delta": form,
-        "pitcher_velo": form,
-        # Features the cell grain does not carry are folded into the intercept
-        # as zero, exactly as the v1 trainer did for pitcher_bb_delta. Adding
-        # one is a spec change (a new bucket column), not an engine change.
-        "batter_chase_delta": zeros,
-        "pitcher_bb_delta": zeros,
-        "batter_k_delta": zeros,
-        "platoon_same": zeros,
     }
+
+    # One column per declared rolling-form dimension, recovered from the
+    # bucket index as `baseline + index * step`. This used to be a single
+    # shared array that every pitcher-form name aliased, which is why a market
+    # could never carry pitcher form and batter form at once. Which column,
+    # which step and which centre still all come off the spec, so this stays
+    # free of market names.
+    for ff in spec.form_features:
+        col = ff.column(form_window)
+        if col not in cells:
+            raise ValueError(
+                f"{spec.market}: feature {ff.feature!r} needs cell column "
+                f"{col!r}, which cell_sql did not emit")
+        columns[ff.feature] = (
+            ff.baseline + cells[col].to_numpy(float) * ff.step)
+
+    # Read straight off a cell column of the same name. Not bucketed and not
+    # per-window: `platoon_same` is 1 or 0 for a matchup and has no rolling
+    # history to window over.
+    for name in spec.cell_features:
+        if name not in cells:
+            raise ValueError(
+                f"{spec.market}: feature {name!r} is declared as a "
+                f"cell_feature but cell_sql did not emit a column of that "
+                f"name")
+        columns[name] = cells[name].to_numpy(float)
+
+    # Declared on the spec rather than assumed here. A name the cell grain
+    # does not carry trains as zero and folds into the intercept -- true
+    # before and true now, but it is now a statement the market makes about
+    # itself instead of a silent default buried in the engine.
+    for name in spec.intercept_folded:
+        columns.setdefault(name, zeros)
+
     missing = [f for f in feature_names if f not in columns]
     if missing:
         raise ValueError(f"{spec.market}: no column built for {missing}")
@@ -105,6 +127,22 @@ def _fit_multinomial(spec, cells, form_window, half_life) -> FitResult:  # noqa:
 
     # sklearn collapses a two-class problem to a single coefficient row.
     # model.ts always expects one row per class, so expand it here.
+    #
+    # THE HALVING IS NOT COSMETIC. sklearn's binary fit means
+    # P(class 1) = sigmoid(z), z = coef.x + intercept. model.ts scores a
+    # SOFTMAX over per-class logits, and softmax([-z, +z]) is sigmoid(2*z) --
+    # so mirroring the row at full magnitude doubles the logit and ships a
+    # model far more confident than the one that was fitted. Measured on a
+    # synthetic binary fit: up to 0.15 absolute probability error, with mean
+    # predicted drifting off the base rate (0.575 against an observed 0.545)
+    # while sklearn's own predict_proba matched it exactly.
+    #
+    # Splitting z evenly gives softmax([-z/2, +z/2]) = sigmoid(z), which is
+    # the fitted model.
+    #
+    # This branch was unreachable until the two-class batter markets landed:
+    # every earlier market has three or more classes and takes the branch
+    # above. tests/modeling/test_fit.py pins it against predict_proba.
     coef = np.zeros((len(spec.classes), X.shape[1]))
     intercept = np.zeros(len(spec.classes))
     for i, cls in enumerate(clf.classes_):
@@ -112,7 +150,7 @@ def _fit_multinomial(spec, cells, form_window, half_life) -> FitResult:  # noqa:
         if clf.coef_.shape[0] > 1:
             coef[k], intercept[k] = clf.coef_[i], clf.intercept_[i]
         else:
-            sign = 1.0 if k == 1 else -1.0
+            sign = 0.5 if k == 1 else -0.5
             coef[k], intercept[k] = sign * clf.coef_[0], sign * clf.intercept_[0]
 
     return FitResult(

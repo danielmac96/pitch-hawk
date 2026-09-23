@@ -14,6 +14,12 @@ import { mlbToday } from "../_shared/mlb.ts";
 import { log5HomeProb } from "../_shared/model.ts";
 import { americanToProb, teamIdByAbbr, teamIdByText } from "../_shared/vocab.ts";
 import { fetchJson } from "../_shared/http.ts";
+import {
+  applyNovig,
+  indexPlayersByName,
+  normalizeName,
+  round4,
+} from "../_shared/novig.ts";
 
 const ESPN_SCOREBOARD = "https://site.api.espn.com/apis/site/v2/sports/baseball/mlb/scoreboard";
 const KALSHI_MARKETS = "https://api.elections.kalshi.com/trade-api/v2/markets?series_ticker=KXMLBGAME&status=open&limit=1000";
@@ -221,31 +227,113 @@ async function ingestTheOddsApi(
   return { rows, matched: matchedGames.size };
 }
 
+// ── player props ───────────────────────────────────────────────────────────
+//
+// Batter hit and home-run lines, the real prices behind `batter_hit` /
+// `batter_hr`. Also ships dark behind app_secrets.the_odds_api_key.
+//
+// COSTS N+1 REQUESTS PER SLATE, which is why it is gated separately from the
+// game-level call above. Player props are not available on the bulk odds
+// endpoint -- The Odds API serves them one event at a time -- so a 15-game
+// slate is 1 events call plus 15 odds calls. Against a 500 req/mo free tier
+// that is roughly one slate a day and nothing left over, so this stays off
+// until `the_odds_api_props` is set as well. Two keys, because "we have a key"
+// and "we can afford 16 calls a slate" are different decisions.
+const THE_ODDS_EVENTS =
+  "https://api.the-odds-api.com/v4/sports/baseball_mlb/events";
+
+// Provider market key -> our internal market name. We store OUR name so a
+// prop line joins to the model that priced it; the provider's key rides in
+// `meta` so the mapping stays visible in the data.
+const PROP_MARKETS: Record<string, string> = {
+  batter_hits: "batter_hit",
+  batter_home_runs: "batter_hr",
+};
+
+async function ingestPlayerProps(
+  apiKey: string, idx: ReturnType<typeof indexGames>, unmatched: string[],
+): Promise<{ rows: any[]; matched: number }> {
+  const evUrl = new URL(THE_ODDS_EVENTS);
+  evUrl.searchParams.set("apiKey", apiKey);
+  const events = await fetchJson<any[]>(evUrl, { timeoutMs: 10_000, retries: 2 });
+
+  // Only events we can resolve to one of today's games. An unresolvable event
+  // is one we would spend a request on and then throw away.
+  const targets: { id: string; game: any }[] = [];
+  for (const ev of events ?? []) {
+    const homeId = teamIdByText(ev.home_team);
+    const awayId = teamIdByText(ev.away_team);
+    const g = homeId != null && awayId != null
+      ? idx.byPair.get(`${awayId}:${homeId}`)
+      : undefined;
+    if (g && ev.id) targets.push({ id: ev.id, game: g });
+  }
+  if (!targets.length) return { rows: [], matched: 0 };
+
+  // Resolve sportsbook player names once for the whole slate.
+  const { data: people } = await svc().from("player_info")
+    .select("player_id,full_name").limit(5000);
+  const { byName, collisions } = indexPlayersByName(people ?? []);
+  // Ambiguous names are reported rather than resolved: a prop attributed to
+  // the wrong player is not a missing row, it is a wrong one.
+  for (const c of collisions.slice(0, 5)) unmatched.push(`props:ambiguous:${c}`);
+
+  const rows: any[] = [];
+  const matchedGames = new Set<number>();
+  const now = new Date().toISOString();
+  for (const t of targets) {
+    const url = new URL(`${THE_ODDS_EVENTS}/${t.id}/odds`);
+    url.searchParams.set("apiKey", apiKey);
+    url.searchParams.set("regions", "us");
+    url.searchParams.set("markets", Object.keys(PROP_MARKETS).join(","));
+    url.searchParams.set("oddsFormat", "american");
+    let data: any;
+    try {
+      data = await fetchJson<any>(url, { timeoutMs: 10_000, retries: 1 });
+    } catch (e) {
+      // One event failing must not cost the rest of the slate its lines.
+      unmatched.push(`props:${t.id}:${String(e).slice(0, 60)}`);
+      continue;
+    }
+    for (const bk of data?.bookmakers ?? []) {
+      const source = bk.key ?? "the_odds_api";
+      for (const mk of bk.markets ?? []) {
+        const market = PROP_MARKETS[mk.key];
+        if (!market) continue;
+        for (const o of mk.outcomes ?? []) {
+          const outcome = String(o.name ?? "").toLowerCase();
+          if (outcome !== "over" && outcome !== "under") continue;
+          if (o.price == null) continue;
+          // `description` is the player on a player-prop outcome.
+          const playerId = byName.get(normalizeName(o.description));
+          if (playerId == null) {
+            unmatched.push(`props:player:${o.description}`);
+            continue;
+          }
+          matchedGames.add(t.game.game_pk);
+          rows.push({
+            game_pk: t.game.game_pk,
+            player_id: playerId,
+            market,
+            outcome,
+            line: o.point ?? null,
+            price_american: o.price,
+            implied_prob: round4(americanToProb(o.price)),
+            source,
+            meta: { book: bk.title, provider_market: mk.key,
+                    player: o.description },
+            fetched_at: now,
+          });
+        }
+      }
+    }
+  }
+  return { rows, matched: matchedGames.size };
+}
+
 // De-vig: for each (game, market, source) with a complete two-sided pair
 // (home+away or over+under), normalize implied probs to sum to 1 so the book's
 // margin is removed. Single-sided quotes keep novig = implied. Mutates rows.
-function applyNovig(rows: any[]): void {
-  const groups = new Map<string, any[]>();
-  for (const r of rows) {
-    const k = `${r.game_pk}:${r.market}:${r.source}`;
-    (groups.get(k) ?? groups.set(k, []).get(k)!).push(r);
-  }
-  for (const grp of groups.values()) {
-    const pair = grp[0].market === "game_total"
-      ? ["over", "under"] : ["home", "away"];
-    const a = grp.find((r) => r.outcome === pair[0] && r.implied_prob != null);
-    const b = grp.find((r) => r.outcome === pair[1] && r.implied_prob != null);
-    if (a && b) {
-      const s = Number(a.implied_prob) + Number(b.implied_prob);
-      if (s > 0) {
-        a.novig_prob = round4(Number(a.implied_prob) / s);
-        b.novig_prob = round4(Number(b.implied_prob) / s);
-        continue;
-      }
-    }
-    for (const r of grp) if (r.implied_prob != null) r.novig_prob = r.implied_prob;
-  }
-}
 
 // Team season win% from the games table (for the pregame log5 model).
 async function seasonWinPct(teamId: number | null): Promise<number | null> {
@@ -291,6 +379,19 @@ Deno.serve(async (req) => {
     ];
     if (keyRow?.value) {
       providers.push({ name: "the_odds_api", run: () => ingestTheOddsApi(keyRow.value, idx, unmatched) });
+    }
+    // Player props need their OWN switch, not just a key. They cost one
+    // request per game on top of the slate call, so a 15-game day is ~16
+    // requests against a 500/month free tier -- about one slate a day with
+    // nothing spare. "We have a key" and "we can afford that" are separate
+    // decisions, so they get separate flags.
+    const { data: propRow } = await svc().from("app_secrets")
+      .select("value").eq("key", "the_odds_api_props").maybeSingle();
+    if (keyRow?.value && propRow?.value === "true") {
+      providers.push({
+        name: "player_props",
+        run: () => ingestPlayerProps(keyRow.value, idx, unmatched),
+      });
     }
 
     let rows: any[] = [];
@@ -367,6 +468,3 @@ Deno.serve(async (req) => {
   }
 });
 
-function round4(v: number | null | undefined): number | null {
-  return v == null ? null : Math.round(v * 10000) / 10000;
-}

@@ -111,3 +111,39 @@ def ece(y: np.ndarray, p: np.ndarray, w: np.ndarray, bins: int = 10) -> float:
     return float(sum(
         r["n"] / total * abs(r["mean_pred"] - r["observed"])
         for r in rows if r["n"] > 0 and r["mean_pred"] is not None))
+
+
+def calibration_ratio(y: np.ndarray, p: np.ndarray, w: np.ndarray,
+                      positive_class: int) -> float:
+    """Mean predicted probability divided by the observed rate.
+
+    Calibration IN THE LARGE: 1.0 means the model predicts the base rate
+    correctly on average, 1.4 means it is 40% too confident overall.
+
+    This exists beside `ece` because ECE is a binned statistic and binning
+    fails on a rare class. Home runs are ~3.2% of plate appearances, so with
+    ten uniform bins essentially every row lands in the first one and ECE
+    collapses to a single comparison that can look excellent while the model
+    is systematically wrong. Worse, `calibration_bins` bins on class index 1,
+    which for `("home_run", "other")` is the 97% class -- measuring how well
+    we predict "not a home run".
+
+    Ratios are robust to that: no bins, no class-index trap, and it catches
+    the failure mode that actually occurred here. `CALIB_SHRINK = 0.7` in
+    model.ts exists because graded `ab_result` picks ran at ~1.4x the realised
+    rate -- a calibration ratio of 1.4, applied as a constant fudge after the
+    fact. A gate on this number would have caught it before promotion.
+
+    Returns inf when nothing was observed: no denominator is not calibration.
+    """
+    pred = np.asarray(p)[:, positive_class]
+    hit = (np.asarray(y) == positive_class).astype(float)
+    w = np.asarray(w, dtype=float)
+    total = w.sum()
+    if total <= 0:
+        return float("inf")
+    observed = float(np.dot(hit, w) / total)
+    expected = float(np.dot(pred, w) / total)
+    if observed <= 0:
+        return float("inf")
+    return expected / observed

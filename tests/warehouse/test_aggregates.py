@@ -66,6 +66,12 @@ def _rows_for_day(day: str, game_pk: int):
                         "zone": 5 if pn % 2 else 13,
                         "launch_speed": 104.0 if pn == 10 else None,
                         "launch_angle": 28.0 if pn == 10 else None,
+                        # batted_ball_profile needs a trajectory and a field
+                        # location. Toward the left-field line, which for
+                        # these right-handed batters is PULLED.
+                        "trajectory": "fly_ball" if pn == 10 else None,
+                        "hit_coord_x": 60.0 if pn == 10 else None,
+                        "hit_coord_y": 120.0 if pn == 10 else None,
                     })
                 at_bats.append({
                     "game_pk": game_pk, "at_bat_index": abi,
@@ -81,11 +87,21 @@ def _rows_for_day(day: str, game_pk: int):
                     "start_ts": ts, "end_ts": ts,
                 })
                 abi += 1
+    # Alternate the host so BOTH clubs accumulate home and away plate
+    # appearances. park_hr_factors compares a club's rate at its own park
+    # against its rate on the road, so a club that never travels has no
+    # denominator and produces no row at all.
+    host_is_one = game_pk % 2 == 0
     game = {"game_pk": game_pk, "game_date": gd, "season": SEASON,
-            "game_type": "R", "status": "Final", "home_team_id": 1,
-            "away_team_id": 2, "home_abbr": "AAA", "away_abbr": "BBB",
-            "home_score": 3, "away_score": 2, "venue_id": 9,
-            "venue_name": "Test Park", "hp_umpire_id": 77,
+            "game_type": "R", "status": "Final",
+            "home_team_id": 1 if host_is_one else 2,
+            "away_team_id": 2 if host_is_one else 1,
+            "home_abbr": "AAA" if host_is_one else "BBB",
+            "away_abbr": "BBB" if host_is_one else "AAA",
+            "home_score": 3, "away_score": 2,
+            "venue_id": 9 if host_is_one else 10,
+            "venue_name": "Test Park" if host_is_one else "Other Park",
+            "hp_umpire_id": 77,
             "hp_umpire": "Ump", "weather_condition": "Clear", "temp_f": 70,
             "wind_mph": 5, "wind_direction": "Out", "attendance": 30000,
             "game_duration_min": 180}

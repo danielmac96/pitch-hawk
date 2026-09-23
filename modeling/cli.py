@@ -45,9 +45,14 @@ def cmd_build(args) -> int:
     # Both spines: pitch-grain markets join form_spine, plate-appearance-grain
     # markets join form_spine_ab. Building both here keeps `build` a single
     # R2 pass -- the cost rule in the plan header.
-    features.build_form_spine(store, seasons=seasons, con=con)
-    features.build_form_spine_ab(store, seasons=seasons, con=con)
     markets = [args.market] if args.market else list(all_markets())
+    specs = [get_spec(m) for m in markets]
+    # Only the spines these markets actually join. This used to build the two
+    # pitcher spines unconditionally, which made a batter market unbuildable
+    # without editing the CLI -- exactly the market-name branching the spec
+    # contract exists to avoid.
+    needed = {s for spec in specs for s in spec.spines}
+    features.build_spines(store, needed, seasons=seasons, con=con)
     for market in markets:
         features.build_cells(store, get_spec(market), seasons=seasons, con=con)
     return 0

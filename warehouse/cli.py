@@ -26,13 +26,22 @@ and must never be treated as a pass.
 from __future__ import annotations
 
 import argparse
+import io
 import sys
 import time
 from datetime import date, datetime, timedelta
 
 from warehouse import manifest
-from warehouse.config import HOT_WINDOW_DAYS, r2_config
-from warehouse.ingest import daterange, ingest_day, refresh_players
+import pyarrow.parquet as pq
+
+from warehouse.config import (
+    HOT_WINDOW_DAYS, SNAPSHOTS, r2_config, snapshot_key,
+)
+from warehouse.contact import STATCAST_FLOOR as CONTACT_FLOOR
+from warehouse.ingest import (
+    daterange, ingest_day, ingest_weather_range, refresh_contact_quality,
+    refresh_players, refresh_venues,
+)
 from warehouse.mlb import MlbApiError, schedule
 from warehouse.store import LocalStore, R2Store
 
@@ -101,6 +110,25 @@ def cmd_status(args) -> int:
         if lag > 0:
             stale = True
         print(f"  {ds:<10} max(day) {days[-1]}{flag}")
+
+    # Snapshots are written whole and carry no manifest entry, so nothing
+    # above sees them. Three of them now hold data other things depend on --
+    # `venues` is the join key for weather, `contact_quality` is the in-house
+    # xBA/xHR -- and "is it there, and how big" was unanswerable without
+    # opening the bucket by hand.
+    print("\n  snapshots")
+    for name in SNAPSHOTS:
+        key = snapshot_key(name)
+        if not store.exists(key):
+            print(f"  {name:<18} MISSING   build it before anything reads it")
+            continue
+        try:
+            blob = store.get(key)
+            tbl = pq.read_table(io.BytesIO(blob))
+            print(f"  {name:<18} {tbl.num_rows:>8,} rows  "
+                  f"{len(blob) / 1e3:>8.1f} KB  {tbl.num_columns} cols")
+        except Exception as exc:  # noqa: BLE001
+            print(f"  {name:<18} UNREADABLE  {exc}")
 
     unver = manifest.unverified_days(m, "pitches")
     if unver:
@@ -247,6 +275,24 @@ def cmd_ingest(args) -> int:
             print(f"warning: players snapshot refresh failed for {day}: {exc}",
                   file=sys.stderr)
 
+    # Keep the venue dimension current for this day's season.
+    #
+    # Refetched every run rather than merged like players, because park
+    # dimensions are not immutable: a fence that moves mid-offseason changes
+    # the row for a season already in the snapshot. One API call.
+    #
+    # Non-fatal for the same reason the players refresh is: the day's Parquet
+    # and manifest entry are already written, and that is what the prune gates
+    # on.
+    if not args.no_venues:
+        try:
+            n = refresh_venues(store, [int(day[:4])])
+            print(f"  venues snapshot: {n} rows for {day[:4]}"
+                  if n else "  venues snapshot: unchanged")
+        except Exception as exc:  # noqa: BLE001
+            print(f"warning: venues snapshot refresh failed for {day}: {exc}",
+                  file=sys.stderr)
+
     if args.force:
         print("  re-ingest cleared any prior verification for this day; "
               "re-verify it before the prune relies on it")
@@ -298,6 +344,69 @@ def cmd_export(args) -> int:
 
 
 # ── publish ─────────────────────────────────────────────────────────────────
+
+def cmd_contact(args) -> int:
+    """Rebuild the contact-quality lookup: P(hit)/P(HR) given a batted ball."""
+    store = _store(args)
+    floor = args.season_floor
+    print(f"building contact_quality from {floor}+ (full-history scan)")
+    n = refresh_contact_quality(store, season_floor=floor)
+    if not n:
+        print("  no seasons at or after the floor; nothing written")
+        return EXIT_OK
+    print(f"  {n:,} cells written to contact_quality/snapshot.parquet")
+    return EXIT_OK
+
+
+def cmd_weather(args) -> int:
+    """Gametime weather for a day or a range, from Open-Meteo.
+
+    Batched hard: one upstream request covers every venue across the WHOLE
+    range, so a season is one call and the full 2015-2026 history is ~12.
+    Prefer `--season` or a wide `--from/--to` over a loop of single days.
+    """
+    store = _store(args)
+    if args.catchup:
+        # Self-healing backfill. The nightly only fetches the day it just
+        # ingested, so the ~2,000 days that predate this dataset would stay
+        # empty until somebody remembered to run twelve seasons by hand --
+        # and "somebody remembered" is how R2 once sat frozen for three days.
+        #
+        # Instead: find the oldest game-days with no weather and cover them in
+        # ONE range call. Open-Meteo charges per request, not per day, so a
+        # contiguous span costs the same as a single date and `ingest_weather_
+        # range` writes only the days that actually have games.
+        m = manifest.load(store)
+        have = set(manifest.days(m, "game_weather"))
+        missing = [d for d in manifest.days(m, "games") if d not in have]
+        if not missing:
+            print("weather: every stored game-day already has a reading")
+            return EXIT_OK
+        slice_ = missing[:args.catchup]
+        start, end = slice_[0], slice_[-1]
+        print(f"weather catch-up: {len(missing)} game-days missing, "
+              f"covering {len(slice_)} of them ({start} .. {end})")
+    elif args.season:
+        start = f"{args.season}-03-01"
+        end = f"{args.season}-11-15"
+    else:
+        start = args.start or _yesterday()
+        end = args.end or start
+    print(f"weather {start} .. {end} "
+          f"({'archive' if not args.forecast else 'forecast'})")
+    t = ingest_weather_range(store, start, end, archive=not args.forecast)
+    if not t["rows"]:
+        # Say WHICH of the several reasons it was. "nothing written" sent the
+        # reader to the schedule when the actual cause was a missing snapshot.
+        print(f"  nothing written: {t.get('reason', 'no matching readings')}")
+        return EXIT_OK
+    print(f"  {t['days']} days, {t['rows']}/{t['games']} games matched, "
+          f"{t['bytes']/1e3:.1f} KB")
+    if t["rows"] < t["games"]:
+        print(f"  note: {t['games'] - t['rows']} games had no venue geometry "
+              f"or no reading at their hour", file=sys.stderr)
+    return EXIT_OK
+
 
 def cmd_publish(args) -> int:
     """Build the display aggregates in DuckDB and swap them into Supabase."""
@@ -389,6 +498,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Re-ingest a day already in the manifest.")
     i.add_argument("--workers", type=int, default=6)
     i.add_argument("--no-boxscore", action="store_true")
+    i.add_argument("--no-venues", action="store_true",
+                   help="Skip the venues-snapshot refresh. The snapshot is "
+                        "one API call per run and carries park dimensions, "
+                        "elevation, roof type and field orientation.")
     i.add_argument("--no-players", action="store_true",
                    help="Skip the players-snapshot refresh. The snapshot is "
                         "rewritten whole, so this is worth setting when "
@@ -418,6 +531,29 @@ def build_parser() -> argparse.ArgumentParser:
                         "because a suspended game grades the following day "
                         "and re-exporting is how that reaches R2.")
     e.set_defaults(fn=cmd_export)
+
+    c = sub.add_parser("contact",
+                       help="rebuild the P(hit)/P(HR) contact-quality lookup")
+    c.add_argument("--season-floor", type=int, default=CONTACT_FLOOR,
+                   help=f"Earliest season to include (default {CONTACT_FLOOR}; "
+                        f"launch_speed coverage is unreliable before it).")
+    c.set_defaults(fn=cmd_contact)
+
+    w = sub.add_parser("weather",
+                       help="gametime weather from Open-Meteo, per game")
+    w.add_argument("--season", type=int,
+                   help="Whole season (Mar 1 - Nov 15). One upstream call.")
+    w.add_argument("--catchup", type=int, metavar="N",
+                   help="Cover the N oldest stored game-days that have no "
+                        "weather yet, in one request. Lets the nightly drain "
+                        "the historical backlog without anyone running twelve "
+                        "seasons by hand.")
+    w.add_argument("--from", dest="start", help="YYYY-MM-DD")
+    w.add_argument("--to", dest="end", help="YYYY-MM-DD (default: --from)")
+    w.add_argument("--forecast", action="store_true",
+                   help="Use the forecast endpoint instead of the archive, "
+                        "for days that have not happened yet.")
+    w.set_defaults(fn=cmd_weather)
 
     b = sub.add_parser("backfill", help="ingest whole seasons (resumable)")
     b.add_argument("--seasons", nargs="*", type=int, default=None)

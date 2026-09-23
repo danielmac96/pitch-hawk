@@ -66,12 +66,22 @@ def _evaluate_multinomial(spec, result: FitResult, cells: pd.DataFrame,  # noqa:
     p = predict(spec, result, cells, form_window)
     y = np.array([spec.classes.index(o) for o in cells["outcome"]])
     w = cells["n"].to_numpy(float)
-    return {
+    out = {
         "logloss": round(M.logloss(y, p, w), 6),
         "brier": round(M.brier(y, p, w), 6),
         "ece": round(M.ece(y, p, w), 6),
         "n": float(w.sum()),
     }
+    # Calibration in the large, for markets that name a positive class.
+    # Reported unconditionally when declared -- the gate may or may not veto
+    # on it, but a number nobody can see cannot be argued about.
+    if spec.positive_class:
+        idx = spec.classes.index(spec.positive_class)
+        out["calibration_ratio"] = round(
+            M.calibration_ratio(y, p, w, idx), 6)
+        out["positive_rate"] = round(
+            float(np.dot((y == idx).astype(float), w) / max(w.sum(), 1.0)), 6)
+    return out
 
 
 def predict_linear(spec, result: FitResult, cells: pd.DataFrame,  # noqa: ANN001

@@ -80,24 +80,101 @@ export interface ProbableRow {
   game_pk: number;
   home_pitcher_id: number | null;
   away_pitcher_id: number | null;
+  // Pregame conditions. The warehouse gets the same numbers from the boxscore,
+  // but only once a game is final — which is no use to a pregame call.
+  temp_f: number | null;
+  wind_mph: number | null;
+  wind_direction: string | null;
+  weather_condition: string | null;
+  // True when the park is covered for this game. `roofType` on the venue says
+  // what roof the park HAS; only the weather string says whether it was shut.
+  roof_closed: boolean;
+  // Confirmed batting orders, in slot order, when the clubs have posted them.
+  // Empty until they do -- typically a few hours before first pitch, so an
+  // early scoring pass sees nothing and a later one does.
+  home_lineup: number[];
+  away_lineup: number[];
 }
 
-// Probable starters for a slate. Separate from getSchedule() because the
-// `probablePitcher` hydrate is only meaningful for upcoming games and the
-// ingest path has no use for it — game-predict needs it to score a game hours
-// before anyone has thrown a pitch.
+// "75" -> 75. MLB sends these as strings on the schedule, unlike the boxscore.
+//
+// The emptiness check after stripping is load-bearing: Number("") is 0, not
+// NaN, so a value carrying no digits at all ("Indoors") would otherwise parse
+// as a confident zero rather than as unknown.
+function weatherNum(v: unknown): number | null {
+  if (v == null || v === "") return null;
+  const cleaned = String(v).replace(/[^0-9.-]/g, "");
+  if (!/\d/.test(cleaned)) return null;
+  const n = Number(cleaned);
+  return Number.isFinite(n) ? n : null;
+}
+
+// "10 mph, In From RF" -> [10, "In From RF"]. Mirrors the same split in
+// warehouse/mlb.py:flatten_game, so a pregame reading and the boxscore reading
+// the warehouse stores for the same game parse to the same shape.
+export function parseWind(v: unknown): [number | null, string | null] {
+  const s = String(v ?? "").trim().replace(/\.$/, "");
+  if (!s) return [null, null];
+  const parts = s.split(",", 2);
+  const mph = weatherNum(parts[0]);
+  const dir = parts.length > 1 ? parts[1].trim() : null;
+  // "Calm" and "None" are not directions; treating them as one would let
+  // `dir.includes("in")` match nothing while still looking populated.
+  return [mph, dir && !/^(none|calm)$/i.test(dir) ? dir : null];
+}
+
+// Player ids from one side of `lineups`, in the order MLB lists them, which
+// is batting order. Returns [] rather than null for an unposted lineup: the
+// absence of a lineup is not an error, it is just early.
+export function lineupIds(players: unknown): number[] {
+  if (!Array.isArray(players)) return [];
+  const out: number[] = [];
+  for (const p of players) {
+    const id = typeof p === "number" ? p : (p as { id?: unknown })?.id;
+    if (typeof id === "number" && Number.isFinite(id)) out.push(id);
+  }
+  return out;
+}
+
+// A covered park reports condition "Dome" or "Roof Closed" with wind
+// "0 mph, None" — verified on live slates. 8 of 30 parks can be covered, and
+// for those an outdoor reading is not a weak feature but a wrong one.
+export function isRoofClosed(condition: unknown): boolean {
+  const c = String(condition ?? "").toLowerCase();
+  return c.includes("dome") || c.includes("roof closed");
+}
+
+// Probable starters and pregame conditions for a slate. Separate from
+// getSchedule() because these hydrates are only meaningful for upcoming games
+// and the ingest path has no use for them — game-predict needs them to score a
+// game hours before anyone has thrown a pitch.
+//
+// `weather` and `lineups` ride along on the SAME slate-level request as
+// `probablePitcher`, so the whole slate's conditions and batting orders arrive
+// in zero extra calls. (`venue(location,fieldInfo)` hydrates here too and is
+// still not requested: the venue dimension is a warehouse dataset and nothing
+// in the serving path reads it.)
 export async function getProbables(dateISO: string): Promise<ProbableRow[]> {
   const data = await mlbGet("/schedule", {
-    sportId: "1", date: dateISO, hydrate: "probablePitcher",
+    sportId: "1", date: dateISO, hydrate: "probablePitcher,weather,lineups",
   });
   const out: ProbableRow[] = [];
   for (const d of data.dates ?? []) {
     for (const g of d.games ?? []) {
       if (!g.gamePk) continue;
+      const w = g?.weather ?? {};
+      const [windMph, windDir] = parseWind(w.wind);
       out.push({
         game_pk: g.gamePk,
         home_pitcher_id: g?.teams?.home?.probablePitcher?.id ?? null,
         away_pitcher_id: g?.teams?.away?.probablePitcher?.id ?? null,
+        temp_f: weatherNum(w.temp),
+        wind_mph: windMph,
+        wind_direction: windDir,
+        weather_condition: w.condition ?? null,
+        roof_closed: isRoofClosed(w.condition),
+        home_lineup: lineupIds(g?.lineups?.homePlayers),
+        away_lineup: lineupIds(g?.lineups?.awayPlayers),
       });
     }
   }

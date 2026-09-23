@@ -5,6 +5,7 @@
 // Requires x-cron-secret. Scheduled every 10 minutes via pg_cron.
 
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
+import { gradeProjection } from "../_shared/batterprojection.ts";
 
 const BATCH = 400;
 
@@ -293,6 +294,82 @@ async function settleGamePredictions(): Promise<{ graded: number; errors: string
   return { graded, errors };
 }
 
+/**
+ * Grade the batter projections against what the batter actually did.
+ *
+ * OUTCOME ONLY -- no price, no units, no profit. These rows are `model_fair`:
+ * there is no prop line behind them, so a P&L here would be a betting record
+ * invented out of even money. What grading buys is REALISED calibration, the
+ * production counterpart of the offline gate's `calibration_ratio` and the
+ * only way to learn that a model which passed its metrics still runs hot.
+ * `ab_result` did exactly that, and graded picks are how it was found.
+ *
+ * A projected batter who did not bat grades `void`, not `miss`. Lineups change
+ * after they are posted, and a late scratch is not a failed prediction --
+ * counting it as one would drag every measured rate down by however often
+ * clubs change their minds.
+ */
+async function settleProjections(): Promise<{ graded: number; errors: string[] }> {
+  const db = svc();
+  const errors: string[] = [];
+  const { data: pending, error } = await db.from("player_game_projections")
+    .select("game_pk,player_id,market,probability")
+    .is("result", null)
+    .order("official_date", { ascending: false })
+    .limit(BATCH);
+  if (error) return { graded: 0, errors: [error.message] };
+  if (!pending?.length) return { graded: 0, errors: [] };
+
+  let graded = 0;
+  const gamePks = [...new Set(pending.map((r: any) => r.game_pk).filter(Boolean))];
+  for (const gamePk of gamePks) {
+    const { data: game } = await db.from("games")
+      .select("status").eq("game_pk", gamePk).maybeSingle();
+    const status = game?.status ?? "";
+    const isFinal = status.startsWith("Final") || status === "Game Over" ||
+      status === "Completed Early";
+    if (!isFinal) continue; // still in progress; try again next run
+
+    // Every plate appearance in the game, by batter. `at_bats` is the 35-day
+    // hot window and these rows are pruned at 35 days too, so a projection
+    // always has its at-bats available while it is gradable.
+    const { data: abRows } = await db.from("at_bats")
+      .select("batter_id,result,result_detail").eq("game_pk", gamePk).limit(500);
+
+    const pa = new Map<number, number>();
+    const hits = new Map<number, number>();
+    const homers = new Map<number, number>();
+    for (const a of abRows ?? []) {
+      const id = a.batter_id;
+      if (id == null) continue;
+      pa.set(id, (pa.get(id) ?? 0) + 1);
+      if (a.result === "hit") hits.set(id, (hits.get(id) ?? 0) + 1);
+      if (a.result_detail === "home_run") homers.set(id, (homers.get(id) ?? 0) + 1);
+    }
+
+    for (const r of pending.filter((x: any) => x.game_pk === gamePk) as any[]) {
+      const g = gradeProjection(
+        r.market,
+        pa.get(r.player_id) ?? 0,
+        hits.get(r.player_id) ?? 0,
+        homers.get(r.player_id) ?? 0,
+      );
+
+      const { error: uerr } = await db.from("player_game_projections").update({
+        result: g.result,
+        actual_count: g.actual_count,
+        plate_appearances: g.plate_appearances,
+        graded_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).eq("game_pk", r.game_pk).eq("player_id", r.player_id)
+        .eq("market", r.market);
+      if (uerr) errors.push(uerr.message);
+      else graded += 1;
+    }
+  }
+  return { graded, errors };
+}
+
 Deno.serve(async (req) => {
   const denied = await requireCronSecret(req);
   if (denied) return denied;
@@ -300,11 +377,21 @@ Deno.serve(async (req) => {
   const preds = await settleTable("predictions");
   const picks = await settleTable("picks");
   const gamePreds = await settleGamePredictions();
+  // Isolated: a failure here must not stop predictions and picks being graded,
+  // which is what the record and the board depend on.
+  let projections = { graded: 0, errors: [] as string[] };
+  try {
+    projections = await settleProjections();
+  } catch (e) {
+    projections.errors = [`projections: ${String(e)}`];
+  }
   const detail = {
     predictions_graded: preds.graded,
     picks_graded: picks.graded,
     game_predictions_graded: gamePreds.graded,
-    errors: [...preds.errors, ...picks.errors, ...gamePreds.errors].slice(0, 10),
+    projections_graded: projections.graded,
+    errors: [...preds.errors, ...picks.errors, ...gamePreds.errors,
+             ...projections.errors].slice(0, 10),
   };
   await logRun("settle", startedAt, detail.errors.length === 0, detail);
   return json(detail);

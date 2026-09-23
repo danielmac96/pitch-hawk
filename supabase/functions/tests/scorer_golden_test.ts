@@ -26,7 +26,7 @@
 //      constants (zone 0.48, chase 0.28), so the fixtures have to build a real
 //      context and let the TypeScript compute the deltas itself.
 
-import { scoreMultinomial, speedOverProb } from "../_shared/model.ts";
+import { LEAGUE, scoreMultinomial, speedOverProb } from "../_shared/model.ts";
 
 const params = {
   type: "multinomial_logistic",
@@ -63,6 +63,49 @@ for (const balls of [0, 1, 2, 3]) {
         params,
         context: ctx,
         expected: scoreMultinomial(params, ctx),
+      });
+    }
+  }
+}
+
+// The batter markets, added 2026-09. Two classes rather than three, and two
+// form dimensions rather than one -- pitcher AND batter -- which is the shape
+// no earlier market had.
+//
+// These cases exist because the block above only ever exercised
+// pitcher_zone_delta and batter_chase_delta. `batter_hr_delta`,
+// `pitcher_hr_delta` and `platoon_same` were mirrored in modeling/score.py by
+// hand with nothing comparing the VALUES: the mirror test only asserts each
+// name is handled, so a mismatched league centre would have passed it.
+const hrParams = {
+  type: "multinomial_logistic",
+  classes: ["home_run", "other"],
+  features: ["batter_hr_delta", "pitcher_hr_delta", "platoon_same"],
+  coef: [
+    [12.0, 8.0, -0.25],
+    [-3.0, -2.0, 0.10],
+  ],
+  intercept: [-3.4, 0.2],
+};
+
+for (const batHr of [-0.02, 0.0, 0.05]) {
+  for (const pitHr of [-0.01, 0.015]) {
+    // Same-handed, opposite-handed, and a switch hitter (which featureValue
+    // treats as no platoon edge either way).
+    for (const [bs, ph] of [["R", "R"], ["L", "R"], ["S", "R"]]) {
+      const ctx = {
+        balls: 0,
+        strikes: 0,
+        pitch_count_pa: 0,
+        pitcher: { hr_rate: LEAGUE.hr_rate + pitHr },
+        batter: { hr_rate: LEAGUE.hr_rate + batHr },
+        pitcher_info: { pitch_hand: ph },
+        batter_info: { bat_side: bs },
+      };
+      cases.push({
+        params: hrParams,
+        context: ctx,
+        expected: scoreMultinomial(hrParams, ctx),
       });
     }
   }

@@ -24,6 +24,8 @@ LEAGUE = {
     "ab_result": {"strikeout": 0.221, "walk": 0.087, "hit": 0.239,
                   "out": 0.453},
     "avg_pitches_pa": 3.85,
+    # Home runs per plate appearance. Must equal LEAGUE.hr_rate in model.ts.
+    "hr_rate": 0.032,
     "speed_sigma": 5.4,
     "avg_runs_per_team": 4.4,
 }
@@ -91,6 +93,14 @@ def feature_value(name: str, ctx: dict, _missing=0.0) -> float:
         return _delta(p, "k_rate", al["strikeout"])
     if name == "pitcher_bb_delta":
         return _delta(p, "bb_rate", al["walk"])
+    if name == "batter_hr_delta":
+        return _delta(b, "hr_rate", LEAGUE["hr_rate"])
+    if name == "pitcher_hr_delta":
+        return _delta(p, "hr_rate", LEAGUE["hr_rate"])
+    if name == "batter_hit_delta":
+        return _delta(b, "hit_rate", al["hit"])
+    if name == "pitcher_hit_delta":
+        return _delta(p, "hit_rate", al["hit"])
     if name == "batter_k_delta":
         return _delta(b, "k_rate", al["strikeout"])
     if name == "batter_bb_delta":

@@ -15,7 +15,7 @@ Where this INTENTIONALLY differs from the Supabase ingest
   * Base occupancy is carried forward from the previous play's post-state and
     reset at each half-inning boundary. Steals and pickoffs appear as their own
     plays in allPlays, so carrying forward accounts for them.
-  * ~40 measured fields per pitch instead of 6.
+  * ~53 measured fields per pitch instead of 6.
 """
 
 from __future__ import annotations
@@ -372,6 +372,23 @@ def flatten_play_by_play(game_pk: int, game_date: date | None,
                 "break_length": _float(breaks.get("breakLength")),
                 "extension": _float(pd.get("extension")),
                 "plate_time": _float(pd.get("plateTime")),
+                # Release point, trajectory and movement. Same `coords` dict
+                # plate_x/plate_z come from -- no extra fetch. `coords["x"]`
+                # and `coords["y"]` are skipped on purpose: legacy Gameday
+                # pixel coordinates, not physical units.
+                "release_pos_x": _float(coords.get("x0")),
+                "release_pos_y": _float(coords.get("y0")),
+                "release_pos_z": _float(coords.get("z0")),
+                "release_vel_x": _float(coords.get("vX0")),
+                "release_vel_y": _float(coords.get("vY0")),
+                "release_vel_z": _float(coords.get("vZ0")),
+                "accel_x": _float(coords.get("aX")),
+                "accel_y": _float(coords.get("aY")),
+                "accel_z": _float(coords.get("aZ")),
+                "pfx_x": _float(coords.get("pfxX")),
+                "pfx_z": _float(coords.get("pfxZ")),
+                "break_vertical": _float(breaks.get("breakVertical")),
+                "type_confidence": _float(pd.get("typeConfidence")),
                 "launch_speed": _float(hit.get("launchSpeed")),
                 "launch_angle": _float(hit.get("launchAngle")),
                 "total_distance": _float(hit.get("totalDistance")),
@@ -436,6 +453,52 @@ def fetch_game(game_pk: int, game_date: date | None, *,
             box = None  # context is enrichment; never fail the game for it
     pitches, at_bats = flatten_play_by_play(game_pk, game_date, pbp)
     return {"pitches": pitches, "at_bats": at_bats, "boxscore": box}
+
+
+# ── venues ──────────────────────────────────────────────────────────────────
+
+def flatten_venue(v: dict, season: int) -> dict:
+    """One venue as of one season. See VENUE_SCHEMA for why season is a key."""
+    loc = v.get("location") or {}
+    coords = loc.get("defaultCoordinates") or {}
+    fi = v.get("fieldInfo") or {}
+    return {
+        "venue_id": _int(v.get("id")),
+        "season": _int(season),
+        "name": v.get("name"),
+        "city": loc.get("city"),
+        "state": loc.get("stateAbbrev") or loc.get("state"),
+        "latitude": _float(coords.get("latitude")),
+        "longitude": _float(coords.get("longitude")),
+        "elevation_ft": _int(loc.get("elevation")),
+        "azimuth_angle": _float(loc.get("azimuthAngle")),
+        "tz_id": (v.get("timeZone") or {}).get("id"),
+        "roof_type": fi.get("roofType"),
+        "turf_type": fi.get("turfType"),
+        "capacity": _int(fi.get("capacity")),
+        "left_line": _int(fi.get("leftLine")),
+        "left_center": _int(fi.get("leftCenter")),
+        "center": _int(fi.get("center")),
+        "right_center": _int(fi.get("rightCenter")),
+        "right_line": _int(fi.get("rightLine")),
+    }
+
+
+def fetch_venues(season: int) -> list[dict]:
+    """Every venue as of `season`, in one request.
+
+    The bulk endpoint honours `season` -- verified against Camden Yards, whose
+    left_center reads 410 for 2015 and 2022 and 376 for 2026 -- so a full
+    history costs one call per season rather than one per venue per season.
+
+    Returns spring-training and minor league parks alongside the 30 active MLB
+    venues. They are kept rather than filtered here: the warehouse stores what
+    the feed said, and `games.venue_id` is the correct filter at read time.
+    """
+    data = get("/venues", {"sportId": "1", "season": str(season),
+                           "hydrate": "location,fieldInfo,timezone"})
+    return [flatten_venue(v, season)
+            for v in data.get("venues", []) if v.get("id") is not None]
 
 
 def fetch_players(ids: list[int]) -> list[dict]:

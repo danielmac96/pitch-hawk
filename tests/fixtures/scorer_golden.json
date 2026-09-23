@@ -64,7 +64,7 @@
       },
       "expected": {
         "strike_foul": 0.3702475008358651,
-        "ball": 0.31361675130105615,
+        "ball": 0.3136167513010562,
         "in_play": 0.3161357478630787
       }
     },
@@ -868,7 +868,7 @@
       },
       "expected": {
         "strike_foul": 0.5294908363042435,
-        "ball": 0.17345459391135773,
+        "ball": 0.17345459391135779,
         "in_play": 0.2970545697843987
       }
     },
@@ -1270,7 +1270,7 @@
       },
       "expected": {
         "strike_foul": 0.4469345528716424,
-        "ball": 0.207765942515885,
+        "ball": 0.20776594251588498,
         "in_play": 0.34529950461247266
       }
     },
@@ -2006,8 +2006,8 @@
         "batter_info": null
       },
       "expected": {
-        "strike_foul": 0.462993792433581,
-        "ball": 0.21139187674944132,
+        "strike_foul": 0.46299379243358113,
+        "ball": 0.21139187674944135,
         "in_play": 0.32561433081697755
       }
     },
@@ -2412,6 +2412,924 @@
         "ball": 0.06474653570060288,
         "in_play": 0.19685751569245247
       }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.022
+        },
+        "batter": {
+          "hr_rate": 0.012
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "R"
+        }
+      },
+      "expected": {
+        "home_run": 0.012742349464111607,
+        "other": 0.9872576505358884
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.022
+        },
+        "batter": {
+          "hr_rate": 0.012
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "L"
+        }
+      },
+      "expected": {
+        "home_run": 0.017986209962091555,
+        "other": 0.9820137900379085
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.022
+        },
+        "batter": {
+          "hr_rate": 0.012
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "S"
+        }
+      },
+      "expected": {
+        "home_run": 0.017986209962091555,
+        "other": 0.9820137900379085
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.047
+        },
+        "batter": {
+          "hr_rate": 0.012
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "R"
+        }
+      },
+      "expected": {
+        "home_run": 0.01630249937144095,
+        "other": 0.9836975006285591
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.047
+        },
+        "batter": {
+          "hr_rate": 0.012
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "L"
+        }
+      },
+      "expected": {
+        "home_run": 0.022977369910025622,
+        "other": 0.9770226300899744
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.047
+        },
+        "batter": {
+          "hr_rate": 0.012
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "S"
+        }
+      },
+      "expected": {
+        "home_run": 0.022977369910025622,
+        "other": 0.9770226300899744
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.022
+        },
+        "batter": {
+          "hr_rate": 0.032
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "R"
+        }
+      },
+      "expected": {
+        "home_run": 0.01712403331572774,
+        "other": 0.9828759666842724
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.022
+        },
+        "batter": {
+          "hr_rate": 0.032
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "L"
+        }
+      },
+      "expected": {
+        "home_run": 0.0241270214176692,
+        "other": 0.9758729785823308
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.022
+        },
+        "batter": {
+          "hr_rate": 0.032
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "S"
+        }
+      },
+      "expected": {
+        "home_run": 0.0241270214176692,
+        "other": 0.9758729785823308
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.047
+        },
+        "batter": {
+          "hr_rate": 0.032
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "R"
+        }
+      },
+      "expected": {
+        "home_run": 0.021881270936130476,
+        "other": 0.9781187290638694
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.047
+        },
+        "batter": {
+          "hr_rate": 0.032
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "L"
+        }
+      },
+      "expected": {
+        "home_run": 0.03076885935714802,
+        "other": 0.969231140642852
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.047
+        },
+        "batter": {
+          "hr_rate": 0.032
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "S"
+        }
+      },
+      "expected": {
+        "home_run": 0.03076885935714802,
+        "other": 0.969231140642852
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.022
+        },
+        "batter": {
+          "hr_rate": 0.082
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "R"
+        }
+      },
+      "expected": {
+        "home_run": 0.03557118927263618,
+        "other": 0.9644288107273639
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.022
+        },
+        "batter": {
+          "hr_rate": 0.082
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "L"
+        }
+      },
+      "expected": {
+        "home_run": 0.04973651155855673,
+        "other": 0.9502634884414431
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.022
+        },
+        "batter": {
+          "hr_rate": 0.082
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "S"
+        }
+      },
+      "expected": {
+        "home_run": 0.04973651155855673,
+        "other": 0.9502634884414431
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.047
+        },
+        "batter": {
+          "hr_rate": 0.082
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "R"
+        }
+      },
+      "expected": {
+        "home_run": 0.045217473483287494,
+        "other": 0.9547825265167125
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.047
+        },
+        "batter": {
+          "hr_rate": 0.082
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "L"
+        }
+      },
+      "expected": {
+        "home_run": 0.06297335605699651,
+        "other": 0.9370266439430035
+      }
+    },
+    {
+      "params": {
+        "type": "multinomial_logistic",
+        "classes": [
+          "home_run",
+          "other"
+        ],
+        "features": [
+          "batter_hr_delta",
+          "pitcher_hr_delta",
+          "platoon_same"
+        ],
+        "coef": [
+          [
+            12,
+            8,
+            -0.25
+          ],
+          [
+            -3,
+            -2,
+            0.1
+          ]
+        ],
+        "intercept": [
+          -3.4,
+          0.2
+        ]
+      },
+      "context": {
+        "balls": 0,
+        "strikes": 0,
+        "pitch_count_pa": 0,
+        "pitcher": {
+          "hr_rate": 0.047
+        },
+        "batter": {
+          "hr_rate": 0.082
+        },
+        "pitcher_info": {
+          "pitch_hand": "R"
+        },
+        "batter_info": {
+          "bat_side": "S"
+        }
+      },
+      "expected": {
+        "home_run": 0.06297335605699651,
+        "other": 0.9370266439430035
+      }
     }
   ],
   "speed_cases": [
@@ -2424,14 +3342,14 @@
     {
       "mu": 88.5,
       "sigma": 1.9,
-      "line": 92.0,
+      "line": 92,
       "expected": 0.03272981187066448
     },
     {
       "mu": 88.5,
       "sigma": 1.9,
       "line": 97.5,
-      "expected": 1.0866808110021609e-06
+      "expected": 0.0000010866808110021609
     },
     {
       "mu": 88.5,
@@ -2442,7 +3360,7 @@
     {
       "mu": 88.5,
       "sigma": 5.4,
-      "line": 92.0,
+      "line": 92,
       "expected": 0.2584444407171532
     },
     {
@@ -2452,37 +3370,37 @@
       "expected": 0.04779032304123054
     },
     {
-      "mu": 92.0,
+      "mu": 92,
       "sigma": 1.9,
       "line": 86.5,
       "expected": 0.9981025510014612
     },
     {
-      "mu": 92.0,
+      "mu": 92,
       "sigma": 1.9,
-      "line": 92.0,
+      "line": 92,
       "expected": 0.50000014990049
     },
     {
-      "mu": 92.0,
+      "mu": 92,
       "sigma": 1.9,
       "line": 97.5,
       "expected": 0.001897448998538831
     },
     {
-      "mu": 92.0,
+      "mu": 92,
       "sigma": 5.4,
       "line": 86.5,
       "expected": 0.8457842154605087
     },
     {
-      "mu": 92.0,
+      "mu": 92,
       "sigma": 5.4,
-      "line": 92.0,
+      "line": 92,
       "expected": 0.50000014990049
     },
     {
-      "mu": 92.0,
+      "mu": 92,
       "sigma": 5.4,
       "line": 97.5,
       "expected": 0.15421578453949125
@@ -2496,7 +3414,7 @@
     {
       "mu": 96.3,
       "sigma": 1.9,
-      "line": 92.0,
+      "line": 92,
       "expected": 0.9881870592064277
     },
     {
@@ -2514,7 +3432,7 @@
     {
       "mu": 96.3,
       "sigma": 5.4,
-      "line": 92.0,
+      "line": 92,
       "expected": 0.7870701931465863
     },
     {

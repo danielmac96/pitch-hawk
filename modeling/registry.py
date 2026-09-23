@@ -39,6 +39,27 @@ def gate(spec, new_oos: dict, active_oos: dict | None) -> tuple[bool, str]:  # n
             return False, (f"HELD: sigma_coverage {cov} outside "
                            f"{SIGMA_BAND} -- sigma is mis-scaled")
 
+    # Calibration veto, for markets that declare a band. Same shape and same
+    # rationale as the sigma veto above: a model can beat its primary metric
+    # and still be systematically over-confident, and for a rare positive
+    # class log loss barely moves when it is.
+    #
+    # This is the check `ab_result` never had. It shipped predicting ~1.4x the
+    # realised rate and was patched at serve time with CALIB_SHRINK = 0.7 --
+    # a constant applied after the fact, to output nobody had gated.
+    if spec.calibration_band:
+        ratio = new_oos.get("calibration_ratio")
+        if ratio is None:
+            return False, ("HELD: no calibration_ratio -- the market declares "
+                           "a band but the run did not measure it")
+        lo, hi = spec.calibration_band
+        if not (lo <= ratio <= hi):
+            direction = "over" if ratio > hi else "under"
+            return False, (
+                f"HELD: calibration_ratio {ratio} outside {spec.calibration_band}"
+                f" -- predicts {ratio:.2f}x the observed rate "
+                f"({direction}-confident)")
+
     if not active_oos or active_oos.get(key) is None:
         return True, f"no active baseline ({key}={new})"
 

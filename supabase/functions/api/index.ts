@@ -57,6 +57,10 @@ const TTL: Record<string, number> = {
   // Same source cadence: player_prediction_daily is rebuilt by the nightly
   // rollup, so a slate in progress cannot move a trend.
   "trends": 300,
+  // Batter projections are rewritten by every game-predict pass, and the
+  // lineups that drive them land a few hours before first pitch -- so a
+  // long cache would serve "no lineup yet" well past the point it is true.
+  "projections": 60,
   // Per-pitch graded history. 15s matches /edge: during a live game new rows
   // land every 30s and the Data Feed is the surface watching them arrive, so a
   // 60s cache would make it visibly lag the board it sits next to.
@@ -520,6 +524,72 @@ async function picksToday(): Promise<Response> {
   const { data } = await svc().from("picks").select("*")
     .eq("pick_date", today).order("edge", { ascending: false }).limit(50);
   return json((data ?? []).map(pickOut));
+}
+
+// GET /projections?date=YYYY-MM-DD&market=batter_hr — per-batter P(hit) and
+// P(home run) for a slate.
+//
+// An ANALYTICS surface, not a price. Every row is `model_fair`: there is no
+// prop source for these markets, so there is no edge figure and deliberately
+// no `result` — `player_game_projections` is not graded. The response says
+// `book` explicitly rather than leaving a reader to assume a line exists.
+//
+// Ordered by probability so the interesting rows arrive first; a slate is
+// ~270 rows per market, which is one page.
+async function projections(url: URL): Promise<Response> {
+  const date = parseDate(url.searchParams.get("date")) ?? mlbToday();
+  const market = url.searchParams.get("market");
+  const valid = ["batter_hit", "batter_hr"];
+  if (market && !valid.includes(market)) {
+    return json({ error: `market must be one of ${valid.join(", ")}` }, 400);
+  }
+
+  let q = svc().from("player_game_projections")
+    .select("game_pk,player_id,market,team_id,opponent_id,is_home," +
+            "lineup_slot,opposing_pitcher_id,probability,per_pa_probability," +
+            "expected_pa,model_version,book,updated_at")
+    .eq("official_date", date);
+  if (market) q = q.eq("market", market);
+  const { data } = await q.order("probability", { ascending: false }).limit(1000);
+
+  const rows = data ?? [];
+  const names = await playerNames([
+    ...rows.map((r: any) => r.player_id),
+    ...rows.map((r: any) => r.opposing_pitcher_id).filter(Boolean),
+  ]);
+  return json({
+    date,
+    market: market ?? "all",
+    // Stated so a consumer cannot mistake these for priced picks.
+    priced: false,
+    rows: rows.map((r: any) => ({
+      game_pk: r.game_pk,
+      player_id: r.player_id,
+      player: names.get(r.player_id) ?? null,
+      market: r.market,
+      team_id: r.team_id,
+      opponent_id: r.opponent_id,
+      is_home: r.is_home,
+      lineup_slot: r.lineup_slot,
+      opposing_pitcher_id: r.opposing_pitcher_id,
+      opposing_pitcher: names.get(r.opposing_pitcher_id) ?? null,
+      probability: r.probability != null ? Number(r.probability) : null,
+      per_pa_probability: r.per_pa_probability != null
+        ? Number(r.per_pa_probability) : null,
+      expected_pa: r.expected_pa != null ? Number(r.expected_pa) : null,
+      model_version: r.model_version,
+      book: r.book,
+      updated_at: r.updated_at,
+    })),
+  });
+}
+
+async function playerNames(ids: number[]): Promise<Map<number, string>> {
+  const uniq = [...new Set(ids.filter(Boolean))];
+  if (!uniq.length) return new Map();
+  const { data } = await svc().from("player_info")
+    .select("player_id,full_name").in("player_id", uniq);
+  return new Map((data ?? []).map((r: any) => [r.player_id, r.full_name]));
 }
 
 // GET /odds/today — latest snapshot per (game, market, source, outcome) in the
@@ -1349,6 +1419,8 @@ Deno.serve(async (req) => {
       case "pitches": return await hit("pitches", TTL["pitches"], () => pitches(url));
       case "picks/today": return await hit("picks/today", TTL["picks/today"], picksToday);
       case "odds/today": return await hit("odds/today", TTL["odds/today"], oddsToday);
+      case "projections":
+        return await hit(`projections:${url.search}`, TTL["projections"], () => projections(url));
       case "record": return await hit("record", TTL["record"], record);
       case "sportsbooks":
         return await hit("sportsbooks", TTL["sportsbooks"],

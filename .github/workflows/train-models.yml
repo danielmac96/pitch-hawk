@@ -50,6 +50,19 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
-          for m in pitch_result ab_result pitch_speed_ou ab_pitches_ou game_moneyline; do
-            python -m modeling train "$m"
+          set -euo pipefail
+          # Read the registry rather than listing markets here. The hardcoded
+          # list silently excluded `batter_hit` and `batter_hr` the moment
+          # they were registered -- a new market would have been trained by
+          # nobody and nobody would have seen an error. `all_markets()` is the
+          # same source `python -m modeling list` reads.
+          markets=$(python -c "from modeling.spec import all_markets; print(' '.join(all_markets()))")
+          echo "training: $markets"
+          for m in $markets; do
+            echo "::group::$m"
+            # One market failing must not stop the rest: every run is
+            # recorded to model_runs either way, and a partial sweep is more
+            # useful than none.
+            python -m modeling train "$m" || echo "::warning::train failed for $m"
+            echo "::endgroup::"
           done

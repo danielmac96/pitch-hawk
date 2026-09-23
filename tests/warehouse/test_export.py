@@ -23,8 +23,8 @@ import pytest
 
 from warehouse import export, manifest
 from warehouse.config import (
-    DATASETS, DAY_PARTITIONED, EXPORT_DATASETS, KEY_COLUMNS, SCHEMAS,
-    object_key,
+    DATASETS, DAY_PARTITIONED, DERIVED_DATASETS, EXPORT_DATASETS, KEY_COLUMNS,
+    SCHEMAS, object_key,
 )
 from warehouse.store import LocalStore
 
@@ -146,6 +146,22 @@ def _rows():
             "scored_at": "2026-08-06T14:00:00+00:00",
             "updated_at": "2026-08-07T02:00:00+00:00",
         }],
+        # Exported for the same reason the others are: Supabase prunes these
+        # at 35 days, so without a copy the realised-calibration record would
+        # only ever span five weeks. `result` and `actual_count` are the
+        # columns that make the row worth keeping.
+        "player_game_projections": [{
+            "game_pk": 1, "player_id": 700, "market": "batter_hr",
+            "official_date": DAY, "team_id": 147, "opponent_id": 111,
+            "is_home": False, "lineup_slot": 3, "opposing_pitcher_id": 600,
+            "probability": 0.1312, "per_pa_probability": 0.0331,
+            "expected_pa": 4.26, "model_version": "v2_20260923",
+            "book": "model_fair", "result": "hit", "actual_count": 1,
+            "plate_appearances": 4,
+            "graded_at": "2026-08-07T02:05:00+00:00",
+            "scored_at": "2026-08-06T14:00:00+00:00",
+            "updated_at": "2026-08-07T02:05:00+00:00",
+        }],
     }
 
 
@@ -216,7 +232,8 @@ def test_empty_day_writes_nothing_and_records_nothing(tmp_path):
     """A 0-row file would put an entry in the manifest claiming the day is
     captured, and the next run would skip it."""
     store = LocalStore(tmp_path)
-    empty = {"games": [], "predictions": [], "picks": [], "game_predictions": []}
+    empty = {"games": [], "predictions": [], "picks": [],
+             "game_predictions": [], "player_game_projections": []}
     res = export.export_day(store, DAY, client=FakeClient(empty))
 
     assert res["written"] is False
@@ -245,13 +262,30 @@ def test_export_datasets_are_never_verifiable(tmp_path):
         assert manifest.is_verified(m, ds, DAY) is False
 
 
-def test_exports_are_disjoint_from_the_mlb_datasets():
-    """verify.py and the prune gate iterate DATASETS. If an export leaked into
-    that tuple, verify would try to re-fetch our own model output from the MLB
-    API."""
-    assert set(DATASETS).isdisjoint(EXPORT_DATASETS)
-    assert set(DAY_PARTITIONED) == set(DATASETS) | set(EXPORT_DATASETS)
-    for ds in EXPORT_DATASETS:
+def test_day_partitioned_families_stay_disjoint():
+    """verify.py and the prune gate key off DATASETS, so leaks matter.
+
+    Three day-partitioned families, each with a different upstream:
+      DATASETS          MLB Stats API  -- verify re-fetches and re-derives it
+      EXPORT_DATASETS   our own output -- no upstream, never verified
+      DERIVED_DATASETS  third party    -- verifiable in principle, no verifier
+
+    An export or a weather day leaking into DATASETS would have verify trying
+    to re-fetch it from the MLB API, which has never heard of it.
+    """
+    fams = {"DATASETS": set(DATASETS),
+            "EXPORT_DATASETS": set(EXPORT_DATASETS),
+            "DERIVED_DATASETS": set(DERIVED_DATASETS)}
+    names = sorted(fams)
+    for i, a in enumerate(names):
+        for b in names[i + 1:]:
+            assert fams[a].isdisjoint(fams[b]), f"{a} and {b} overlap"
+
+    # DAY_PARTITIONED must be exactly the union: a dataset missing from it has
+    # no object_key() and is unreadable by duck.uris().
+    assert set(DAY_PARTITIONED) == set().union(*fams.values())
+
+    for ds in set(EXPORT_DATASETS) | set(DERIVED_DATASETS):
         assert ds in SCHEMAS
         assert ds in KEY_COLUMNS
 
@@ -509,3 +543,42 @@ def test_cmd_export_imports_resolve():
         line = line.strip()
         if line.startswith("from warehouse."):
             exec(line, {})  # noqa: S102 - the assertion IS that this imports
+
+
+def test_booleans_survive_the_coercion():
+    """`is_home` is the first boolean column in any export dataset.
+
+    `coerce` had no boolean branch until it landed, so a bool fell through to
+    `str(v)` and wrote the STRING "False" into a boolean column. PyArrow
+    rejects that outright -- loud rather than silent, but only because the
+    declared schema was there to catch it. A schema inferred from the rows
+    would have accepted a column of "True"/"False" text and nobody would have
+    noticed until a query compared it to a boolean.
+    """
+    rows = export.coerce(
+        [{"is_home": True}, {"is_home": False}, {"is_home": None}],
+        "player_game_projections")
+    assert [r["is_home"] for r in rows] == [True, False, None]
+
+
+def test_booleans_arriving_as_text_are_still_booleans():
+    """PostgREST usually sends real JSON booleans, but not every client and
+    version agrees. Accepting both costs nothing; guessing wrong writes a
+    column that is half true and half "true"."""
+    rows = export.coerce(
+        [{"is_home": "true"}, {"is_home": "false"}, {"is_home": ""}],
+        "player_game_projections")
+    assert [r["is_home"] for r in rows] == [True, False, None]
+
+
+def test_projections_carry_their_graded_outcome():
+    """The reason this dataset is exported at all.
+
+    Supabase prunes `player_game_projections` at 35 days. Without a copy the
+    realised-calibration record would only ever span five weeks, which is not
+    long enough to answer "is this model drifting" -- the same problem that
+    left this project with no holdout set for a year.
+    """
+    cols = {f.name for f in SCHEMAS["player_game_projections"]}
+    assert {"result", "actual_count", "plate_appearances", "graded_at"} <= cols
+    assert {"probability", "per_pa_probability", "expected_pa"} <= cols

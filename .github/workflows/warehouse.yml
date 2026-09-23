@@ -154,8 +154,54 @@ jobs:
             # --record is the point of the job. Without it the day is stored
             # but never earns the prune's gate.
             python -m warehouse verify --day "$day" --record
+            # Gametime weather for the day's games, from Open-Meteo. Runs
+            # AFTER ingest because it reads that day's `games` file for venue
+            # and first-pitch time, and the venues snapshot that `ingest`
+            # refreshes.
+            #
+            # Non-fatal on purpose: weather is enrichment from a third-party
+            # source, and the day's pitches/at_bats are already written and
+            # verified above. A rate limit at Open-Meteo must not turn a good
+            # ingest into a red nightly or leave the day unverified.
+            python -m warehouse weather --from "$day" \
+              || echo "::warning::weather failed for $day"
             echo "::endgroup::"
           done < days.txt
+
+      # Drain the historical weather backlog a slice at a time.
+      #
+      # The loop above only fetches the day it just ingested, so the ~2,000
+      # days that predate this dataset would stay empty until somebody
+      # remembered to run twelve seasons by hand. "Somebody remembered" is how
+      # R2 once sat frozen for three days.
+      #
+      # 120 days per night is one upstream request (Open-Meteo charges per
+      # call, not per day) and clears the whole backlog in about three weeks
+      # without anyone doing anything. It is a no-op once drained.
+      - name: Backfill missing weather
+        if: ${{ always() }}
+        continue-on-error: true
+        run: python -m warehouse weather --catchup 120
+
+      # The contact-quality lookup -- P(hit)/P(HR) given how a ball was struck.
+      #
+      # WEEKLY, not nightly. It is a full-history scan of every pitch and
+      # at-bat since 2017, and it is a physics lookup rather than a form
+      # measurement: a 2018 ball hit at 104 mph and 26 degrees says the same
+      # thing today as it did last night. One more day of games moves ~2,200
+      # cells by nothing anyone can measure, so a nightly rebuild would be
+      # minutes of scan for no change.
+      #
+      # R2 egress is free, so the cost is time, not money.
+      - name: Rebuild contact_quality (Mondays)
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          if [ "$(date -u +%u)" = "1" ] || [ "${{ inputs.force }}" = "true" ]; then
+            python -m warehouse contact
+          else
+            echo "not Monday; contact_quality left as-is"
+          fi
 
       - name: Status after
         if: always()

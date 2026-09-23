@@ -175,6 +175,27 @@ def _as_json(v):
     return v if isinstance(v, str) else _json.dumps(v, separators=(",", ":"))
 
 
+def _as_bool(v) -> bool | None:  # noqa: ANN001
+    """PostgREST booleans, which arrive as real booleans or as text.
+
+    Added with `player_game_projections.is_home`, the first boolean column in
+    any export dataset. Until then `coerce` had no boolean branch at all and
+    every bool would have fallen through to `str(v)` -- writing the STRING
+    "False" into a boolean column, which PyArrow rejects outright. Loud rather
+    than silent, but only because the declared schema was there to catch it.
+    """
+    if v is None or v == "":
+        return None
+    if isinstance(v, bool):
+        return v
+    s = str(v).strip().lower()
+    if s in ("true", "t", "1"):
+        return True
+    if s in ("false", "f", "0"):
+        return False
+    return None
+
+
 def coerce(rows: list[dict], dataset: str) -> list[dict]:
     """Shape PostgREST JSON into something `to_parquet` can type."""
     schema = SCHEMAS[dataset]
@@ -192,6 +213,8 @@ def coerce(rows: list[dict], dataset: str) -> list[dict]:
                 shaped[f.name] = _as_num(v, float)
             elif pa.types.is_integer(t):
                 shaped[f.name] = _as_num(v, int)
+            elif pa.types.is_boolean(t):
+                shaped[f.name] = _as_bool(v)
             elif f.name in ("probs", "payload"):
                 shaped[f.name] = _as_json(v)
             else:
@@ -249,7 +272,15 @@ def fetch_day(client, day: str) -> dict[str, list[dict]]:  # noqa: ANN001
     for r in preds:
         r["official_date"] = day
 
-    return {"predictions": preds, "picks": picks, "game_predictions": gpreds}
+    # Same shape as game_predictions: a composite PK, and small enough on a
+    # full slate (~270 rows per market) that one offset page covers it.
+    projections = _page_offset(
+        lambda: client.table("player_game_projections").select("*")
+        .eq("official_date", day).order("game_pk")
+    )
+
+    return {"predictions": preds, "picks": picks, "game_predictions": gpreds,
+            "player_game_projections": projections}
 
 
 # ── export ──────────────────────────────────────────────────────────────────

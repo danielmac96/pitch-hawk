@@ -72,16 +72,44 @@ all** — deliberately unscheduled, not broken:
 - **`odds-ingest`** — the only caller of the trained log5 moneyline model. Its
   absence is why `odds` holds 178 stale rows and why every served moneyline is
   stamped `mlb_winprob_v1` (MLB's own feed) rather than our model.
+
+  It now also carries **player props** (`batter_hit` / `batter_hr`), behind a
+  *second* switch: `app_secrets.the_odds_api_key` **and**
+  `app_secrets.the_odds_api_props = 'true'`. Two flags because props are not on
+  the bulk odds endpoint — The Odds API serves them one event at a time, so a
+  15-game slate costs 1 + 15 requests against a 500/month free tier. "We have a
+  key" and "we can afford ~16 calls a slate" are different decisions.
 - **`backfill`** — drained and retired. `backfill_progress` reads `done=true`.
 
 ### 2.2 GitHub Actions
 
 | Workflow | Trigger | What it does | Health |
 |---|---|---|---|
-| ⟳ `warehouse.yml` | **04:00 ET** — `0 8 * * *` **and** `0 9 * * *`, both guarded | `guard` picks today's real 04:00 line; `ingest`: `status` → `pending --max-gap 14` → per day `ingest` then `verify --record`; `export`: yesterday's model output → R2; `publish`: DuckDB aggregates → Supabase | ✅ 4 of last 5 green |
+| ⟳ `warehouse.yml` | **04:00 ET** — `0 8 * * *` **and** `0 9 * * *`, both guarded | `guard` picks today's real 04:00 line; `ingest`: `status` → `pending --max-gap 14` → per day `ingest`, `verify --record`, `weather --from` → `weather --catchup 120` → `contact` (Mondays); `export`: yesterday's model output → R2; `publish`: DuckDB aggregates → Supabase | ✅ 4 of last 5 green |
 | `ci.yml` | every push + every PR | pytest; `deno check` + `deno test` on the edge functions; all migrations applied to a stock PG16 with `cron`/`pg_net` stubbed | ✅ green on `master` |
 | `deploy-supabase.yml` | `workflow_dispatch` **only** | link → `db push` → rotate `cron_secret` → deploy all 8 edge functions | ⚠️ 4 consecutive failures 2026-08-06 (all from a non-default branch; `schedule`/`dispatch` only run from `master`) |
-| `train-models.yml` | `workflow_dispatch` **only** | records a `model_runs` row per market | ✅ by design — it never passes `--promote`, so production is untouched. Promotion is a human command ([`MODELS.md`](MODELS.md)) |
+| `train-models.yml` | `workflow_dispatch` **only** | records a `model_runs` row per market, over **every market in the registry** rather than a hardcoded list | ✅ by design — it never passes `--promote`, so production is untouched. Promotion is a human command ([`MODELS.md`](MODELS.md)) |
+
+### 2.2.1 What the nightly gained in 2026-09
+
+Four steps that existed only as CLI commands until they were wired in. Each is
+non-fatal on its own: none of them may turn a good ingest into a red nightly.
+
+| step | cadence | why that cadence |
+|---|---|---|
+| `weather --from <day>` | per ingested day | Needs that day's `games` file and the venues snapshot, so it runs **after** ingest and verify |
+| `weather --catchup 120` | every run | Drains the historical backlog one slice a night. One upstream request — Open-Meteo charges per call, not per day — so ~2,000 days clear in about three weeks with nobody doing anything. A no-op once drained |
+| `contact` | **Mondays only** | A full-history scan of every pitch since 2017, and a *physics* lookup rather than a form measurement: a 2018 ball at 104 mph and 26° says the same thing today as last night. One more day of games moves ~2,200 cells by nothing measurable |
+| `refresh_venues` | inside `warehouse ingest` | One API call per run; park dimensions change between seasons, so it is refetched rather than merged |
+
+**`warehouse status` now reports snapshots.** `players`, `venues` and
+`contact_quality` are written whole and carry no manifest entry, so nothing
+used to see them — "is it there, and how big" meant opening the bucket by
+hand. A missing snapshot now says so by name.
+
+**The weather diagnostic names the cause.** An absent venues snapshot means
+every day writes nothing, and reporting that as "no games in range" sends the
+reader to the schedule instead of to the one command that fixes it.
 
 ### 2.3 Vercel — git-push, not cron
 

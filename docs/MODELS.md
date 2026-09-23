@@ -57,6 +57,27 @@ and promoted. The gate now compares **out-of-sample** metrics:
   leaves `[0.63, 0.73]`. A mis-scaled sigma has good RMSE and produces
   confidently wrong probabilities; RMSE alone cannot see it.
 
+- **Calibration veto**: a market that declares a `calibration_band` is held
+  when out-of-sample **calibration-in-the-large** falls outside it — mean
+  predicted probability over observed rate, where 1.0 is correct and 1.4 means
+  40% over-confident.
+
+  Same shape and same rationale as the sigma veto, and it is the check
+  `ab_result` never had: that market shipped predicting ~1.4× the realised
+  rate and was patched at serve time with `CALIB_SHRINK = 0.7`, a constant
+  applied after the fact to output nobody had gated.
+
+  It sits beside `ece` rather than replacing it because binning fails on a
+  rare class — with home runs at ~3.2% of plate appearances, ten uniform bins
+  put nearly everything in one, and `calibration_bins` bins on class index 1,
+  which for `("home_run", "other")` is the 97% class. Ratios have no bins and
+  no class-index trap.
+
+  The band is **wider for the rarer class** (`batter_hr` ±0.15, `batter_hit`
+  ±0.10), which is the opposite of the instinct: the ratio rests on a seventh
+  as many positive events, so a matching band would hold good models on
+  sampling variance rather than on bias.
+
 Every run is written to **`model_runs`**, promoted or not, with its folds,
 config, holdout, params and the gate's verdict in `notes`. The rejected runs
 are half the record: a registry holding only winners cannot show that a
@@ -114,7 +135,7 @@ Until then, **do not `--promote` it**.
 
 | column | meaning |
 |---|---|
-| `market` | one of `pitch_result`, `ab_result`, `pitch_speed_ou`, `ab_pitches_ou`, `game_moneyline` |
+| `market` | one of `pitch_result`, `ab_result`, `pitch_speed_ou`, `ab_pitches_ou`, `game_moneyline`, `batter_hit`, `batter_hr` |
 | `version` | free-form, e.g. `v1_20260707`; unique per `(market, version)` |
 | `params` | the model itself (JSON, shape depends on `type` — see below) |
 | `metrics` | training metrics (used by the quality gate) |
@@ -126,7 +147,7 @@ Until then, **do not `--promote` it**.
 
 The scorer in `model.ts` branches on `params.type`:
 
-- **`multinomial_logistic`** (`pitch_result`, `ab_result`)
+- **`multinomial_logistic`** (`pitch_result`, `ab_result`, `batter_hit`, `batter_hr`)
   ```json
   {
     "type": "multinomial_logistic",
@@ -137,6 +158,11 @@ The scorer in `model.ts` branches on `params.type`:
   }
   ```
   Score = softmax over `intercept[k] + Σ coef[k][j]·featureValue(features[j])`.
+
+  With **two** classes this is a binary logistic, which is what `batter_hit`
+  and `batter_hr` use — no new family and no new scorer branch. Gate those on
+  log loss, never accuracy: home runs are ~3.2% of plate appearances, so a
+  model that always answers "no" is 96.8% accurate and worth nothing.
 
 - **`linear`** (`pitch_speed_ou`)
   ```json
@@ -198,7 +224,7 @@ them as the service role.
    unknown family rather than defaulting.
 4. Add a market module under `modeling/specs/` and register it. The engine
    never branches on market name — per-market differences go on `MarketSpec`
-   (`bucket_step`, `bucket_col`, `bucket_baseline`, `datasets`).
+   (`form_features`, `intercept_folded`, `datasets`).
 5. `python -m modeling build --market <m>` then `sweep`, then `train`.
 6. Redeploy the `live-poll` edge function so the new scorer ships.
 
@@ -208,6 +234,67 @@ One file in `modeling/specs/`, registered in `modeling/specs/__init__.py`. If
 adding a market requires editing an engine file (`features.py`, `fit.py`,
 `validate.py`) for anything other than a genuinely new model *family*, the
 abstraction is wrong — say so rather than special-casing on market name.
+
+### Declaring features
+
+Every name in `feature_names` must be accounted for, and `MarketSpec` refuses
+to construct otherwise. There are three kinds:
+
+| kind | how | built from |
+|---|---|---|
+| **static** | nothing — free to every market | the cell grain: `bias`, `balls`, `strikes`, `two_strikes`, `three_balls`, `pitch_of_pa` |
+| **form** | a `FormFeature` in `form_features` | a per-window bucket column your `cell_sql` emits |
+| **folded** | listed in `intercept_folded` | nothing — trains as zero, absorbed by the intercept |
+
+```python
+form_features=(
+    FormFeature("pitcher_k_delta", "p_k_bucket", step=0.035),
+    FormFeature("batter_k_delta",  "b_k_bucket", step=0.040),
+),
+intercept_folded=("platoon_same",),
+```
+
+A market may declare **as many form dimensions as it needs**. Until 2026-09 it
+could not: every pitcher-form name read one shared array and every batter-form
+name was hardcoded to zero in `_design`, so "how the pitcher has been throwing"
+and "how the batter has been hitting" could not both vary. A hit or home-run
+market needs exactly that.
+
+The five original markets declare no `form_features`; theirs are derived from
+the legacy `bucket_col` / `bucket_step` / `bucket_baseline` triple, so their
+design matrices are byte-identical. New specs should declare `FormFeature`
+directly.
+
+**`intercept_folded` is a confession, not a convenience.** `pitcher_bb_delta`
+trained as a constant 0.0 for a year while `model.ts` computed it for real at
+serving time — training and production disagreeing on one of six features,
+recorded in `DATA-PIPELINE.md` §8.5 and easy to miss because nothing in the
+spec said so. Now the spec says so. Closing one means adding the bucket column
+to `cell_sql` and moving the name into `form_features`.
+
+A name outside `SCORABLE_FEATURES` is rejected outright: `featureValue()` ends
+in `default: return 0`, so the fit would learn a coefficient production never
+applies. `tests/modeling/test_parity.py` reads the real `switch` and fails if
+that set drifts from it.
+
+### Form spines
+
+Four, all sharing one leakage bound through `features._windows()`:
+
+| spine | subject | grain | carries |
+|---|---|---|---|
+| `FORM_SPINE_SQL` | pitcher | pitch | zone rate, velocity |
+| `FORM_SPINE_AB_SQL` | pitcher | plate appearance | K rate |
+| `FORM_SPINE_BAT_AB_SQL` | batter | plate appearance | K, BB, hit, **HR** rate |
+| `FORM_SPINE_BAT_CONTACT_SQL` | batter | ball in play | hard-hit, pull-in-air, exit velo |
+
+The window bound is `interval 1 day preceding` — **exclusive of the current
+day**. It is generated, not copied, because four hand-written copies is three
+chances to relax one silently.
+
+Note the two batter spines have different denominators on purpose: outcome
+rates are per plate appearance, contact rates per ball in play. A hitter who
+strikes out half the time can still scorch everything he touches.
 
 ## Verify what's live
 
