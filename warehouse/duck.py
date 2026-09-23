@@ -80,7 +80,15 @@ def dataset(store: ObjectStore, name: str, seasons=None, *, m: dict | None = Non
     # Paths are built from our own manifest keys, but quote defensively: a
     # single stray apostrophe would otherwise produce a syntax error at best.
     quoted = ", ".join("'" + p.replace("'", "''") + "'" for p in paths)
-    return f"read_parquet([{quoted}])"
+    # union_by_name because the corpus is not one schema: PITCH_SCHEMA gained
+    # the pitch-physics columns (release_pos/vel_*, accel_*, pfx_*,
+    # break_vertical, type_confidence) in 2026-09, and every day written
+    # before that lacks them. Without this, a single new-schema day sitting
+    # beside the old ones fails the entire scan on a binder error rather than
+    # reading the absent columns back as NULL. Matching by name also makes the
+    # scan independent of column ORDER, which a later schema edit could
+    # otherwise break silently.
+    return f"read_parquet([{quoted}], union_by_name = true)"
 
 
 def register(con, store: ObjectStore, names=DATASETS, seasons=None, *,

@@ -1,0 +1,18 @@
+-- Follow-on from 20260825123241_rollup_timeout_fix.
+--
+-- With the rollups unblocked, daily-ingest reached prune_predictions for the
+-- first time since 2026-08-17 and it timed out in turn. That is the same
+-- failure one link further down the chain, and it was hidden until now: the job
+-- deliberately skips the prune whenever either rollup fails, so for eight
+-- nights this statement never ran at all.
+--
+-- By then ~97k rows sat past the 21-day horizon, and deleting them touches five
+-- indexes on a 186 MB table. Same reasoning as the rollups: a nightly batch
+-- delete is not a request-path query, and the role default is tuned for the
+-- latter. Once drained a normal night is ~16k rows and finishes well inside
+-- this.
+--
+-- If the backlog ever rebuilds far enough that even 300s is short, the next
+-- step is a bounded delete (a per-call row cap, draining over successive
+-- nights) rather than a larger number here.
+alter function prune_predictions(int) set statement_timeout = '300s';

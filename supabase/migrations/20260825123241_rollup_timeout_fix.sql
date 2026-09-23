@@ -1,0 +1,62 @@
+-- Unblock the two nightly rollups, which have timed out every night since
+-- 2026-08-17 and taken the prune down with them.
+--
+-- Symptom: `daily-ingest` ran on schedule (np-daily-ingest, 13:00 UTC) and
+-- failed every time, seven runs for seven nights, always with the same pair:
+--
+--     "rollup: canceling statement due to statement timeout"
+--     "rollup_player: canceling statement due to statement timeout"
+--
+-- Everything else in the job succeeded — finals ingest, rolling stats, the
+-- other prunes. Only rollup_prediction_accuracy() and
+-- rollup_player_predictions() failed, which is exactly the pair that fills
+-- prediction_accuracy_daily and player_prediction_daily. Both tables stop dead
+-- at 2026-08-16, so every window the Data Feed asks about after that date reads
+-- as "nothing graded" when in fact ~16k predictions a day were being made and
+-- settled normally.
+--
+-- Cause: both rollups filter `predictions` on created_at, and nothing indexed
+-- it. The table carries (id), (game_pk, at_bat_index, market),
+-- (game_pk, market, id desc) and two partials — none of which can serve a time
+-- range. EXPLAIN on the player rollup showed the planner giving up on the
+-- predicate entirely and driving from the other side:
+--
+--     HashAggregate
+--       -> Nested Loop
+--            -> Seq Scan on at_bats a  (rows=54546)
+--            -> Index Scan on predictions
+--                 Filter: (created_at >= now() - '7 days')
+--
+-- i.e. read every at-bat in the 35-day hot window, probe every prediction
+-- attached to it, then throw away everything outside the 7-day window the
+-- rollup actually wanted.
+--
+-- Why it got worse rather than staying broken at a constant cost: daily-ingest
+-- deliberately skips prune_predictions when either rollup fails, so that a bad
+-- rollup can never delete raw rows nothing has aggregated. That guard is
+-- correct and stays. But it means a timeout also stops the prune, `predictions`
+-- grows past its 21-day horizon, and the unindexed scan gets slower — which
+-- makes the next night's timeout more certain. Measured on 2026-08-25:
+-- 491,751 rows spanning 30 days against a 21-day retention policy, 97,389 of
+-- them already past the horizon.
+--
+-- Two changes, belt and braces.
+
+-- 1. The missing index. This is the actual fix: it lets both rollups restrict
+--    `predictions` by time first and probe at_bats by its unique key second,
+--    which is the plan they were always written for.
+--
+--    Plain CREATE INDEX, not CONCURRENTLY: concurrently cannot run inside a
+--    transaction and every migration here does. It takes a SHARE lock, so
+--    writes block for the few seconds the build takes; live-poll writes this
+--    table every 15s and simply lands on its next tick.
+create index if not exists predictions_created_at_idx
+    on predictions (created_at);
+
+-- 2. A timeout that matches what these functions are. The role default is
+--    tuned for request-path queries; these are nightly batch aggregations over
+--    a week of rows, and a single slow night must not be able to silently cost
+--    us the permanent accuracy record again. The index above should put both
+--    well under a second — this is the guard rail, not the fix.
+alter function rollup_prediction_accuracy(int) set statement_timeout = '120s';
+alter function rollup_player_predictions(int)  set statement_timeout = '120s';

@@ -1,0 +1,11 @@
+-- Captures a setting that was applied directly while tuning, so a database
+-- built from migrations alone reproduces it.
+--
+-- player_streaks is the one request-path query here that scales with page size:
+-- each (player, role) is an index probe into at_bats plus a walk of that
+-- player's recent calls. Bounded to a page it lands in a few seconds, but the
+-- role default is tuned for much shorter queries and would cancel it under
+-- load. The route already treats a streak failure as non-fatal and reports it,
+-- so this is the difference between a full panel and a panel missing one
+-- column — not between a panel and an error.
+alter function player_streaks(date, date, int[]) set statement_timeout = '25s';
