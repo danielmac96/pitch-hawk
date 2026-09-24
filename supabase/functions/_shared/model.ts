@@ -89,6 +89,18 @@ function blend(v: number | null | undefined, league: number, n: number, k = 500)
   return v * w + league * (1 - w);
 }
 
+// Shrinkage half-samples for the batter-market rate deltas, in plate
+// appearances (batter side) or at-bats (pitcher side). Chosen by sweeping k
+// against every 2026 at-bat; see the note on batter_hr_delta in featureValue.
+// modeling/score.py mirrors both, and tests/modeling/test_parity.py pins them.
+const HR_K = 150;
+const HIT_K = 50;
+
+/** `Number(v)` for a present value, else null -- blend()'s null contract. */
+function _num(v: unknown): number | null {
+  return v == null ? null : Number(v);
+}
+
 function normCdf(x: number): number {
   // Abramowitz-Stegun approximation; plenty for O/U probabilities.
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
@@ -123,10 +135,49 @@ function featureValue(name: string, ctx: ScoreContext): number {
     // than train and serve agreeing on it -- a delta's centre shifts the
     // intercept and nothing else -- which is why it is a shared constant and
     // modeling/score.py mirrors it.
-    case "batter_hr_delta": return b.hr_rate != null ? Number(b.hr_rate) - LEAGUE.hr_rate : 0;
-    case "pitcher_hr_delta": return p.hr_rate != null ? Number(p.hr_rate) - LEAGUE.hr_rate : 0;
-    case "batter_hit_delta": return b.hit_rate != null ? Number(b.hit_rate) - al.hit : 0;
-    case "pitcher_hit_delta": return p.hit_rate != null ? Number(p.hit_rate) - al.hit : 0;
+    // SHRUNK, unlike the deltas above, and the reason is a train/serve gap.
+    // These four feed batter_hr / batter_hit, which are fitted on CAREER rates
+    // but served from the rolling tables, which are 30-DAY rates over the live
+    // 35-day hot window. The means agree; the spreads do not. Measured on the
+    // 2019-2026 spines: d30 carries 1.66x the standard deviation of career for
+    // hr_rate and 1.77x for hit_rate. A career coefficient meeting a 1.7x-wide
+    // input over-reacts, and the thinner the sample the further it reaches --
+    // the first live slate put a batter with 47 plate appearances at the top
+    // of the home-run board on a 0.0851 rate.
+    //
+    // blend() closes the scale gap and the small-sample problem with one
+    // stroke, because both are the same problem: a noisy estimate of a career
+    // rate should be pulled toward the league until the sample earns its
+    // distance. It also returns `league` for a null rate, so the delta is 0 --
+    // identical to the `: 0` the un-shrunk cases use.
+    //
+    // Replaying all 166,718 at-bats of 2026 through the promoted coefficients,
+    // scoring each the way production does:
+    //
+    //   batter_hr    logloss 0.141140 -> 0.133905   calibration 1.2472 -> 1.0733
+    //   batter_hit   logloss 0.524846 -> 0.522176   calibration 1.0334 -> 1.0744
+    //
+    // batter_hr was FAILING its own promotion band (0.85-1.15) at serve time
+    // while passing it at train time, and could emit a per-plate-appearance
+    // home-run probability of 1.0. It now tops out at 0.083.
+    //
+    // The two constants differ because the events do. HIT_K is far smaller: a
+    // 22% event is estimated precisely in 30 days, and LEAGUE.ab_result.hit
+    // (0.239) sits above the rate actually observed in 2026 (0.2157), so
+    // shrinking hard toward it walks calibration up to the edge of the tighter
+    // 0.90-1.10 band -- k=150 fails it outright. Swept, not guessed.
+    case "batter_hr_delta":
+      return blend(_num(b.hr_rate), LEAGUE.hr_rate,
+                   Number(b.sample_pas ?? 0), HR_K) - LEAGUE.hr_rate;
+    case "pitcher_hr_delta":
+      return blend(_num(p.hr_rate), LEAGUE.hr_rate,
+                   Number(p.sample_abs ?? 0), HR_K) - LEAGUE.hr_rate;
+    case "batter_hit_delta":
+      return blend(_num(b.hit_rate), al.hit,
+                   Number(b.sample_pas ?? 0), HIT_K) - al.hit;
+    case "pitcher_hit_delta":
+      return blend(_num(p.hit_rate), al.hit,
+                   Number(p.sample_abs ?? 0), HIT_K) - al.hit;
     case "batter_k_delta": return b.k_rate != null ? Number(b.k_rate) - al.strikeout : 0;
     case "batter_bb_delta": return b.bb_rate != null ? Number(b.bb_rate) - al.walk : 0;
     case "batter_chase_delta": return b.chase_rate != null ? Number(b.chase_rate) - 0.28 : 0;

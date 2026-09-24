@@ -26,11 +26,29 @@ def _cases():
     return json.loads(GOLDEN.read_text())["cases"]
 
 
+def _case_indices() -> range:
+    """Every case in the file, not a fixed count.
+
+    This was `range(36)` while the emitter wrote 54, so the last 18 cases were
+    never compared -- which is how the batter-market features came to be
+    covered by the Deno golden test and by nothing on the Python side. A
+    hardcoded count silently stops testing whatever is added after it.
+    """
+    if not GOLDEN.exists():
+        return range(0)
+    return range(len(json.loads(GOLDEN.read_text())["cases"]))
+
+
 def test_fixtures_exist_and_are_populated():
     assert len(_cases()) >= 36
 
 
-@pytest.mark.parametrize("i", range(36))
+def test_every_case_is_compared():
+    """Guards the guard: the parametrisation must cover the whole file."""
+    assert len(_case_indices()) == len(_cases())
+
+
+@pytest.mark.parametrize("i", _case_indices())
 def test_python_matches_typescript(i):
     case = _cases()[i]
     got = score(case["params"], case["context"])

@@ -88,25 +88,34 @@ const hrParams = {
   intercept: [-3.4, 0.2],
 };
 
-for (const batHr of [-0.02, 0.0, 0.05]) {
-  for (const pitHr of [-0.01, 0.015]) {
-    // Same-handed, opposite-handed, and a switch hitter (which featureValue
-    // treats as no platoon edge either way).
-    for (const [bs, ph] of [["R", "R"], ["L", "R"], ["S", "R"]]) {
-      const ctx = {
-        balls: 0,
-        strikes: 0,
-        pitch_count_pa: 0,
-        pitcher: { hr_rate: LEAGUE.hr_rate + pitHr },
-        batter: { hr_rate: LEAGUE.hr_rate + batHr },
-        pitcher_info: { pitch_hand: ph },
-        batter_info: { bat_side: bs },
-      };
-      cases.push({
-        params: hrParams,
-        context: ctx,
-        expected: scoreMultinomial(hrParams, ctx),
-      });
+// The sample dimension is load-bearing. batter_hr_delta and its three
+// siblings are SHRUNK toward the league by sample size, so a context with no
+// sample_pas/sample_abs scores every rate as league-average and pins nothing
+// about the shrinkage at all -- HR_K could be changed on one side of the
+// parity boundary and every fixture would still match. 0 is kept because it
+// is a real production state (a call-up with no rolling row yet); the other
+// two straddle the curve's knee.
+for (const n of [0, 47, 600]) {
+  for (const batHr of [-0.02, 0.0, 0.05]) {
+    for (const pitHr of [-0.01, 0.015]) {
+      // Same-handed, opposite-handed, and a switch hitter (which featureValue
+      // treats as no platoon edge either way).
+      for (const [bs, ph] of [["R", "R"], ["L", "R"], ["S", "R"]]) {
+        const ctx = {
+          balls: 0,
+          strikes: 0,
+          pitch_count_pa: 0,
+          pitcher: { hr_rate: LEAGUE.hr_rate + pitHr, sample_abs: n },
+          batter: { hr_rate: LEAGUE.hr_rate + batHr, sample_pas: n },
+          pitcher_info: { pitch_hand: ph },
+          batter_info: { bat_side: bs },
+        };
+        cases.push({
+          params: hrParams,
+          context: ctx,
+          expected: scoreMultinomial(hrParams, ctx),
+        });
+      }
     }
   }
 }

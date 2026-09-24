@@ -55,6 +55,23 @@ def _delta(row: dict, key: str, baseline: float) -> float:
     return float(v) - baseline if v is not None else 0.0
 
 
+# Mirrors HR_K / HIT_K in model.ts. Swept against every 2026 at-bat.
+HR_K = 150.0
+HIT_K = 50.0
+
+
+def _shrunk_delta(row: dict, key: str, n_key: str, baseline: float,
+                  k: float) -> float:
+    """`blend(row.key, baseline, row.n_key ?? 0, k) - baseline`.
+
+    A null rate blends to `baseline`, so the delta is 0 -- the same answer the
+    un-shrunk `_delta` gives, reached a different way.
+    """
+    n = row.get(n_key)
+    return _blend(_num_or_none(row.get(key)), baseline,
+                  0.0 if n is None else float(n), k) - baseline
+
+
 def feature_value(name: str, ctx: dict, _missing=0.0) -> float:
     """Mirror of featureValue() in model.ts.
 
@@ -93,14 +110,17 @@ def feature_value(name: str, ctx: dict, _missing=0.0) -> float:
         return _delta(p, "k_rate", al["strikeout"])
     if name == "pitcher_bb_delta":
         return _delta(p, "bb_rate", al["walk"])
+    # Shrunk toward the league, mirroring the four blend() cases in model.ts.
+    # See the note there: these are fitted on career rates and served from the
+    # 30-day rolling tables, whose spread is ~1.7x wider.
     if name == "batter_hr_delta":
-        return _delta(b, "hr_rate", LEAGUE["hr_rate"])
+        return _shrunk_delta(b, "hr_rate", "sample_pas", LEAGUE["hr_rate"], HR_K)
     if name == "pitcher_hr_delta":
-        return _delta(p, "hr_rate", LEAGUE["hr_rate"])
+        return _shrunk_delta(p, "hr_rate", "sample_abs", LEAGUE["hr_rate"], HR_K)
     if name == "batter_hit_delta":
-        return _delta(b, "hit_rate", al["hit"])
+        return _shrunk_delta(b, "hit_rate", "sample_pas", al["hit"], HIT_K)
     if name == "pitcher_hit_delta":
-        return _delta(p, "hit_rate", al["hit"])
+        return _shrunk_delta(p, "hit_rate", "sample_abs", al["hit"], HIT_K)
     if name == "batter_k_delta":
         return _delta(b, "k_rate", al["strikeout"])
     if name == "batter_bb_delta":

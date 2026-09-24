@@ -72,13 +72,21 @@ const hrParams = {
   version: "v_test",
 };
 
-function ctx(batterHr: number | null, pitcherHr: number | null) {
+// A full season's worth of sample by default. featureValue shrinks these
+// rates toward the league by sample size, so a row without one is a row whose
+// rate is entirely discounted -- which is correct, and which would make every
+// ordering assertion below compare two identical league-average batters.
+// Production rows always carry the count; these must too.
+const FULL_SAMPLE = 600;
+
+function ctx(batterHr: number | null, pitcherHr: number | null,
+             n = FULL_SAMPLE) {
   return {
     balls: 0,
     strikes: 0,
     pitch_count_pa: 0,
-    pitcher: pitcherHr == null ? null : { hr_rate: pitcherHr },
-    batter: batterHr == null ? null : { hr_rate: batterHr },
+    pitcher: pitcherHr == null ? null : { hr_rate: pitcherHr, sample_abs: n },
+    batter: batterHr == null ? null : { hr_rate: batterHr, sample_pas: n },
     pitcher_info: { pitch_hand: "R" },
     batter_info: { bat_side: "R" },
   };
@@ -204,4 +212,66 @@ Deno.test("multiple events still grade as one hit", () => {
   const g = gradeProjection("batter_hr", 5, 3, 2);
   assertEquals(g.result, "hit");
   assertEquals(g.actual_count, 2);
+});
+
+// ── small samples ───────────────────────────────────────────────────────────
+//
+// batter_hr and batter_hit are fitted on CAREER rates and served from the
+// rolling tables, which hold 30 DAYS. Measured on the 2019-2026 spines, d30
+// carries 1.66x the spread of career for hr_rate, so an unshrunk d30 rate
+// hands a career coefficient an input 1.7x too wide and the model over-reacts.
+// Replaying 2026: calibration 1.2472 unshrunk against a 0.85-1.15 promotion
+// band, and a per-plate-appearance home-run probability that reached 1.0.
+
+Deno.test("a rate with no sample behind it scores as league average", () => {
+  const models = { batter_hr: hrParams };
+  const none = projectBatter("batter_hr", models, ctx(0.40, 0.032, 0), 4)!;
+  const league = projectBatter("batter_hr", models,
+                               ctx(LEAGUE.hr_rate, 0.032, 0), 4)!;
+  // A 40% home-run rate off zero plate appearances is not a 40% hitter, it is
+  // no information -- the same answer a null rate gets.
+  assertAlmostEquals(none.per_pa_probability, league.per_pa_probability, 1e-9);
+});
+
+Deno.test("a thin sample lands between the league and the raw rate", () => {
+  const models = { batter_hr: hrParams };
+  // The batter who topped the first live board: 47 plate appearances, 0.0851.
+  const thin = projectBatter("batter_hr", models, ctx(0.0851, 0.032, 47), 4)!;
+  const full = projectBatter("batter_hr", models, ctx(0.0851, 0.032, 600), 4)!;
+  const league = projectBatter("batter_hr", models,
+                               ctx(LEAGUE.hr_rate, 0.032, 600), 4)!;
+  if (!(thin.per_pa_probability > league.per_pa_probability)) {
+    throw new Error("a thin sample should still carry some of its signal");
+  }
+  if (!(thin.per_pa_probability < full.per_pa_probability)) {
+    throw new Error(
+      `47 PA (${thin.per_pa_probability}) must not score the same as 600 ` +
+        `(${full.per_pa_probability})`,
+    );
+  }
+});
+
+Deno.test("more sample moves a rate monotonically away from the league", () => {
+  const models = { batter_hr: hrParams };
+  let prev = -1;
+  for (const n of [0, 25, 50, 100, 200, 400, 800]) {
+    const p = projectBatter("batter_hr", models, ctx(0.09, 0.032, n), 4)!;
+    if (p.per_pa_probability < prev) {
+      throw new Error(`n=${n} scored below a smaller sample`);
+    }
+    prev = p.per_pa_probability;
+  }
+});
+
+Deno.test("shrinkage cannot invert the ordering of two hitters", () => {
+  // Whatever the sample, the better rate must still rank higher at equal n --
+  // shrinkage scales the delta, it does not reorder it.
+  const models = { batter_hr: hrParams };
+  for (const n of [10, 47, 150, 600]) {
+    const weak = projectBatter("batter_hr", models, ctx(0.01, 0.032, n), 4)!;
+    const strong = projectBatter("batter_hr", models, ctx(0.08, 0.032, n), 4)!;
+    if (!(strong.probability > weak.probability)) {
+      throw new Error(`ordering broke at n=${n}`);
+    }
+  }
 });
