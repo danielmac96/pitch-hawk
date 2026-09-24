@@ -247,3 +247,89 @@ def test_range_with_no_games_at_all_makes_no_upstream_call(seeded):
     totals = ingest.ingest_weather_range(store, "2025-08-01", "2025-08-02")
     assert totals["rows"] == 0
     assert calls == [], "fetched weather for days holding no games"
+
+
+# ── venues without coordinates ──────────────────────────────────────────────
+
+@pytest.fixture
+def seeded_with_a_coordinateless_venue(tmp_path, monkeypatch):
+    """Two games: one at a park with coordinates, one at a park without.
+
+    The MLB API returns a venue row for every park it has ever used but leaves
+    latitude and longitude null for most one-off international sites -- 30 of
+    727 rows across 2015-2026. Estadio de Beisbol Monterrey (2701) is one, and
+    it appears on the 2018 and 2019 slates.
+    """
+    store = LocalStore(tmp_path)
+    store.put(object_key("games", "2025-07-04"), to_parquet([
+        {"game_pk": 1, "game_date": date(2025, 7, 4), "season": 2025,
+         "venue_id": 3313, "venue_name": "Yankee Stadium",
+         "start_ts": datetime(2025, 7, 4, 19, 40, tzinfo=timezone.utc)},
+        {"game_pk": 2, "game_date": date(2025, 7, 4), "season": 2025,
+         "venue_id": 2701, "venue_name": "Estadio de Beisbol Monterrey",
+         "start_ts": datetime(2025, 7, 4, 19, 40, tzinfo=timezone.utc)},
+    ], "games"))
+    store.put(snapshot_key("venues"), to_parquet([
+        dict(VENUES[3313], season=2025, name="Yankee Stadium"),
+        {"venue_id": 2701, "season": 2025, "name": "Estadio de Beisbol Monterrey",
+         "latitude": None, "longitude": None, "azimuth_angle": None},
+    ], "venues"))
+    calls = []
+
+    def fake_fetch(points, start, end, *, archive=True):
+        calls.append({"points": list(points), "start": start, "end": end})
+        return [_series() for _ in points]
+
+    monkeypatch.setattr(ingest, "fetch_hourly", fake_fetch)
+    return store, calls
+
+
+def test_a_venue_without_coordinates_is_never_requested(
+        seeded_with_a_coordinateless_venue):
+    """The regression. A None latitude used to reach fetch_hourly's
+    f"{lat:.4f}" and raise TypeError, taking down the entire season rather than
+    the one game that could never have had weather anyway."""
+    store, calls = seeded_with_a_coordinateless_venue
+    ingest.ingest_weather_range(store, "2025-07-04", "2025-07-04")
+
+    assert len(calls) == 1
+    points = calls[0]["points"]
+    assert points == [(40.8, -73.9)]
+    assert not [p for p in points if p[0] is None or p[1] is None]
+
+
+def test_the_other_games_still_get_weather(seeded_with_a_coordinateless_venue):
+    """The point of dropping rather than raising: 2,400 games keep their
+    reading and the one that cannot have one is simply absent."""
+    store, _ = seeded_with_a_coordinateless_venue
+    totals = ingest.ingest_weather_range(store, "2025-07-04", "2025-07-04")
+
+    assert totals["rows"] == 1
+    assert totals["games"] == 2      # cli reports the shortfall from this pair
+    rows = pq.read_table(
+        io.BytesIO(store.get(object_key("game_weather", "2025-07-04")))
+    ).to_pylist()
+    assert [r["game_pk"] for r in rows] == [1]
+
+
+def test_a_range_where_no_venue_has_coordinates_says_so(tmp_path, monkeypatch):
+    """Distinguished from "no games": the reason text is what sends whoever is
+    debugging to the venues snapshot instead of to the schedule."""
+    store = LocalStore(tmp_path)
+    store.put(object_key("games", "2025-07-04"), to_parquet([{
+        "game_pk": 2, "game_date": date(2025, 7, 4), "season": 2025,
+        "venue_id": 2701, "venue_name": "Estadio de Beisbol Monterrey",
+        "start_ts": datetime(2025, 7, 4, 19, 40, tzinfo=timezone.utc),
+    }], "games"))
+    store.put(snapshot_key("venues"), to_parquet([
+        {"venue_id": 2701, "season": 2025, "name": "Estadio de Beisbol Monterrey",
+         "latitude": None, "longitude": None, "azimuth_angle": None},
+    ], "venues"))
+
+    def boom(*a, **k):                       # must never be reached
+        raise AssertionError("fetch_hourly called with no usable venue")
+
+    monkeypatch.setattr(ingest, "fetch_hourly", boom)
+    totals = ingest.ingest_weather_range(store, "2025-07-04", "2025-07-04")
+    assert totals["rows"] == 0
+    assert "coordinates" in totals["reason"]

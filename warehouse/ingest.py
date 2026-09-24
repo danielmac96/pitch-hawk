@@ -282,13 +282,26 @@ def ingest_weather_range(store: ObjectStore, start: str, end: str, *,
                 "reason": "no venues snapshot -- run `warehouse ingest` for "
                           "any day, or refresh_venues, before weather"}
 
+    # Being IN the snapshot is not the same as having coordinates. The MLB API
+    # returns a venue row for every park it has ever used, but leaves latitude
+    # and longitude null for most one-off international and novelty sites --
+    # 30 of 727 rows across 2015-2026. Membership alone let a None reach
+    # fetch_hourly's f"{lat:.4f}", which raises TypeError and takes down the
+    # whole season: measured on 2018 and 2019, where the Monterrey series put
+    # Estadio de Beisbol Monterrey on the slate. Those games get no weather
+    # either way; the difference is whether the other 2,400 do. Games at a
+    # dropped venue fall out of `rows` and are reported by the rows < games
+    # note in cli.cmd_weather.
     needed = sorted({g["venue_id"] for games in by_day.values()
                      for g in games
-                     if g.get("venue_id") in venues})
+                     if g.get("venue_id") in venues
+                     and venues[g["venue_id"]].get("latitude") is not None
+                     and venues[g["venue_id"]].get("longitude") is not None})
     if not needed:
         return {"days": 0, "games": 0, "rows": 0, "bytes": 0,
                 "reason": "no game in range plays at a venue the snapshot "
-                          "knows -- check the venues season coverage"}
+                          "knows AND has coordinates for -- check the venues "
+                          "season coverage"}
 
     points = [(venues[v]["latitude"], venues[v]["longitude"]) for v in needed]
     # Fetch ONE DAY PAST `end`. MLB keys a game to its Eastern "official date",

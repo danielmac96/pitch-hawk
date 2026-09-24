@@ -30,8 +30,15 @@ it. The **history path** (Python, driven by a GitHub Actions nightly) writes
 then computes display aggregates in DuckDB over R2 and publishes them back into
 Supabase. Vercel serves a static SPA that reads one edge function and holds no
 data of its own. As of today all four live schedulers are firing, R2 is current
-through yesterday, the database sits at 227 MB of its 500 MB cap, and **one job
-— `daily-ingest` — is failing** (§8.1).
+through yesterday, the database sits at **363 MB of its 500 MB cap**, and every
+scheduled job is green.
+
+> The database read 640 MB on 2026-09-23, over the cap. Only 455 MB of that was
+> the application: `net._http_response`, pg_net's response cache, held 150 MB
+> of empty pages behind 151 live rows, and the rest was btree bloat from the
+> prune-and-refill cycle. Truncate plus `REINDEX ... CONCURRENTLY` returned
+> 277 MB without dropping an index or swapping a table. Measure by schema
+> before concluding the application has outgrown the tier — see §7.
 
 ---
 
@@ -63,8 +70,9 @@ transitions with nobody re-cutting the cron in November.
 | ⟳ `np-game-predict` | **10:00 ET**, then hourly gap-fill | `game-predict` | at 10:00, any unstarted game today; after 10:00, **only** if an unstarted game is missing pregame markets | `game_predictions` (`phase='pregame'`) | ✅ 43 ok / 0 failed in 48 h |
 | ⟳ `np-settle-sweep` | **03:00 ET** | `settle` | local hour = 3 | grades whatever the live chain missed, ahead of the 04:00 export | new |
 | ~~`np-settle`~~ | ~~every 10 min~~ | — | **retired** — `live-poll` now chains `settle` directly (§5.3) | — | — |
-| `np-daily-ingest` | **daily 13:00 UTC** | `daily-ingest` | none | re-ingest of finals, slate upsert, rolling stats, rollups, retention prunes | ❌ **failed 2026-08-07** (§8.1) |
-| `np-prune-cron-history` | **daily 13:15 UTC** | `prune_cron_history(7)` (SQL, no edge fn) | none | trims `cron.job_run_details` | ✅ |
+| `np-daily-ingest` | **daily 13:00 UTC** | `daily-ingest` | none | re-ingest of finals, slate upsert, rolling stats, rollups, retention prunes | ✅ 6 ok / 0 failed, 2026-09-18..23 — the 2026-08-07 failure was the rollup statement timeout, fixed in `20260825123241` |
+| `np-prune-cron-history` | **daily 13:15 UTC** | `prune_cron_history(7, 1)` (SQL, no edge fn) | none | trims `cron.job_run_details` — 7 days, but only 1 day of `np-live-poll` | ✅ |
+| `np-prune-net-responses` | **daily 03:40 UTC** | `prune_net_responses()` (SQL, no edge fn) | none | truncates `net._http_response`, pg_net's unread response cache | ✅ new 2026-09-24 |
 
 Two edge functions are deployed and callable but have **no `cron.job` row at
 all** — deliberately unscheduled, not broken:

@@ -927,6 +927,27 @@ leaving roughly **100 MB of practical headroom** after retaining margin for
 `predictions` growth and WAL. Every proposal below is priced against that
 100 MB and ranked by value per megabyte.
 
+> **Updated 2026-09-24: the database is at 363 MB and headroom is ~137 MB.**
+> It read 640 MB the day before, and the instinct — that the application had
+> outgrown the tier — was wrong. Measuring `pg_total_relation_size` grouped by
+> schema instead of by table put only 455 MB in `public`. `net._http_response`
+> held 150 MB: pg_net stores every `net.http_post` response body for six hours
+> so `http_collect_response` can read it, and nothing in this project has ever
+> called `http_collect_response`. The TTL delete worked (1,426 rows, exactly
+> six hours) but, as everywhere else here, DELETE frees no measured space. One
+> TRUNCATE of that unlogged, never-read table returned it.
+>
+> The remaining 107 MB was btree bloat, not rows: `predictions` carried 114 MB
+> of indexes against 109 MB of heap, and `REINDEX ... CONCURRENTLY` rebuilt
+> them to 36 MB. `predictions_backfilled_idx` was 1600 kB and rebuilt to 8192
+> bytes. No index was dropped and no table was swapped.
+>
+> The lesson generalises past this incident: **on a capacity-constrained
+> Postgres, group by schema before you conclude anything about the
+> application.** `prune_net_responses()` and the live-poll-aware
+> `prune_cron_history` in `20260924025514` keep the plumbing half from
+> returning; the btree half is manual and documented in that migration.
+
 > **The prune is the precondition for all of it.** Today there is no room to
 > publish anything. Sequencing is therefore fixed: scripted verify → nightly
 > job → prune → aggregates. Nothing in §10 or §11 can ship before that.
