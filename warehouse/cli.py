@@ -389,6 +389,25 @@ def cmd_weather(args) -> int:
     elif args.season:
         start = f"{args.season}-03-01"
         end = f"{args.season}-11-15"
+        # A season ends 15 November, which for the CURRENT season is in the
+        # future -- and the archive endpoint answers a future range with
+        #     HTTP Error 400: Bad Request
+        # for the whole call, not just the future part. `--season 2026` was
+        # therefore dead on arrival every year until mid-November, which is
+        # exactly when a backfill is least likely to be re-run. Measured: the
+        # archive serves right up to today, so the only thing that has to go
+        # is the future tail.
+        #
+        # Clamped to YESTERDAY rather than today because ingest_weather_range
+        # deliberately fetches one day past `end` (the West Coast UTC roll),
+        # so end=yesterday puts the fetch window's last day at today.
+        yesterday = _yesterday()
+        if end > yesterday:
+            end = yesterday
+        if start > end:
+            print(f"weather: season {args.season} has not started yet "
+                  f"({start} is after {end})")
+            return EXIT_OK
     else:
         start = args.start or _yesterday()
         end = args.end or start

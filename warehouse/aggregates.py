@@ -456,11 +456,18 @@ def park_hr_factors(con, season_floor: int):  # noqa: ANN001
           from pa
     ),
     rates as (
+        -- The casts are load-bearing. count(*) comes back int64, but DuckDB
+        -- widens sum(INTEGER) to HUGEINT, which Arrow carries as
+        -- decimal128(38,0) and the Python client hands to postgrest as a
+        -- Decimal. That serialises as "178.0", and Postgres rejects it for a
+        -- bigint column:
+        --     invalid input syntax for type bigint: "178.0"
+        -- Caught on the first real publish of this table.
         select season, team_id,
-               count(*) filter (where at_home)     as home_pa,
-               sum(hr)  filter (where at_home)     as home_hr,
-               count(*) filter (where not at_home) as away_pa,
-               sum(hr)  filter (where not at_home) as away_hr
+               count(*) filter (where at_home)              as home_pa,
+               cast(sum(hr) filter (where at_home) as bigint)     as home_hr,
+               count(*) filter (where not at_home)          as away_pa,
+               cast(sum(hr) filter (where not at_home) as bigint) as away_hr
           from sides
          group by 1, 2
     ),
