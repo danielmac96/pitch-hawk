@@ -170,10 +170,20 @@ def cmd_status(args) -> int:
     client = get_client()
     for market in all_markets():
         row = registry.active(market)
-        live = (client.table("predictions").select("model_version")
-                .eq("market", market).order("created_at", desc=True)
-                .limit(1).execute().data)
-        stamped = live[0]["model_version"] if live else None
+        # Look wherever this market's output actually lands. Per-pitch and
+        # per-plate-appearance markets stamp `predictions`; the batter markets
+        # are per-GAME and stamp `player_game_projections` instead, so reading
+        # only `predictions` reported live=None for them forever and printed a
+        # redeploy warning for a pipeline that was working correctly.
+        stamped = None
+        for table, ordering in (("predictions", "created_at"),
+                                ("player_game_projections", "updated_at")):
+            hit = (client.table(table).select("model_version")
+                   .eq("market", market).order(ordering, desc=True)
+                   .limit(1).execute().data)
+            if hit:
+                stamped = hit[0]["model_version"]
+                break
         registered = row["version"] if row else None
         flag = "OK " if stamped == registered else "!! "
         print(f"{flag}{market:<16} registry={registered} live={stamped}")
