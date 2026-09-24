@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from modeling import metrics as M
-from modeling.fit import HALF_LIVES, FitResult, fit
+from modeling.fit import HALF_LIVES, FitResult, collapse_to_window, fit
 
 WALK_FORWARD_SEASONS: tuple[int, ...] = tuple(range(2016, 2026))
 HOLDOUT_SEASON = 2026
@@ -151,6 +151,11 @@ def evaluate(spec, result: FitResult, cells: pd.DataFrame,  # noqa: ANN001
     if spec.family not in _EVALUATORS:
         raise NotImplementedError(
             f"no evaluator for family {spec.family!r} (market {spec.market!r})")
+    # Same grid as the fit, but WITHOUT the min_cell_obs filter. The model is
+    # served on every matchup, not only the well-populated ones, so scoring it
+    # on the survivors of a sample threshold would flatter it -- and the
+    # threshold's whole point is that the cells it removes are the noisy ones.
+    cells = collapse_to_window(spec, cells, form_window, apply_min_obs=False)
     return _EVALUATORS[spec.family](spec, result, cells, form_window)
 
 

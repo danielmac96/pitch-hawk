@@ -289,6 +289,55 @@ def from_params(params: dict, spec) -> FitResult:  # noqa: ANN001
     )
 
 
+def collapse_to_window(spec, cells: pd.DataFrame, form_window: str,  # noqa: ANN001
+                       *, apply_min_obs: bool) -> pd.DataFrame:
+    """Regroup cells onto the grid the selected form window actually fits on.
+
+    cell_sql emits every window's bucket columns in one pass so the sweep costs
+    no extra R2 reads, but `_design` reads one window. The other windows'
+    columns therefore split rows that the design matrix cannot tell apart.
+    Summing `n` over them is exact, not an approximation: a weighted fit over
+    cells is identical to one over the rows behind them, so merging rows with
+    the same design vector changes nothing except how many there are.
+
+    What it does change is what `min_cell_obs` means. On the emitted grid the
+    median cell holds 1 plate appearance, so a threshold there measures the
+    wrong thing; on this one a cell is what the model sees.
+
+    A no-op unless the spec sets `min_cell_obs`. The linear and remaining_table
+    families carry per-cell columns this cannot aggregate (`var_speed`,
+    `remaining`), so they are left strictly alone rather than guessed at --
+    they are also the families with no threshold to apply.
+    """
+    if spec.min_cell_obs <= 0:
+        return cells
+    # Drop only the OTHER windows' bucket columns. Everything else stays a
+    # grouping key, so a column this function has never heard of survives
+    # instead of being silently aggregated away.
+    other = {ff.column(w)
+             for ff in spec.form_features
+             for w in spec.form_windows if w != form_window}
+    keys = [c for c in cells.columns if c != "n" and c not in other]
+    out = cells.groupby(keys, as_index=False, observed=True, sort=False)["n"].sum()
+    if apply_min_obs:
+        # The threshold measures the CELL, not the outcome row. Cells are keyed
+        # by outcome as well as by features, and for a rare class those two are
+        # wildly different numbers: batter_hr's `home_run` row holds ~3.2% of
+        # what its `other` row holds, so a 200 applied per row keeps every
+        # `other` and discards nearly every `home_run` -- and sklearn then
+        # refuses the fold outright with "the data contains only one class".
+        #
+        # Summing across outcomes first is also what the spec means by it:
+        # "200 puts ~6 home runs in the average cell" is a statement about the
+        # matchup bucket, which only has ~6 if both classes are counted. A cell
+        # clears the floor or it does not, and all of its outcome rows follow.
+        outcome_free = [k for k in keys if k != "outcome"]
+        totals = out.groupby(outcome_free, observed=True,
+                             sort=False)["n"].transform("sum")
+        out = out[totals >= spec.min_cell_obs]
+    return out
+
+
 def fit(spec, cells: pd.DataFrame, *, form_window: str,  # noqa: ANN001
         half_life: float | None) -> FitResult:
     if len(cells) == 0:
@@ -298,4 +347,10 @@ def fit(spec, cells: pd.DataFrame, *, form_window: str,  # noqa: ANN001
     if spec.family not in _FITTERS:
         raise NotImplementedError(
             f"no fitter for family {spec.family!r} (market {spec.market!r})")
+    cells = collapse_to_window(spec, cells, form_window, apply_min_obs=True)
+    if len(cells) == 0:
+        raise ValueError(
+            f"{spec.market}: min_cell_obs={spec.min_cell_obs} left no cells "
+            f"on the {form_window!r} grid. Lower it, or widen the bucket "
+            f"steps -- do not drop the threshold silently.")
     return _FITTERS[spec.family](spec, cells, form_window, half_life)

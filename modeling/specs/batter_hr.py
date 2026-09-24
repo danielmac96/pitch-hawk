@@ -18,6 +18,14 @@ in 8,855 across 117 games in 2025). Two consequences that are not optional:
     appearances contains on average less than one home run, so its rate is
     0 or 0.04 and carries no information. 200 puts ~6 in the average cell.
 
+    It is passed as `min_cell_obs` and NOT as a `having` on CELL_SQL. The
+    query groups by all three form windows on both sides, which is a grid
+    three times finer than the one `_design` fits on -- median cell size 1 --
+    so a threshold applied there measured the wrong denominator and kept 21
+    cells, 9,170 of 1,324,509 plate appearances, all from 2019.
+    fit.collapse_to_window regroups onto the selected window first, where the
+    same 200 keeps 81.5%.
+
 WHY THESE FEATURES AND NOT THE OBVIOUS ONES. Contact quality -- hard-hit rate,
 pulled-fly rate -- is the better predictor and the warehouse now computes it
 (`contact_quality`, `batted_ball_profile`, and FORM_SPINE_BAT_CONTACT_SQL
@@ -84,8 +92,7 @@ where a.result_detail is not null
   and b.career_n > 0
   and p.career_n > 0
 group by all
-having count(*) >= {min_obs}
-""".format(hr=HR_BASELINE, bs=BAT_STEP, ps=PIT_STEP, min_obs=MIN_OBS)
+""".format(hr=HR_BASELINE, bs=BAT_STEP, ps=PIT_STEP)
 
 
 def to_params(fit, form_window: str) -> dict:
@@ -119,6 +126,7 @@ SPEC = MarketSpec(
     # 0.037 against 0.032, which log loss barely registers and anyone reading
     # the number feels immediately.
     calibration_band=(0.85, 1.15),
+    min_cell_obs=MIN_OBS,
     form_windows=("career", "d30", "d90"),
     to_params=to_params,
     datasets=("at_bats",),

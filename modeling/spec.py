@@ -155,6 +155,27 @@ class MarketSpec:
     # one of six features, recorded as a known defect and easy to miss because
     # nothing in the spec said so. Now the spec says so.
     intercept_folded: tuple[str, ...] = ()
+    # Minimum observations a GRID CELL must hold to be fitted on. 0 disables.
+    #
+    # This belongs on the spec and not in a `having` on cell_sql, and the
+    # difference is the whole reason the batter markets shipped untrainable.
+    # cell_sql groups by every window's bucket columns at once -- career, d30
+    # and d90, for both sides -- because emitting all three is what makes the
+    # form-window sweep free. But _design reads exactly ONE window, so those
+    # six columns describe a grid three times finer than the one the model is
+    # ever fitted on. Median cell size on that grid is 1. A `having` there
+    # therefore tests the wrong denominator: at MIN_OBS=200 batter_hr kept 21
+    # cells and 0.69% of its plate appearances, and every survivor came from a
+    # single season.
+    #
+    # Applied instead by fit.collapse_to_window, AFTER the cells are regrouped
+    # on the selected window -- where a cell is the thing the fit actually
+    # sees. Same threshold, same intent, 81.5% of plate appearances kept.
+    #
+    # Only the FIT filters. evaluate() collapses to the same grid but keeps
+    # every cell: scoring only the well-populated ones would measure the model
+    # on the matchups it finds easiest and call that out-of-sample.
+    min_cell_obs: int = 0
 
     def __post_init__(self) -> None:
         if self.family not in FAMILIES:

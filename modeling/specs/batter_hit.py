@@ -38,6 +38,13 @@ PIT_STEP = 0.012
 # Lower than batter_hr's 200: with a ~23% positive rate a 60-PA cell holds
 # ~14 hits, which is a usable rate. The floor exists to stop single-PA cells
 # from dominating the weighted fit, not to chase a rare class.
+#
+# Passed as `min_cell_obs`, not as a `having` on CELL_SQL: the query groups by
+# all three form windows on both sides, a grid three times finer than the one
+# `_design` fits on, where the median cell holds 1 plate appearance. Applied
+# there it kept 71 cells and 5,483 of 1,324,509 plate appearances.
+# fit.collapse_to_window regroups onto the selected window first, where the
+# same 60 keeps 90.8%.
 MIN_OBS = 60
 
 CELL_SQL = """
@@ -66,8 +73,7 @@ where a.result is not null
   and b.career_n > 0
   and p.career_n > 0
 group by all
-having count(*) >= {min_obs}
-""".format(hit=HIT_BASELINE, bs=BAT_STEP, ps=PIT_STEP, min_obs=MIN_OBS)
+""".format(hit=HIT_BASELINE, bs=BAT_STEP, ps=PIT_STEP)
 
 
 def to_params(fit, form_window: str) -> dict:
@@ -91,6 +97,7 @@ SPEC = MarketSpec(
     metric_direction="lower",
     positive_class="hit",
     calibration_band=(0.90, 1.10),
+    min_cell_obs=MIN_OBS,
     form_windows=("career", "d30", "d90"),
     to_params=to_params,
     datasets=("at_bats",),
