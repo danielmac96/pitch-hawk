@@ -1,0 +1,1525 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  body { margin:0; background:#080e1a; }
+  @keyframes ph-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+  a { color:#4ade80; text-decoration:none; }
+  a:hover { color:#5fe094; }
+  .phc { transition:border-color .14s, background .14s; }
+  .phc:hover { border-color:#31435f; }
+  .phscroll::-webkit-scrollbar { width:6px; }
+  .phscroll::-webkit-scrollbar-thumb { background:#253449; border-radius:99px; }
+</style>
+</helmet>
+
+<div style="min-height:100vh;background:#080e1a;font-family:'Hanken Grotesk',-apple-system,sans-serif;color:#eef3f9;-webkit-font-smoothing:antialiased;line-height:1.45;padding:26px 30px 60px;">
+
+  <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:22px;">
+    <div style="display:flex;align-items:center;gap:.5rem;font-weight:800;font-size:1.16rem;letter-spacing:-.02em;">
+      <span style="color:#22a566;font-size:.85rem;">◆</span><span>Pitch<span style="color:#22a566;">Hawk</span></span>
+    </div>
+    <span style="font-size:11px;font-weight:700;letter-spacing:.07em;text-transform:uppercase;color:#6f7f96;">Redesign · desktop &amp; phone</span>
+    <div style="display:flex;gap:.22rem;background:#1b2942;border:1px solid #253449;border-radius:999px;padding:.25rem;">
+      <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3">
+        <button onClick="{{ t.go }}" style="border:0;cursor:pointer;font-family:inherit;font-weight:700;font-size:.84rem;padding:.4rem .95rem;border-radius:999px;background:{{ t.bg }};color:{{ t.fg }};">{{ t.label }}</button>
+      </sc-for>
+    </div>
+    <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#6f7f96;">{{ tabNote }}</span>
+  </div>
+
+  <div style="display:flex;gap:26px;align-items:flex-start;">
+
+    <!-- ══════════════ DESKTOP ══════════════ -->
+    <div style="width:1180px;flex:none;">
+      <div style="font-size:10px;font-weight:800;letter-spacing:.08em;color:#6f7f96;margin-bottom:8px;">DESKTOP · 1180</div>
+      <div style="border:1px solid #253449;border-radius:16px;background:#0c1424;overflow:hidden;">
+
+        <div style="display:flex;align-items:center;gap:1.1rem;flex-wrap:wrap;padding:.7rem 22px;border-bottom:1px solid #253449;background:rgba(12,20,36,.85);">
+          <div style="display:flex;align-items:center;gap:.5rem;font-weight:800;font-size:1.16rem;letter-spacing:-.02em;">
+            <span style="color:#22a566;font-size:.85rem;">◆</span><span>Pitch<span style="color:#22a566;">Hawk</span></span>
+          </div>
+          <div style="display:flex;align-items:center;gap:.42rem;font-size:.78rem;color:#8493aa;font-weight:600;">
+            <span style="width:7px;height:7px;border-radius:50%;background:#22a566;animation:ph-pulse 1.8s ease-in-out infinite;"></span>{{ liveText }}
+          </div>
+          <div style="margin-left:auto;display:flex;gap:.22rem;background:#1b2942;border:1px solid #253449;border-radius:999px;padding:.25rem;">
+            <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3">
+              <button onClick="{{ t.go }}" style="border:0;cursor:pointer;font-family:inherit;font-weight:700;font-size:.84rem;padding:.4rem .85rem;border-radius:999px;background:{{ t.bg }};color:{{ t.fg }};">{{ t.label }}</button>
+            </sc-for>
+          </div>
+        </div>
+
+        <!-- ── HOME ── -->
+        <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+        <div style="padding:20px 22px 34px;">
+
+          <div style="display:grid;grid-template-columns:1.25fr .9fr;gap:2rem;align-items:center;background:linear-gradient(180deg,#141f33,#0c1424);border:1px solid #253449;border-radius:18px;padding:1.9rem 2rem;margin-bottom:1.4rem;">
+            <div>
+              <span style="display:inline-block;font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#4ade80;background:#10261a;padding:.3rem .6rem;border-radius:999px;margin-bottom:1rem;">MLB · Live At-Bat Analytics</span>
+              <h1 style="font-size:2.5rem;font-weight:800;letter-spacing:-.02em;margin:0;line-height:1.08;">Every pitch, read before it lands.</h1>
+              <p style="font-size:1.08rem;color:#aebdd2;max-width:34rem;margin:1rem 0 1.4rem;">Live pitch-by-pitch data with model-predicted probabilities for every at-bat. The board wakes at first pitch and follows every game as it unfolds.</p>
+              <button onClick="{{ goLive }}" style="font-weight:600;font-size:.92rem;padding:.62rem 1.05rem;border-radius:9px;border:0;background:#22a566;color:#fff;cursor:pointer;font-family:inherit;">Open the live feed →</button>
+            </div>
+            <div style="background:#0a1322;border-radius:14px;padding:1.4rem 1.5rem;">
+              <span style="font-size:.78rem;font-weight:600;color:#9fb2c9;letter-spacing:.04em;text-transform:uppercase;">Today at a glance</span>
+              <div style="display:flex;gap:1.3rem;margin:1.1rem 0 1.2rem;flex-wrap:wrap;">
+                <sc-for list="{{ glance }}" as="t" hint-placeholder-count="4">
+                  <div style="display:flex;flex-direction:column;">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:1.7rem;font-weight:800;">{{ t.big }}</span>
+                    <span style="font-size:.76rem;color:#9fb2c9;margin-top:.15rem;">{{ t.lbl }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="font-size:.88rem;font-weight:600;color:#8fd3ad;">Games are live — the model is reading every pitch.</div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 4px;">
+            <h2 style="font-size:1.6rem;font-weight:800;letter-spacing:-.02em;margin:0;">Today's games</h2>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#6f7f96;">latest inning first · tap a game for the live feed</span>
+          </div>
+          <p style="margin:.35rem 0 14px;color:#8493aa;font-size:.95rem;">Live now first, then finals, then up next with time to first pitch.</p>
+
+          <sc-for list="{{ groups }}" as="grp" hint-placeholder-count="3">
+            <div style="margin-bottom:18px;">
+              <div style="display:flex;align-items:center;gap:9px;margin-bottom:8px;">
+                <span style="font-size:10px;font-weight:800;letter-spacing:.08em;color:{{ grp.fg }};">{{ grp.title }}</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#6f7f96;">{{ grp.count }}</span>
+                <span style="flex:1;height:1px;background:#1a2740;"></span>
+              </div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <sc-for list="{{ grp.games }}" as="g" hint-placeholder-count="4">
+                  <div class="phc" style="border:1px solid #253449;border-radius:12px;background:#141f33;overflow:hidden;">
+                    <div style="display:grid;grid-template-columns:86px 210px 150px 118px 152px 152px 128px 30px;gap:12px;align-items:center;padding:11px 14px;">
+                      <span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;letter-spacing:.05em;padding:3px 7px;border-radius:6px;justify-self:start;color:{{ g.chipFg }};background:{{ g.chipBg }};">{{ g.chipText }}</span>
+                      <button onClick="{{ g.jump }}" style="border:0;background:transparent;padding:0;text-align:left;cursor:pointer;font-family:inherit;color:#eef3f9;display:flex;flex-direction:column;gap:2px;min-width:0;">
+                        <b style="font-size:13.5px;font-weight:800;letter-spacing:.01em;">{{ g.label }}</b>
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8493aa;">{{ g.sub }}</span>
+                      </button>
+                      <span style="display:flex;align-items:baseline;gap:8px;font-family:'IBM Plex Mono',monospace;">
+                        <b style="font-size:19px;font-weight:700;color:{{ g.scoreFg }};">{{ g.score }}</b>
+                        <span style="font-size:10.5px;color:#6f7f96;">{{ g.scoreSub }}</span>
+                      </span>
+                      <span style="display:flex;align-items:center;gap:10px;">
+                        <span style="position:relative;width:32px;height:24px;flex:none;">
+                          <span style="position:absolute;top:0;left:11px;width:10px;height:10px;transform:rotate(45deg);border:1px solid #31435f;border-radius:2px;background:{{ g.b2 }};"></span>
+                          <span style="position:absolute;top:11px;left:1px;width:10px;height:10px;transform:rotate(45deg);border:1px solid #31435f;border-radius:2px;background:{{ g.b3 }};"></span>
+                          <span style="position:absolute;top:11px;left:21px;width:10px;height:10px;transform:rotate(45deg);border:1px solid #31435f;border-radius:2px;background:{{ g.b1 }};"></span>
+                        </span>
+                        <span style="display:flex;flex-direction:column;gap:1px;font-family:'IBM Plex Mono',monospace;">
+                          <b style="font-size:12.5px;font-weight:600;color:#eef3f9;">{{ g.count }}</b>
+                          <span style="font-size:10px;color:#6f7f96;">{{ g.outs }}</span>
+                        </span>
+                      </span>
+                      <span style="display:flex;flex-direction:column;gap:2px;">
+                        <span style="display:flex;align-items:baseline;gap:6px;">
+                          <b style="font-size:12.5px;font-weight:800;">{{ g.mlPick }}</b>
+                          <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:{{ g.mlFg }};">{{ g.mlProb }}</span>
+                        </span>
+                        <span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;color:#6f7f96;">MONEYLINE · PREGAME</span>
+                      </span>
+                      <span style="display:flex;flex-direction:column;gap:2px;">
+                        <span style="display:flex;align-items:baseline;gap:6px;">
+                          <b style="font-size:12.5px;font-weight:800;">{{ g.totPick }}</b>
+                          <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:{{ g.totFg }};">{{ g.totProb }}</span>
+                        </span>
+                        <span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;color:#6f7f96;">TOTAL · PREGAME</span>
+                      </span>
+                      <button onClick="{{ g.jump }}" style="justify-self:end;border:1px solid #253449;background:#1b2942;color:#aebdd2;font-family:inherit;font-size:11px;font-weight:700;padding:6px 11px;border-radius:999px;cursor:pointer;white-space:nowrap;">{{ g.cta }}</button>
+                      <button onClick="{{ g.toggle }}" title="Game metadata" style="justify-self:end;border:0;background:transparent;color:#8493aa;font-size:14px;font-weight:700;cursor:pointer;padding:4px;line-height:1;">{{ g.chev }}</button>
+                    </div>
+                    <sc-if value="{{ g.open }}" hint-placeholder-val="{{ false }}">
+                      <div style="border-top:1px solid #253449;background:#101b2e;padding:12px 14px 13px;">
+                        <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px 22px;">
+                          <sc-for list="{{ g.meta }}" as="m" hint-placeholder-count="8">
+                            <span style="display:flex;flex-direction:column;gap:2px;">
+                              <span style="font-size:9.5px;font-weight:800;letter-spacing:.06em;color:#6f7f96;">{{ m.k }}</span>
+                              <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#eef3f9;">{{ m.v }}</span>
+                            </span>
+                          </sc-for>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:12px;margin-top:12px;padding-top:10px;border-top:1px solid #1a2740;">
+                          <button onClick="{{ g.jump }}" style="border:1px solid #1f3d2b;background:#12301f;color:#4ade80;font-family:inherit;font-size:11.5px;font-weight:700;padding:6px 12px;border-radius:999px;cursor:pointer;">Go to Live Feed →</button>
+                          <span style="font-size:11px;color:#6f7f96;">{{ g.metaNote }}</span>
+                        </div>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </sc-for>
+
+          <div style="display:grid;grid-template-columns:1.05fr .95fr;gap:2rem;align-items:center;background:#0f1b2d;border:1px solid #16263d;border-radius:18px;padding:1.9rem 2rem;margin:8px 0 1.6rem;">
+            <div>
+              <span style="display:inline-block;font-size:.74rem;font-weight:700;letter-spacing:.08em;text-transform:uppercase;color:#6ee7a0;background:rgba(74,222,128,.13);padding:.3rem .6rem;border-radius:999px;margin-bottom:.9rem;">The live board</span>
+              <h2 style="color:#fff;font-size:2rem;font-weight:800;letter-spacing:-.02em;margin:0;">Watch the game with the model open.</h2>
+              <p style="color:#b7c6da;font-size:1.02rem;line-height:1.6;margin:.9rem 0 1.5rem;max-width:34rem;">Real-time reads on every live at-bat — model probabilities, the pitch-by-pitch feed, and the broadcast situation at a glance.</p>
+              <button onClick="{{ goLive }}" style="font-weight:600;font-size:.92rem;padding:.62rem 1.05rem;border-radius:9px;border:0;background:#22a566;color:#fff;cursor:pointer;font-family:inherit;">Open the live feed →</button>
+            </div>
+            <ul style="list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:.9rem;">
+              <sc-for list="{{ promoBullets }}" as="b" hint-placeholder-count="3">
+                <li style="display:flex;flex-direction:column;gap:.2rem;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.09);border-radius:9px;padding:.85rem 1rem;">
+                  <b style="color:#fff;font-size:.96rem;">{{ b.t }}</b>
+                  <span style="color:#93a6bd;font-size:.86rem;line-height:1.5;">{{ b.d }}</span>
+                </li>
+              </sc-for>
+            </ul>
+          </div>
+
+          <h2 style="font-size:1.6rem;font-weight:800;letter-spacing:-.02em;margin:0 0 1rem;">How it works</h2>
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1.1rem;">
+            <sc-for list="{{ steps }}" as="s" hint-placeholder-count="4">
+              <div style="background:#141f33;border:1px solid #253449;border-radius:14px;padding:1.3rem;">
+                <span style="display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:9px;background:#0f1b2d;color:#fff;font-weight:800;margin-bottom:.8rem;">{{ s.n }}</span>
+                <h3 style="font-size:1.05rem;font-weight:700;margin:0 0 .35rem;">{{ s.t }}</h3>
+                <p style="margin:0;color:#aebdd2;font-size:.92rem;">{{ s.d }}</p>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- ── LIVE FEED ── -->
+        <sc-if value="{{ isLive }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:20px 22px 40px;">
+          <div style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-bottom:12px;">
+            <span style="font-size:10px;font-weight:800;letter-spacing:.06em;color:#6f7f96;">SHOWING</span>
+            <sc-for list="{{ heroChips }}" as="c" hint-placeholder-count="5">
+              <button onClick="{{ c.go }}" style="border:1px solid {{ c.bd }};background:{{ c.bg }};color:{{ c.fg }};font-family:inherit;font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;">{{ c.label }}</button>
+            </sc-for>
+          </div>
+          <div style="display:grid;grid-template-columns:1.55fr minmax(0,1fr);gap:14px;margin-bottom:24px;align-items:start;">
+            <div style="border:1px solid #1f3d2b;border-radius:14px;background:linear-gradient(180deg,#12301f,#0f1f18);padding:16px 18px;">
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;">
+                <span style="font-size:10px;font-weight:800;letter-spacing:.09em;color:#4ade80;background:rgba(74,222,128,.14);padding:3px 7px;border-radius:5px;">{{ heroBadge }}</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#82ae92;">{{ heroMeta }}</span>
+                <span style="margin-left:auto;font-size:11.5px;color:#82ae92;">{{ heroNote }}</span>
+              </div>
+              <div style="display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;margin-bottom:4px;">
+                <span style="font-size:30px;font-weight:800;letter-spacing:-.03em;line-height:1;">{{ heroLabel }}</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:23px;font-weight:600;color:#4ade80;line-height:1;">{{ heroPct }}</span>
+                <span style="font-size:12px;color:#82ae92;">Next pitch result</span>
+              </div>
+              <div style="font-size:12.5px;color:#82ae92;margin-bottom:14px;line-height:1.5;">{{ heroWhy }}</div>
+              <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:15px;">
+                <sc-for list="{{ heroDist }}" as="r" hint-placeholder-count="3">
+                  <div style="display:grid;grid-template-columns:96px minmax(0,1fr) 46px;gap:10px;align-items:center;">
+                    <span style="font-size:12.5px;color:#82ae92;">{{ r.label }}</span>
+                    <span style="height:7px;background:#0d1729;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ r.fill }};width:{{ r.w }};"></span></span>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;text-align:right;">{{ r.pct }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="display:flex;gap:22px;flex-wrap:wrap;border-top:1px solid #1f3d2b;padding-top:12px;">
+                <sc-for list="{{ heroTiles }}" as="t" hint-placeholder-count="3">
+                  <div style="display:flex;flex-direction:column;gap:2px;">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:700;color:{{ t.fg }};">{{ t.v }}</span>
+                    <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#82ae92;">{{ t.l }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+            <div style="border:1px solid #253449;border-radius:14px;background:#141f33;padding:14px 16px;">
+              <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px;">
+                <span style="font-size:10px;font-weight:800;letter-spacing:.09em;color:#6f7f96;">CURRENT AT-BAT</span>
+                <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8493aa;">{{ abStat }}</span>
+              </div>
+              <div style="display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:3px;">
+                <span style="font-size:16px;font-weight:700;">{{ abBatter }}</span>
+                <span style="font-size:11.5px;color:#8493aa;">vs {{ abPitcher }}</span>
+              </div>
+              <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#6f7f96;margin-bottom:12px;">{{ abCount }}</div>
+              <div style="display:flex;flex-direction:column;gap:3px;">
+                <sc-for list="{{ currentAb }}" as="p" hint-placeholder-count="5">
+                  <div style="display:grid;grid-template-columns:14px 28px 26px 116px minmax(0,1fr);gap:7px;align-items:center;padding:5px 7px;border-radius:7px;background:#101b2e;">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6f7f96;">{{ p.n }}</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;">{{ p.count }}</span>
+                    <span style="font-size:11px;font-weight:800;color:{{ p.typeFg }};">{{ p.type }}</span>
+                    <span style="display:flex;align-items:baseline;gap:5px;padding:2px 6px;border-radius:6px;white-space:nowrap;background:{{ p.vBg }};">
+                      <b style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:{{ p.vFg }};">{{ p.velo }}</b>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ p.veloSub }}</span>
+                    </span>
+                    <span style="display:flex;align-items:baseline;gap:5px;padding:2px 6px;border-radius:6px;white-space:nowrap;overflow:hidden;background:{{ p.rBg }};">
+                      <b style="font-size:11.5px;font-weight:700;color:{{ p.rFg }};">{{ p.result }}</b>
+                      <span style="font-size:10px;color:#8493aa;">{{ p.called }}</span>
+                    </span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 10px;">
+            <span style="font-size:15px;font-weight:800;letter-spacing:-.01em;">All of today's games</span>
+            <span style="font-size:11.5px;color:#6f7f96;">live games expand to at-bat calls · pregame games show the opening-at-bat read</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8493aa;">184/271 at-bat calls · 912/1344 pitch calls · MAE 1.4</span>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:7px;">
+            <sc-for list="{{ liveFeedGames }}" as="g" hint-placeholder-count="6">
+              <div style="border:1px solid {{ g.bd }};border-radius:12px;background:#141f33;overflow:hidden;">
+                <button onClick="{{ g.toggle }}" style="width:100%;display:grid;grid-template-columns:18px 84px 190px 132px 118px 150px minmax(0,1fr) 140px;gap:12px;align-items:center;text-align:left;border:0;background:transparent;color:#eef3f9;font-family:inherit;padding:12px 14px;cursor:pointer;">
+                  <span style="font-size:15px;font-weight:700;color:#aebdd2;line-height:1;">{{ g.chev }}</span>
+                  <span style="display:inline-flex;align-items:center;gap:5px;font-size:10px;font-weight:800;letter-spacing:.05em;padding:3px 7px;border-radius:6px;justify-self:start;color:{{ g.chipFg }};background:{{ g.chipBg }};">{{ g.chipText }}</span>
+                  <span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+                    <b style="font-size:13.5px;font-weight:800;">{{ g.label }}</b>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8493aa;">{{ g.sub }}</span>
+                  </span>
+                  <span style="display:flex;align-items:baseline;gap:8px;font-family:'IBM Plex Mono',monospace;">
+                    <b style="font-size:18px;font-weight:700;color:{{ g.scoreFg }};">{{ g.score }}</b>
+                    <span style="font-size:10.5px;color:#6f7f96;">{{ g.scoreSub }}</span>
+                  </span>
+                  <span style="display:flex;flex-direction:column;gap:1px;font-family:'IBM Plex Mono',monospace;">
+                    <b style="font-size:12.5px;font-weight:600;">{{ g.count }}</b>
+                    <span style="font-size:10px;color:#6f7f96;">{{ g.outs }}</span>
+                  </span>
+                  <span style="display:flex;flex-direction:column;gap:2px;">
+                    <span style="display:flex;align-items:baseline;gap:6px;"><b style="font-size:12.5px;font-weight:800;">{{ g.mlPick }}</b><span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:{{ g.mlFg }};">{{ g.mlProb }}</span></span>
+                    <span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;color:#6f7f96;">ML · {{ g.totPick }} {{ g.totProb }} TOTAL</span>
+                  </span>
+                  <span style="display:flex;align-items:center;gap:8px;min-width:0;">
+                    <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:{{ g.callChipFg }};background:{{ g.callChipBg }};padding:2px 6px;border-radius:5px;white-space:nowrap;">{{ g.callChip }}</span>
+                    <span style="font-size:12px;color:#aebdd2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ g.callText }}</span>
+                  </span>
+                  <span style="display:flex;flex-direction:column;gap:3px;">
+                    <span style="display:flex;align-items:baseline;gap:6px;">
+                      <b style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:{{ g.accFg }};">{{ g.acc }} · {{ g.accPct }}</b>
+                      <span style="font-size:10.5px;color:#6f7f96;">at-bat calls</span>
+                    </span>
+                    <span style="height:5px;background:#101b2e;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ g.accFg }};width:{{ g.accW }};"></span></span>
+                  </span>
+                </button>
+                <sc-if value="{{ g.open }}" hint-placeholder-val="{{ false }}">
+                  <div style="border-top:1px solid #253449;background:#101b2e;padding:12px 14px 14px;">
+                    <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+                      <span style="font-size:10px;font-weight:800;letter-spacing:.06em;color:#6f7f96;">{{ g.bodyTitle }}</span>
+                      <span style="font-size:11px;color:#6f7f96;">{{ g.bodyNote }}</span>
+                    </div>
+                    <div style="display:flex;flex-direction:column;gap:4px;">
+                      <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+                        <div style="display:grid;grid-template-columns:34px minmax(0,1fr) minmax(0,1fr) 220px 96px 88px;gap:10px;align-items:center;border:1px solid #1a2740;border-radius:9px;background:#141f33;padding:9px 10px;">
+                          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;">{{ r.inn }}</span>
+                          <span style="display:flex;align-items:center;gap:6px;min-width:0;">
+                            <span style="font-size:9.5px;font-weight:800;color:#7fa0c4;">{{ r.team }}</span>
+                            <button onClick="{{ r.entity }}" style="border:0;background:transparent;padding:0;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:600;color:#eef3f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:underline;text-decoration-color:#31435f;text-underline-offset:3px;">{{ r.batter }}</button>
+                          </span>
+                          <span style="font-size:12px;color:#aebdd2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ r.pitcher }}</span>
+                          <span style="display:flex;align-items:baseline;gap:6px;padding:3px 7px;border-radius:7px;background:{{ r.callBg }};">
+                            <b style="font-size:11.5px;font-weight:700;color:{{ r.callFg }};">{{ r.call }}</b>
+                            <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ r.callPct }}</span>
+                            <span style="font-size:10px;color:#6f7f96;">{{ r.actual }}</span>
+                          </span>
+                          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ r.pitches }}</span>
+                          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ r.accFg }};text-align:right;">{{ r.acc }} · {{ r.accPct }}</span>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        </sc-if>
+
+        <!-- ── DATA FEED ── -->
+        <sc-if value="{{ isData }}" hint-placeholder-val="{{ false }}">
+        <div style="padding:20px 22px 40px;">
+          <div style="display:flex;align-items:flex-end;gap:14px;flex-wrap:wrap;margin-bottom:14px;">
+            <div>
+              <h1 style="font-size:1.7rem;font-weight:800;letter-spacing:-.02em;margin:0;">Data feed</h1>
+              <p style="margin:.3rem 0 0;color:#8493aa;font-size:.95rem;">Analytics across the window up top, the graded history below — day, game, at-bat, pitch.</p>
+            </div>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:7px;flex-wrap:wrap;">
+              <span style="font-size:10px;font-weight:800;letter-spacing:.06em;color:#6f7f96;">WINDOW</span>
+              <sc-for list="{{ ranges }}" as="r" hint-placeholder-count="5">
+                <button onClick="{{ r.go }}" style="border:1px solid {{ r.bd }};background:{{ r.bg }};color:{{ r.fg }};font-family:inherit;font-weight:600;font-size:12px;padding:6px 12px;border-radius:999px;cursor:pointer;">{{ r.label }}</button>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="border:1px solid #253449;border-radius:12px;background:#101b2e;padding:11px 13px;margin-bottom:14px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+            <sc-for list="{{ dfSelects }}" as="s" hint-placeholder-count="2">
+              <span style="display:flex;align-items:center;gap:7px;">
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:.06em;color:#6f7f96;">{{ s.label }}</span>
+                <select value="{{ s.value }}" onChange="{{ s.onChange }}" style="background:#141f33;color:#eef3f9;border:1px solid {{ s.bd }};border-radius:7px;font-family:inherit;font-size:11.5px;font-weight:600;padding:6px 9px;min-width:132px;cursor:pointer;">
+                  <sc-for list="{{ s.options }}" as="o" hint-placeholder-count="6">
+                    <option value="{{ o.v }}">{{ o.t }}</option>
+                  </sc-for>
+                </select>
+              </span>
+            </sc-for>
+            <span style="width:1px;height:18px;background:#31435f;"></span>
+            <sc-for list="{{ dfSegs }}" as="sg" hint-placeholder-count="2">
+              <span style="display:flex;align-items:center;gap:6px;">
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:.06em;color:#6f7f96;">{{ sg.label }}</span>
+                <sc-for list="{{ sg.items }}" as="i" hint-placeholder-count="3">
+                  <button onClick="{{ i.go }}" style="border:1px solid {{ i.bd }};background:{{ i.bg }};color:{{ i.fg }};font-family:inherit;font-weight:600;font-size:11.5px;padding:5px 11px;border-radius:999px;cursor:pointer;">{{ i.label }}</button>
+                </sc-for>
+              </span>
+            </sc-for>
+            <sc-if value="{{ dfDirty }}" hint-placeholder-val="{{ false }}">
+              <button onClick="{{ dfClear }}" style="border:1px solid #253449;background:transparent;color:#aebdd2;font-family:inherit;font-size:11.5px;font-weight:600;padding:5px 11px;border-radius:999px;cursor:pointer;">Clear</button>
+            </sc-if>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8493aa;">{{ dfSummary }}</span>
+          </div>
+
+          <div style="display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-bottom:16px;">
+            <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="5">
+              <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:12px 13px;display:flex;flex-direction:column;gap:5px;min-width:0;">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:700;color:{{ k.fg }};line-height:1;">{{ k.big }}</span>
+                <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#8493aa;text-transform:uppercase;">{{ k.label }}</span>
+                <span style="font-size:11px;color:#6f7f96;">{{ k.sub }}</span>
+              </div>
+            </sc-for>
+          </div>
+
+          <div style="display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px;margin-bottom:26px;">
+            <div style="grid-column:1 / -1;border:1px solid #1f3d2b;border-radius:12px;background:#141f33;padding:14px 16px;min-width:0;">
+              <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:2px;">
+                <div style="font-size:12.5px;font-weight:700;">Profitable trends</div>
+                <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#4ade80;background:rgba(74,222,128,.13);padding:2px 6px;border-radius:5px;">EDGE VS BASELINE</span>
+              </div>
+              <div style="font-size:11px;color:#6f7f96;margin-bottom:14px;">players the model has read better — or worse — than its own window baseline, under the filters above</div>
+              <div style="display:grid;grid-template-columns:minmax(0,1.1fr) 58px 66px 120px minmax(0,1fr) 72px 62px;gap:10px;padding:0 2px 7px;border-bottom:1px solid #253449;">
+                <sc-for list="{{ trendHead }}" as="h" hint-placeholder-count="7">
+                  <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:{{ h.a }};">{{ h.t }}</span>
+                </sc-for>
+              </div>
+              <sc-for list="{{ trends }}" as="t" hint-placeholder-count="6">
+                <div style="display:grid;grid-template-columns:minmax(0,1.1fr) 58px 66px 120px minmax(0,1fr) 72px 62px;gap:10px;align-items:center;padding:8px 2px;border-bottom:1px solid #1a2740;">
+                  <span style="display:flex;flex-direction:column;gap:2px;min-width:0;">
+                    <button onClick="{{ t.entity }}" style="border:0;background:transparent;padding:0;text-align:left;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;color:#eef3f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:underline;text-decoration-color:#31435f;text-underline-offset:3px;">{{ t.name }}</button>
+                    <span style="font-size:10.5px;color:#6f7f96;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ t.note }}</span>
+                  </span>
+                  <span style="font-size:11px;font-weight:800;color:{{ t.roleFg }};">{{ t.role }} {{ t.team }}</span>
+                  <span style="font-size:11.5px;color:#aebdd2;">{{ t.side }}</span>
+                  <span style="display:flex;align-items:baseline;gap:6px;justify-content:flex-end;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ t.callsFg }};">{{ t.calls }} · {{ t.callsPct }}</span>
+                  <span style="display:flex;align-items:center;gap:9px;">
+                    <span style="flex:1;height:8px;background:#101b2e;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ t.edgeFg }};width:{{ t.w }};"></span></span>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{{ t.edgeFg }};white-space:nowrap;">{{ t.edge }}</span>
+                  </span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{{ t.unitsFg }};text-align:right;">{{ t.units }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{{ t.streakFg }};text-align:right;">{{ t.streak }}</span>
+                </div>
+              </sc-for>
+            </div>
+            <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;min-width:0;">
+              <div style="font-size:12.5px;font-weight:700;margin-bottom:2px;">Accuracy over time by market</div>
+              <div style="font-size:11px;color:#6f7f96;margin-bottom:14px;">share of calls graded correct, per game day</div>
+              <div style="display:flex;flex-direction:column;gap:11px;">
+                <sc-for list="{{ accRows }}" as="m" hint-placeholder-count="4">
+                  <div style="display:grid;grid-template-columns:104px minmax(0,1fr) 74px;gap:12px;align-items:end;">
+                    <span style="font-size:11.5px;color:#aebdd2;padding-bottom:2px;">{{ m.label }}</span>
+                    <span style="display:flex;align-items:flex-end;gap:3px;height:40px;">
+                      <sc-for list="{{ m.bars }}" as="b" hint-placeholder-count="14">
+                        <span style="flex:1;min-width:3px;border-radius:2px 2px 0 0;background:{{ b.fg }};height:{{ b.h }};display:block;"></span>
+                      </sc-for>
+                    </span>
+                    <span style="display:flex;flex-direction:column;align-items:flex-end;">
+                      <b style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;">{{ m.now }}</b>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:{{ m.dFg }};">{{ m.delta }}</span>
+                    </span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;min-width:0;">
+              <div style="font-size:12.5px;font-weight:700;margin-bottom:2px;">Pitch-result accuracy by count</div>
+              <div style="font-size:11px;color:#6f7f96;margin-bottom:14px;">how well the model reads each count it predicts into</div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <sc-for list="{{ countRows }}" as="c" hint-placeholder-count="8">
+                  <div style="display:grid;grid-template-columns:44px minmax(0,1fr) 84px;gap:10px;align-items:center;">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#aebdd2;">{{ c.label }}</span>
+                    <span style="height:9px;background:#101b2e;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ c.fg }};width:{{ c.w }};"></span></span>
+                    <span style="display:flex;gap:7px;justify-content:flex-end;font-family:'IBM Plex Mono',monospace;font-size:11.5px;"><b style="font-weight:600;">{{ c.pct }}</b><span style="color:#6f7f96;">{{ c.n }}</span></span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;min-width:0;">
+              <div style="font-size:12.5px;font-weight:700;margin-bottom:2px;">Pitch mix and velocity trend</div>
+              <div style="font-size:11px;color:#6f7f96;margin-bottom:14px;">mix across the window, mean velo by pitcher workload</div>
+              <div style="display:flex;height:11px;border-radius:999px;overflow:hidden;background:#101b2e;margin-bottom:9px;">
+                <sc-for list="{{ mix }}" as="s" hint-placeholder-count="6">
+                  <span style="display:block;height:100%;background:{{ s.fg }};width:{{ s.w }};"></span>
+                </sc-for>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:16px;">
+                <sc-for list="{{ mix }}" as="s" hint-placeholder-count="6">
+                  <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#aebdd2;">
+                    <span style="width:7px;height:7px;border-radius:2px;background:{{ s.fg }};display:block;"></span>{{ s.label }}
+                    <b style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:#eef3f9;">{{ s.pct }}</b>
+                  </span>
+                </sc-for>
+              </div>
+              <div style="display:flex;align-items:flex-end;gap:8px;height:62px;border-bottom:1px solid #253449;">
+                <sc-for list="{{ veloBuckets }}" as="v" hint-placeholder-count="4">
+                  <span style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;justify-content:flex-end;height:100%;">
+                    <b style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;">{{ v.val }}</b>
+                    <span style="width:100%;border-radius:3px 3px 0 0;background:#22a566;height:{{ v.h }};display:block;"></span>
+                  </span>
+                </sc-for>
+              </div>
+              <div style="display:flex;gap:8px;margin-top:6px;">
+                <sc-for list="{{ veloBuckets }}" as="v" hint-placeholder-count="4">
+                  <span style="flex:1;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6f7f96;">{{ v.label }}</span>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;min-width:0;">
+              <div style="font-size:12.5px;font-weight:700;margin-bottom:2px;">Batter tendencies</div>
+              <div style="font-size:11px;color:#6f7f96;margin-bottom:14px;">most-seen batters — click a name for the p30d profile</div>
+              <div style="display:grid;grid-template-columns:minmax(0,1.4fr) 52px 52px minmax(0,1fr) 46px;gap:8px;padding:0 2px 7px;border-bottom:1px solid #253449;">
+                <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">BATTER</span>
+                <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:right;">AB</span>
+                <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:right;">STR%</span>
+                <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">OUTCOME MIX</span>
+                <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:right;">ACC</span>
+              </div>
+              <sc-for list="{{ batters }}" as="b" hint-placeholder-count="6">
+                <div style="display:grid;grid-template-columns:minmax(0,1.4fr) 52px 52px minmax(0,1fr) 46px;gap:8px;align-items:center;padding:7px 2px;border-bottom:1px solid #1a2740;">
+                  <button onClick="{{ b.entity }}" style="border:0;background:transparent;padding:0;text-align:left;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;color:#eef3f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:underline;text-decoration-color:#31435f;text-underline-offset:3px;">{{ b.name }}</button>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ b.ab }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ b.str }}</span>
+                  <span style="display:flex;height:8px;border-radius:999px;overflow:hidden;background:#101b2e;">
+                    <sc-for list="{{ b.mix }}" as="m" hint-placeholder-count="4">
+                      <span style="display:block;height:100%;background:{{ m.fg }};width:{{ m.w }};"></span>
+                    </sc-for>
+                  </span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{{ b.accFg }};text-align:right;">{{ b.acc }}</span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="grid-column:1 / -1;border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;min-width:0;">
+              <div style="font-size:12.5px;font-weight:700;margin-bottom:2px;">Pitcher tendencies · past 30 days</div>
+              <div style="font-size:11px;color:#6f7f96;margin-bottom:14px;">workload, stuff and how the model has graded against them — click a name for the full profile</div>
+              <div style="display:grid;grid-template-columns:minmax(0,1.3fr) 64px 58px 58px 58px minmax(0,1fr) 108px 60px;gap:10px;padding:0 2px 7px;border-bottom:1px solid #253449;">
+                <sc-for list="{{ pitcherHead }}" as="h" hint-placeholder-count="8">
+                  <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:{{ h.a }};">{{ h.t }}</span>
+                </sc-for>
+              </div>
+              <sc-for list="{{ pitchers }}" as="p" hint-placeholder-count="6">
+                <div style="display:grid;grid-template-columns:minmax(0,1.3fr) 64px 58px 58px 58px minmax(0,1fr) 108px 60px;gap:10px;align-items:center;padding:7px 2px;border-bottom:1px solid #1a2740;">
+                  <button onClick="{{ p.entity }}" style="border:0;background:transparent;padding:0;text-align:left;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;color:#eef3f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-decoration:underline;text-decoration-color:#31435f;text-underline-offset:3px;">{{ p.name }}</button>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ p.pitches }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ p.k }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ p.whiff }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ p.velo }}</span>
+                  <span style="display:flex;align-items:flex-end;gap:3px;height:22px;">
+                    <sc-for list="{{ p.spark }}" as="s" hint-placeholder-count="10">
+                      <span style="flex:1;border-radius:2px 2px 0 0;background:{{ s.fg }};height:{{ s.h }};display:block;"></span>
+                    </sc-for>
+                  </span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ p.fatFg }};text-align:right;">{{ p.fatigue }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{{ p.accFg }};text-align:right;">{{ p.acc }}</span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap;margin:0 0 10px;">
+            <span style="font-size:15px;font-weight:800;letter-spacing:-.01em;">Prediction history</span>
+            <span style="font-size:11.5px;color:#6f7f96;">day → game → at-bat → pitch · stored server-side</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8493aa;">{{ historyNote }}</span>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:7px;">
+            <sc-for list="{{ days }}" as="d" hint-placeholder-count="3">
+              <div style="border:1px solid #253449;border-radius:12px;background:#141f33;overflow:hidden;">
+                <button onClick="{{ d.toggle }}" style="width:100%;display:grid;grid-template-columns:18px 150px 110px minmax(0,1fr) 150px 150px 120px;gap:14px;align-items:center;text-align:left;border:0;background:transparent;color:#eef3f9;font-family:inherit;padding:12px 14px;cursor:pointer;">
+                  <span style="font-size:15px;font-weight:700;color:#aebdd2;line-height:1;">{{ d.chev }}</span>
+                  <b style="font-size:13.5px;font-weight:800;">{{ d.label }}</b>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8493aa;">{{ d.games }}</span>
+                  <span style="font-size:11.5px;color:#6f7f96;">{{ d.note }}</span>
+                  <span style="display:flex;flex-direction:column;gap:3px;">
+                    <span style="display:flex;align-items:baseline;gap:6px;"><b style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:{{ d.accFg }};">{{ d.acc }} · {{ d.accPct }}</b><span style="font-size:10.5px;color:#6f7f96;">at-bat calls</span></span>
+                    <span style="height:5px;background:#101b2e;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ d.accFg }};width:{{ d.accW }};"></span></span>
+                  </span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#aebdd2;">{{ d.pitchAcc }} · {{ d.pitchAccPct }} <span style="font-size:10px;color:#6f7f96;">pitch</span></span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#aebdd2;text-align:right;">{{ d.mae }} <span style="font-size:10px;color:#6f7f96;">mph MAE</span></span>
+                </button>
+                <sc-if value="{{ d.open }}" hint-placeholder-val="{{ false }}">
+                  <div style="border-top:1px solid #253449;background:#101b2e;padding:10px 12px 12px;display:flex;flex-direction:column;gap:5px;">
+                    <sc-for list="{{ d.gameList }}" as="g" hint-placeholder-count="3">
+                      <div style="border:1px solid #1a2740;border-radius:10px;background:#141f33;overflow:hidden;">
+                        <button onClick="{{ g.toggle }}" style="width:100%;display:grid;grid-template-columns:16px 150px 96px minmax(0,1fr) 130px 110px;gap:12px;align-items:center;text-align:left;border:0;background:transparent;color:#eef3f9;font-family:inherit;padding:9px 11px;cursor:pointer;">
+                          <span style="font-size:13px;font-weight:700;color:#8493aa;line-height:1;">{{ g.chev }}</span>
+                          <b style="font-size:12.5px;font-weight:700;">{{ g.label }}</b>
+                          <span style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:700;">{{ g.score }}</span>
+                          <span style="font-size:11.5px;color:#6f7f96;">{{ g.note }}</span>
+                          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ g.accFg }};">{{ g.acc }} · {{ g.accPct }} <span style="font-size:10px;color:#6f7f96;">at-bat</span></span>
+                          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ g.mae }} <span style="font-size:10px;color:#6f7f96;">MAE</span></span>
+                        </button>
+                        <sc-if value="{{ g.open }}" hint-placeholder-val="{{ false }}">
+                          <div style="border-top:1px solid #1a2740;background:#0d1729;padding:9px 10px 11px;display:flex;flex-direction:column;gap:4px;">
+                            <sc-for list="{{ g.abs }}" as="ab" hint-placeholder-count="3">
+                              <div style="border:1px solid #1a2740;border-radius:9px;background:#141f33;overflow:hidden;">
+                                <button onClick="{{ ab.toggle }}" style="width:100%;display:grid;grid-template-columns:14px 34px minmax(0,1fr) minmax(0,1fr) 210px 96px 84px;gap:10px;align-items:center;text-align:left;border:0;background:transparent;color:#eef3f9;font-family:inherit;padding:8px 10px;cursor:pointer;">
+                                  <span style="font-size:12px;font-weight:700;color:#8493aa;line-height:1;">{{ ab.chev }}</span>
+                                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;">{{ ab.inn }}</span>
+                                  <span style="display:flex;align-items:center;gap:6px;min-width:0;">
+                                    <span style="font-size:9.5px;font-weight:800;color:#7fa0c4;">{{ ab.team }}</span>
+                                    <span style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ ab.batter }}</span>
+                                  </span>
+                                  <span style="font-size:12px;color:#aebdd2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ ab.pitcher }}</span>
+                                  <span style="display:flex;align-items:baseline;gap:6px;padding:3px 7px;border-radius:7px;background:{{ ab.callBg }};">
+                                    <b style="font-size:11.5px;font-weight:700;color:{{ ab.callFg }};">{{ ab.call }}</b>
+                                    <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ ab.callPct }}</span>
+                                    <span style="font-size:10px;color:#6f7f96;">{{ ab.actual }}</span>
+                                  </span>
+                                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ ab.pitches }}</span>
+                                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ ab.accFg }};text-align:right;">{{ ab.acc }} · {{ ab.accPct }}</span>
+                                </button>
+                                <sc-if value="{{ ab.open }}" hint-placeholder-val="{{ false }}">
+                                  <div style="border-top:1px solid #1a2740;background:#0d1729;padding:9px 10px 11px;">
+                                    <div style="display:grid;grid-template-columns:18px 38px 38px 130px minmax(0,1fr) 78px;gap:10px;padding:0 4px 5px;">
+                                      <sc-for list="{{ pitchHead }}" as="h" hint-placeholder-count="6">
+                                        <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:{{ h.a }};">{{ h.t }}</span>
+                                      </sc-for>
+                                    </div>
+                                    <sc-for list="{{ ab.pitchList }}" as="p" hint-placeholder-count="5">
+                                      <div style="display:grid;grid-template-columns:18px 38px 38px 130px minmax(0,1fr) 78px;gap:10px;align-items:center;padding:5px 4px;border-top:1px solid #141f33;">
+                                        <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6f7f96;">{{ p.n }}</span>
+                                        <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;">{{ p.count }}</span>
+                                        <span style="font-size:11px;font-weight:800;color:{{ p.typeFg }};">{{ p.type }}</span>
+                                        <span style="display:inline-flex;align-items:baseline;gap:6px;padding:2px 7px;border-radius:6px;background:{{ p.vBg }};">
+                                          <b style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:{{ p.vFg }};">{{ p.velo }}</b>
+                                          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ p.veloSub }}</span>
+                                        </span>
+                                        <span style="display:inline-flex;align-items:baseline;gap:6px;min-width:0;">
+                                          <b style="font-size:11.5px;font-weight:700;color:{{ p.rFg }};">{{ p.result }}</b>
+                                          <span style="font-size:10.5px;color:#6f7f96;">{{ p.called }}</span>
+                                          <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ p.pct }}</span>
+                                        </span>
+                                        <span style="text-align:right;"><span style="display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:5px;color:{{ p.gFg }};background:{{ p.gBg }};">{{ p.grade }}</span></span>
+                                      </div>
+                                    </sc-for>
+                                  </div>
+                                </sc-if>
+                              </div>
+                            </sc-for>
+                          </div>
+                        </sc-if>
+                      </div>
+                    </sc-for>
+                  </div>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        </sc-if>
+      </div>
+    </div>
+
+    <!-- ══════════════ PHONE ══════════════ -->
+    <div style="width:390px;flex:none;">
+      <div style="font-size:10px;font-weight:800;letter-spacing:.08em;color:#6f7f96;margin-bottom:8px;">PHONE · 390</div>
+      <div style="position:relative;width:390px;height:844px;border:1px solid #253449;border-radius:26px;background:#0c1424;overflow:hidden;">
+        <div class="phscroll" style="position:absolute;inset:0 0 62px 0;overflow:auto;">
+
+          <div style="position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:.6rem;padding:.6rem 14px;background:rgba(12,20,36,.92);backdrop-filter:blur(12px);border-bottom:1px solid #253449;">
+            <div style="display:flex;align-items:center;gap:.4rem;font-weight:800;font-size:1.02rem;letter-spacing:-.02em;"><span style="color:#22a566;font-size:.75rem;">◆</span>Pitch<span style="color:#22a566;">Hawk</span></div>
+            <div style="margin-left:auto;display:flex;align-items:center;gap:.4rem;font-size:.72rem;color:#8493aa;font-weight:600;">
+              <span style="width:6px;height:6px;border-radius:50%;background:#22a566;animation:ph-pulse 1.8s ease-in-out infinite;"></span>{{ liveText }}
+            </div>
+          </div>
+
+          <sc-if value="{{ isHome }}" hint-placeholder-val="{{ true }}">
+          <div style="padding:14px 14px 24px;">
+            <div style="background:#0a1322;border-radius:14px;padding:1.1rem 1.1rem;margin-bottom:14px;">
+              <span style="font-size:.72rem;font-weight:600;color:#9fb2c9;letter-spacing:.04em;text-transform:uppercase;">Today at a glance</span>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:.9rem;margin:.9rem 0 .9rem;">
+                <sc-for list="{{ glance }}" as="t" hint-placeholder-count="4">
+                  <div style="display:flex;flex-direction:column;">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:1.45rem;font-weight:800;">{{ t.big }}</span>
+                    <span style="font-size:.72rem;color:#9fb2c9;">{{ t.lbl }}</span>
+                  </div>
+                </sc-for>
+              </div>
+              <div style="font-size:.82rem;font-weight:600;color:#8fd3ad;">The model is reading every pitch.</div>
+            </div>
+
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:10px;">
+              <h2 style="font-size:1.15rem;font-weight:800;letter-spacing:-.02em;margin:0;">Today's games</h2>
+              <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6f7f96;">latest inning first</span>
+            </div>
+
+            <sc-for list="{{ groups }}" as="grp" hint-placeholder-count="3">
+              <div style="margin-bottom:14px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:7px;">
+                  <span style="font-size:9.5px;font-weight:800;letter-spacing:.08em;color:{{ grp.fg }};">{{ grp.title }}</span>
+                  <span style="flex:1;height:1px;background:#1a2740;"></span>
+                </div>
+                <div style="display:flex;flex-direction:column;gap:6px;">
+                  <sc-for list="{{ grp.games }}" as="g" hint-placeholder-count="4">
+                    <div style="border:1px solid #253449;border-radius:12px;background:#141f33;overflow:hidden;">
+                      <div style="display:flex;flex-direction:column;gap:7px;padding:10px 11px;">
+                        <div style="display:flex;align-items:center;gap:8px;">
+                          <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;padding:2px 6px;border-radius:5px;color:{{ g.chipFg }};background:{{ g.chipBg }};">{{ g.chipText }}</span>
+                          <button onClick="{{ g.jump }}" style="border:0;background:transparent;padding:0;cursor:pointer;font-family:inherit;font-size:13px;font-weight:800;color:#eef3f9;">{{ g.label }}</button>
+                          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:16px;font-weight:700;color:{{ g.scoreFg }};">{{ g.score }}</span>
+                          <button onClick="{{ g.toggle }}" style="border:0;background:transparent;color:#8493aa;font-size:13px;font-weight:700;cursor:pointer;padding:0 2px;line-height:1;">{{ g.chev }}</button>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;">
+                          <span style="position:relative;width:28px;height:21px;flex:none;">
+                            <span style="position:absolute;top:0;left:9px;width:9px;height:9px;transform:rotate(45deg);border:1px solid #31435f;border-radius:2px;background:{{ g.b2 }};"></span>
+                            <span style="position:absolute;top:10px;left:0px;width:9px;height:9px;transform:rotate(45deg);border:1px solid #31435f;border-radius:2px;background:{{ g.b3 }};"></span>
+                            <span style="position:absolute;top:10px;left:18px;width:9px;height:9px;transform:rotate(45deg);border:1px solid #31435f;border-radius:2px;background:{{ g.b1 }};"></span>
+                          </span>
+                          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;">{{ g.count }} · {{ g.outs }}</span>
+                          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#6f7f96;">{{ g.sub }}</span>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:14px;padding-top:7px;border-top:1px solid #1a2740;">
+                          <span style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:9px;font-weight:800;color:#6f7f96;">ML</span><b style="font-size:12px;font-weight:800;">{{ g.mlPick }}</b><span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:{{ g.mlFg }};">{{ g.mlProb }}</span></span>
+                          <span style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:9px;font-weight:800;color:#6f7f96;">TOT</span><b style="font-size:12px;font-weight:800;">{{ g.totPick }}</b><span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:{{ g.totFg }};">{{ g.totProb }}</span></span>
+                          <button onClick="{{ g.jump }}" style="margin-left:auto;border:0;background:transparent;color:#4ade80;font-family:inherit;font-size:11.5px;font-weight:700;cursor:pointer;padding:0;">{{ g.cta }}</button>
+                        </div>
+                      </div>
+                      <sc-if value="{{ g.open }}" hint-placeholder-val="{{ false }}">
+                        <div style="border-top:1px solid #253449;background:#101b2e;padding:10px 11px 11px;">
+                          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;">
+                            <sc-for list="{{ g.meta }}" as="m" hint-placeholder-count="8">
+                              <span style="display:flex;flex-direction:column;gap:1px;">
+                                <span style="font-size:9px;font-weight:800;letter-spacing:.06em;color:#6f7f96;">{{ m.k }}</span>
+                                <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#eef3f9;">{{ m.v }}</span>
+                              </span>
+                            </sc-for>
+                          </div>
+                          <button onClick="{{ g.jump }}" style="margin-top:10px;width:100%;min-height:44px;border:1px solid #1f3d2b;background:#12301f;color:#4ade80;font-family:inherit;font-size:12px;font-weight:700;border-radius:10px;cursor:pointer;">Go to Live Feed →</button>
+                        </div>
+                      </sc-if>
+                    </div>
+                  </sc-for>
+                </div>
+              </div>
+            </sc-for>
+          </div>
+          </sc-if>
+
+          <sc-if value="{{ isLive }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:14px 14px 24px;">
+            <div style="display:flex;gap:6px;overflow:auto;margin-bottom:11px;padding-bottom:2px;">
+              <sc-for list="{{ heroChips }}" as="c" hint-placeholder-count="5">
+                <button onClick="{{ c.go }}" style="flex:none;border:1px solid {{ c.bd }};background:{{ c.bg }};color:{{ c.fg }};font-family:inherit;font-weight:600;font-size:11.5px;padding:7px 12px;border-radius:999px;cursor:pointer;white-space:nowrap;">{{ c.label }}</button>
+              </sc-for>
+            </div>
+            <div style="border:1px solid #1f3d2b;border-radius:14px;background:linear-gradient(180deg,#12301f,#0f1f18);padding:14px 14px;margin-bottom:14px;">
+              <div style="display:flex;align-items:center;gap:8px;margin-bottom:11px;">
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:.09em;color:#4ade80;background:rgba(74,222,128,.14);padding:3px 6px;border-radius:5px;">{{ heroBadge }}</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#82ae92;">{{ heroMeta }}</span>
+              </div>
+              <div style="display:flex;align-items:baseline;gap:9px;flex-wrap:wrap;margin-bottom:4px;">
+                <span style="font-size:24px;font-weight:800;letter-spacing:-.03em;line-height:1;">{{ heroLabel }}</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:600;color:#4ade80;line-height:1;">{{ heroPct }}</span>
+              </div>
+              <div style="font-size:12px;color:#82ae92;margin-bottom:12px;">{{ heroSubMobile }}</div>
+              <div style="display:flex;flex-direction:column;gap:5px;">
+                <sc-for list="{{ heroDist }}" as="r" hint-placeholder-count="3">
+                  <div style="display:grid;grid-template-columns:88px minmax(0,1fr) 40px;gap:9px;align-items:center;">
+                    <span style="font-size:12px;color:#82ae92;">{{ r.label }}</span>
+                    <span style="height:7px;background:#0d1729;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ r.fill }};width:{{ r.w }};"></span></span>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;text-align:right;">{{ r.pct }}</span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:9px;">
+              <span style="font-size:13.5px;font-weight:800;">All of today's games</span>
+              <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6f7f96;">184/271 calls</span>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <sc-for list="{{ liveFeedGames }}" as="g" hint-placeholder-count="6">
+                <div style="border:1px solid {{ g.bd }};border-radius:12px;background:#141f33;overflow:hidden;">
+                  <button onClick="{{ g.toggle }}" style="width:100%;display:flex;flex-direction:column;gap:7px;text-align:left;border:0;background:transparent;color:#eef3f9;font-family:inherit;padding:10px 11px;cursor:pointer;">
+                    <span style="display:flex;align-items:center;gap:8px;width:100%;">
+                      <span style="font-size:13px;color:#aebdd2;">{{ g.chev }}</span>
+                      <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;padding:2px 6px;border-radius:5px;color:{{ g.chipFg }};background:{{ g.chipBg }};">{{ g.chipText }}</span>
+                      <b style="font-size:13px;font-weight:800;">{{ g.label }}</b>
+                      <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:15px;font-weight:700;color:{{ g.scoreFg }};">{{ g.score }}</span>
+                    </span>
+                    <span style="display:flex;align-items:center;gap:12px;width:100%;">
+                      <span style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:9px;font-weight:800;color:#6f7f96;">ML</span><b style="font-size:11.5px;font-weight:800;">{{ g.mlPick }}</b><span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ g.mlFg }};">{{ g.mlProb }}</span></span>
+                      <span style="display:flex;align-items:baseline;gap:5px;"><span style="font-size:9px;font-weight:800;color:#6f7f96;">TOT</span><b style="font-size:11.5px;font-weight:800;">{{ g.totPick }}</b><span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ g.totFg }};">{{ g.totProb }}</span></span>
+                      <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ g.accFg }};">{{ g.acc }} · {{ g.accPct }}</span>
+                    </span>
+                    <span style="display:flex;align-items:center;gap:7px;width:100%;min-width:0;">
+                      <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:{{ g.callChipFg }};background:{{ g.callChipBg }};padding:2px 5px;border-radius:5px;white-space:nowrap;">{{ g.callChip }}</span>
+                      <span style="font-size:11.5px;color:#aebdd2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ g.callText }}</span>
+                    </span>
+                  </button>
+                  <sc-if value="{{ g.open }}" hint-placeholder-val="{{ false }}">
+                    <div style="border-top:1px solid #253449;background:#101b2e;padding:10px 11px 11px;">
+                      <div style="font-size:9.5px;font-weight:800;letter-spacing:.06em;color:#6f7f96;margin-bottom:8px;">{{ g.bodyTitle }}</div>
+                      <div style="display:flex;flex-direction:column;gap:5px;">
+                        <sc-for list="{{ g.rows }}" as="r" hint-placeholder-count="3">
+                          <div style="border:1px solid #1a2740;border-radius:9px;background:#141f33;padding:8px 9px;display:flex;flex-direction:column;gap:5px;">
+                            <span style="display:flex;align-items:center;gap:7px;">
+                              <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#6f7f96;">{{ r.inn }}</span>
+                              <span style="font-size:9.5px;font-weight:800;color:#7fa0c4;">{{ r.team }}</span>
+                              <span style="font-size:12px;font-weight:600;">{{ r.batter }}</span>
+                              <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:{{ r.accFg }};">{{ r.acc }} · {{ r.accPct }}</span>
+                            </span>
+                            <span style="display:flex;align-items:center;gap:7px;">
+                              <span style="display:flex;align-items:baseline;gap:5px;padding:3px 6px;border-radius:6px;background:{{ r.callBg }};">
+                                <b style="font-size:11px;font-weight:700;color:{{ r.callFg }};">{{ r.call }}</b>
+                                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ r.callPct }}</span>
+                                <span style="font-size:10px;color:#6f7f96;">{{ r.actual }}</span>
+                              </span>
+                              <span style="margin-left:auto;font-size:10.5px;color:#6f7f96;">vs {{ r.pitcher }}</span>
+                            </span>
+                          </div>
+                        </sc-for>
+                      </div>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          </sc-if>
+
+          <sc-if value="{{ isData }}" hint-placeholder-val="{{ false }}">
+          <div style="padding:14px 14px 24px;">
+            <h1 style="font-size:1.3rem;font-weight:800;letter-spacing:-.02em;margin:0 0 .3rem;">Data feed</h1>
+            <p style="margin:0 0 12px;color:#8493aa;font-size:.86rem;">Analytics up top, graded history below.</p>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;">
+              <sc-for list="{{ ranges }}" as="r" hint-placeholder-count="5">
+                <button onClick="{{ r.go }}" style="border:1px solid {{ r.bd }};background:{{ r.bg }};color:{{ r.fg }};font-family:inherit;font-weight:600;font-size:11.5px;padding:7px 12px;border-radius:999px;cursor:pointer;">{{ r.label }}</button>
+              </sc-for>
+            </div>
+
+            <div style="border:1px solid #253449;border-radius:12px;background:#101b2e;padding:10px 11px;margin-bottom:12px;display:flex;flex-direction:column;gap:9px;">
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                <sc-for list="{{ dfSelects }}" as="s" hint-placeholder-count="2">
+                  <span style="display:flex;flex-direction:column;gap:4px;min-width:0;">
+                    <span style="font-size:9px;font-weight:800;letter-spacing:.06em;color:#6f7f96;">{{ s.label }}</span>
+                    <select value="{{ s.value }}" onChange="{{ s.onChange }}" style="background:#141f33;color:#eef3f9;border:1px solid {{ s.bd }};border-radius:8px;font-family:inherit;font-size:12px;font-weight:600;padding:9px 8px;width:100%;cursor:pointer;">
+                      <sc-for list="{{ s.options }}" as="o" hint-placeholder-count="6">
+                        <option value="{{ o.v }}">{{ o.t }}</option>
+                      </sc-for>
+                    </select>
+                  </span>
+                </sc-for>
+              </div>
+              <sc-for list="{{ dfSegs }}" as="sg" hint-placeholder-count="2">
+                <span style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                  <span style="font-size:9px;font-weight:800;letter-spacing:.06em;color:#6f7f96;width:34px;">{{ sg.label }}</span>
+                  <sc-for list="{{ sg.items }}" as="i" hint-placeholder-count="3">
+                    <button onClick="{{ i.go }}" style="border:1px solid {{ i.bd }};background:{{ i.bg }};color:{{ i.fg }};font-family:inherit;font-weight:600;font-size:11.5px;padding:7px 12px;border-radius:999px;cursor:pointer;">{{ i.label }}</button>
+                  </sc-for>
+                </span>
+              </sc-for>
+              <span style="display:flex;align-items:center;gap:9px;">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;line-height:1.4;">{{ dfSummary }}</span>
+                <sc-if value="{{ dfDirty }}" hint-placeholder-val="{{ false }}">
+                  <button onClick="{{ dfClear }}" style="margin-left:auto;border:1px solid #253449;background:transparent;color:#aebdd2;font-family:inherit;font-size:11.5px;font-weight:600;padding:6px 11px;border-radius:999px;cursor:pointer;white-space:nowrap;">Clear</button>
+                </sc-if>
+              </span>
+            </div>
+
+            <div style="border:1px solid #1f3d2b;border-radius:12px;background:#141f33;padding:12px 13px;margin-bottom:12px;">
+              <div style="font-size:12px;font-weight:700;margin-bottom:2px;">Profitable trends</div>
+              <div style="font-size:10.5px;color:#6f7f96;margin-bottom:11px;">edge vs the window baseline</div>
+              <sc-for list="{{ trends }}" as="t" hint-placeholder-count="6">
+                <div style="display:flex;flex-direction:column;gap:4px;padding:8px 0;border-bottom:1px solid #1a2740;">
+                  <span style="display:flex;align-items:center;gap:7px;">
+                    <button onClick="{{ t.entity }}" style="border:0;background:transparent;padding:0;cursor:pointer;font-family:inherit;font-size:12.5px;font-weight:700;color:#eef3f9;">{{ t.name }}</button>
+                    <span style="font-size:10px;font-weight:800;color:{{ t.roleFg }};">{{ t.role }} {{ t.team }}</span>
+                    <span style="font-size:10.5px;color:#6f7f96;">{{ t.side }}</span>
+                    <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{{ t.edgeFg }};">{{ t.edge }}</span>
+                  </span>
+                  <span style="display:flex;align-items:center;gap:9px;">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:{{ t.callsFg }};">{{ t.calls }} · {{ t.callsPct }}</span>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:{{ t.unitsFg }};">{{ t.units }}</span>
+                    <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:{{ t.streakFg }};">{{ t.streak }}</span>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:14px;">
+              <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="5">
+                <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:10px 11px;display:flex;flex-direction:column;gap:4px;min-width:0;">
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:700;color:{{ k.fg }};line-height:1;">{{ k.big }}</span>
+                  <span style="font-size:9.5px;font-weight:700;letter-spacing:.05em;color:#8493aa;text-transform:uppercase;">{{ k.label }}</span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:12px 13px;margin-bottom:10px;">
+              <div style="font-size:12px;font-weight:700;margin-bottom:2px;">Accuracy over time by market</div>
+              <div style="font-size:10.5px;color:#6f7f96;margin-bottom:12px;">per game day</div>
+              <div style="display:flex;flex-direction:column;gap:10px;">
+                <sc-for list="{{ accRows }}" as="m" hint-placeholder-count="4">
+                  <div style="display:grid;grid-template-columns:88px minmax(0,1fr) 62px;gap:9px;align-items:end;">
+                    <span style="font-size:11px;color:#aebdd2;padding-bottom:2px;">{{ m.label }}</span>
+                    <span style="display:flex;align-items:flex-end;gap:2px;height:34px;">
+                      <sc-for list="{{ m.bars }}" as="b" hint-placeholder-count="14">
+                        <span style="flex:1;min-width:2px;border-radius:2px 2px 0 0;background:{{ b.fg }};height:{{ b.h }};display:block;"></span>
+                      </sc-for>
+                    </span>
+                    <span style="display:flex;flex-direction:column;align-items:flex-end;">
+                      <b style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;">{{ m.now }}</b>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:{{ m.dFg }};">{{ m.delta }}</span>
+                    </span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:12px 13px;margin-bottom:10px;">
+              <div style="font-size:12px;font-weight:700;margin-bottom:2px;">Accuracy by count</div>
+              <div style="font-size:10.5px;color:#6f7f96;margin-bottom:12px;">pitch-result calls</div>
+              <div style="display:flex;flex-direction:column;gap:6px;">
+                <sc-for list="{{ countRows }}" as="c" hint-placeholder-count="8">
+                  <div style="display:grid;grid-template-columns:38px minmax(0,1fr) 70px;gap:9px;align-items:center;">
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;">{{ c.label }}</span>
+                    <span style="height:8px;background:#101b2e;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ c.fg }};width:{{ c.w }};"></span></span>
+                    <span style="display:flex;gap:6px;justify-content:flex-end;font-family:'IBM Plex Mono',monospace;font-size:11px;"><b style="font-weight:600;">{{ c.pct }}</b><span style="color:#6f7f96;">{{ c.n }}</span></span>
+                  </div>
+                </sc-for>
+              </div>
+            </div>
+
+            <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:12px 13px;margin-bottom:16px;">
+              <div style="font-size:12px;font-weight:700;margin-bottom:2px;">Pitcher tendencies · p30d</div>
+              <div style="font-size:10.5px;color:#6f7f96;margin-bottom:12px;">tap a name for the full profile</div>
+              <sc-for list="{{ pitchers }}" as="p" hint-placeholder-count="6">
+                <div style="display:grid;grid-template-columns:minmax(0,1fr) 46px 46px 52px;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid #1a2740;">
+                  <button onClick="{{ p.entity }}" style="border:0;background:transparent;padding:0;text-align:left;cursor:pointer;font-family:inherit;font-size:12px;font-weight:600;color:#eef3f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ p.name }}</button>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#aebdd2;text-align:right;">{{ p.k }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#aebdd2;text-align:right;">{{ p.velo }}</span>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;font-weight:600;color:{{ p.accFg }};text-align:right;">{{ p.acc }}</span>
+                </div>
+              </sc-for>
+            </div>
+
+            <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:9px;">
+              <span style="font-size:13.5px;font-weight:800;">Prediction history</span>
+              <span style="margin-left:auto;font-size:10px;color:#6f7f96;">day → game → at-bat → pitch</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <sc-for list="{{ days }}" as="d" hint-placeholder-count="3">
+                <div style="border:1px solid #253449;border-radius:12px;background:#141f33;overflow:hidden;">
+                  <button onClick="{{ d.toggle }}" style="width:100%;display:flex;flex-direction:column;gap:6px;text-align:left;border:0;background:transparent;color:#eef3f9;font-family:inherit;padding:10px 11px;cursor:pointer;">
+                    <span style="display:flex;align-items:center;gap:8px;width:100%;">
+                      <span style="font-size:13px;color:#aebdd2;">{{ d.chev }}</span>
+                      <b style="font-size:12.5px;font-weight:800;">{{ d.label }}</b>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#8493aa;">{{ d.games }}</span>
+                      <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:600;color:{{ d.accFg }};">{{ d.acc }} · {{ d.accPct }}</span>
+                    </span>
+                    <span style="height:5px;width:100%;background:#101b2e;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ d.accFg }};width:{{ d.accW }};"></span></span>
+                  </button>
+                  <sc-if value="{{ d.open }}" hint-placeholder-val="{{ false }}">
+                    <div style="border-top:1px solid #253449;background:#101b2e;padding:9px 10px 10px;display:flex;flex-direction:column;gap:5px;">
+                      <sc-for list="{{ d.gameList }}" as="g" hint-placeholder-count="3">
+                        <div style="border:1px solid #1a2740;border-radius:10px;background:#141f33;overflow:hidden;">
+                          <button onClick="{{ g.toggle }}" style="width:100%;display:flex;align-items:center;gap:8px;text-align:left;border:0;background:transparent;color:#eef3f9;font-family:inherit;padding:9px 10px;cursor:pointer;">
+                            <span style="font-size:12px;color:#8493aa;">{{ g.chev }}</span>
+                            <b style="font-size:12px;font-weight:700;">{{ g.label }}</b>
+                            <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;font-weight:700;">{{ g.score }}</span>
+                            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:{{ g.accFg }};">{{ g.acc }} · {{ g.accPct }}</span>
+                          </button>
+                          <sc-if value="{{ g.open }}" hint-placeholder-val="{{ false }}">
+                            <div style="border-top:1px solid #1a2740;background:#0d1729;padding:8px 9px 9px;display:flex;flex-direction:column;gap:5px;">
+                              <sc-for list="{{ g.abs }}" as="ab" hint-placeholder-count="3">
+                                <div style="border:1px solid #1a2740;border-radius:9px;background:#141f33;overflow:hidden;">
+                                  <button onClick="{{ ab.toggle }}" style="width:100%;display:flex;flex-direction:column;gap:5px;text-align:left;border:0;background:transparent;color:#eef3f9;font-family:inherit;padding:8px 9px;cursor:pointer;">
+                                    <span style="display:flex;align-items:center;gap:7px;width:100%;">
+                                      <span style="font-size:11px;color:#8493aa;">{{ ab.chev }}</span>
+                                      <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#6f7f96;">{{ ab.inn }}</span>
+                                      <span style="font-size:12px;font-weight:600;">{{ ab.batter }}</span>
+                                      <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:{{ ab.accFg }};">{{ ab.acc }} · {{ ab.accPct }}</span>
+                                    </span>
+                                    <span style="display:flex;align-items:baseline;gap:5px;padding:3px 6px;border-radius:6px;background:{{ ab.callBg }};">
+                                      <b style="font-size:11px;font-weight:700;color:{{ ab.callFg }};">{{ ab.call }}</b>
+                                      <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ ab.callPct }}</span>
+                                      <span style="font-size:10px;color:#6f7f96;">{{ ab.actual }}</span>
+                                    </span>
+                                  </button>
+                                  <sc-if value="{{ ab.open }}" hint-placeholder-val="{{ false }}">
+                                    <div style="border-top:1px solid #1a2740;background:#0d1729;padding:8px 9px 9px;display:flex;flex-direction:column;gap:6px;">
+                                      <sc-for list="{{ ab.pitchList }}" as="p" hint-placeholder-count="5">
+                                        <span style="display:flex;align-items:center;gap:7px;">
+                                          <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:#6f7f96;">#{{ p.n }}</span>
+                                          <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#aebdd2;">{{ p.count }}</span>
+                                          <span style="font-size:10.5px;font-weight:800;color:{{ p.typeFg }};">{{ p.type }}</span>
+                                          <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ p.vFg }};">{{ p.velo }}</span>
+                                          <span style="font-size:11px;color:#aebdd2;">{{ p.result }}</span>
+                                          <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:10px;font-weight:600;padding:2px 6px;border-radius:5px;color:{{ p.gFg }};background:{{ p.gBg }};">{{ p.grade }}</span>
+                                        </span>
+                                      </sc-for>
+                                    </div>
+                                  </sc-if>
+                                </div>
+                              </sc-for>
+                            </div>
+                          </sc-if>
+                        </div>
+                      </sc-for>
+                    </div>
+                  </sc-if>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+          </sc-if>
+
+        </div>
+
+        <div style="position:absolute;left:0;right:0;bottom:0;display:flex;gap:.3rem;background:rgba(12,20,36,.92);backdrop-filter:blur(12px);border-top:1px solid #253449;padding:.35rem .5rem 1rem;">
+          <sc-for list="{{ tabs }}" as="t" hint-placeholder-count="3">
+            <button onClick="{{ t.go }}" style="flex:1;min-height:44px;border:0;cursor:pointer;font-family:inherit;font-weight:700;font-size:.84rem;border-radius:12px;background:{{ t.bg }};color:{{ t.fg }};">{{ t.label }}</button>
+          </sc-for>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <sc-if value="{{ entityOpen }}" hint-placeholder-val="{{ false }}">
+    <div style="position:fixed;inset:0;z-index:80;background:rgba(6,11,20,.72);display:flex;align-items:center;justify-content:center;padding:40px;">
+      <div style="width:640px;max-width:100%;max-height:82vh;overflow:auto;border:1px solid #253449;border-radius:16px;background:#0c1424;box-shadow:0 24px 70px rgba(0,0,0,.5);">
+        <div style="display:flex;align-items:center;gap:12px;padding:16px 18px;border-bottom:1px solid #253449;position:sticky;top:0;background:#0c1424;">
+          <span style="font-size:10px;font-weight:800;letter-spacing:.07em;color:#6f7f96;">{{ entityKind }} · PAST 30 DAYS</span>
+          <b style="font-size:16px;font-weight:800;">{{ entityName }}</b>
+          <button onClick="{{ closeEntity }}" style="margin-left:auto;border:1px solid #253449;background:#1b2942;color:#aebdd2;font-family:inherit;font-size:12px;font-weight:700;padding:5px 11px;border-radius:999px;cursor:pointer;">Close</button>
+        </div>
+        <div style="padding:16px 18px 20px;">
+          <div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px;">
+            <sc-for list="{{ entityStats }}" as="s" hint-placeholder-count="4">
+              <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:11px 12px;display:flex;flex-direction:column;gap:4px;">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:20px;font-weight:700;color:{{ s.fg }};line-height:1;">{{ s.big }}</span>
+                <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:#8493aa;text-transform:uppercase;">{{ s.label }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;margin-bottom:12px;">
+            <div style="font-size:12px;font-weight:700;margin-bottom:12px;">Model accuracy against this {{ entityLower }}, by day</div>
+            <div style="display:flex;align-items:flex-end;gap:3px;height:56px;">
+              <sc-for list="{{ entityBars }}" as="b" hint-placeholder-count="30">
+                <span style="flex:1;border-radius:2px 2px 0 0;background:{{ b.fg }};height:{{ b.h }};display:block;"></span>
+              </sc-for>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:7px;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6f7f96;"><span>30d ago</span><span>today</span></div>
+          </div>
+          <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;">
+            <div style="font-size:12px;font-weight:700;margin-bottom:10px;">Tendencies</div>
+            <sc-for list="{{ entityRows }}" as="r" hint-placeholder-count="5">
+              <div style="display:grid;grid-template-columns:120px minmax(0,1fr) 52px;gap:10px;align-items:center;padding:5px 0;">
+                <span style="font-size:12px;color:#aebdd2;">{{ r.label }}</span>
+                <span style="height:8px;background:#101b2e;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ r.fg }};width:{{ r.w }};"></span></span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;text-align:right;">{{ r.val }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </div>
+  </sc-if>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1660,&quot;height&quot;:1400}}">
+class Component extends DCLogic {
+  state = {
+    view: "home",
+    open: { "g-nym": true },
+    lfOpen: { "g-nym": true, "g-sd": true },
+    dfOpen: { "d-0": true, "d-0/g-0": true, "d-0/g-0/ab-0": true },
+    range: "7 days",
+    entity: null,
+    heroSel: "top",
+    dfTeam: "",
+    dfPlayer: "",
+    dfSide: "all",
+    dfRole: "all",
+  };
+
+  TRENDS = [
+    { name:"F. Alvarez", role:"batter", team:"NYM", side:"home", calls:"41/54", edge:"+11.4", units:"+6.2", streak:"W5", note:"model beats its own baseline in 0-2 and 1-2 counts" },
+    { name:"G. Cole", role:"pitcher", team:"NYY", side:"home", calls:"63/84", edge:"+9.8", units:"+5.4", streak:"W3", note:"velo calls inside 0.9 mph across 4 straight starts" },
+    { name:"J. Rodríguez", role:"batter", team:"SEA", side:"home", calls:"38/56", edge:"+6.1", units:"+3.1", streak:"W2", note:"in-play calls land at 68% at home, 51% on the road" },
+    { name:"Y. Kikuchi", role:"pitcher", team:"TOR", side:"away", calls:"49/70", edge:"+5.7", units:"+2.8", streak:"W4", note:"AB-pitches O/U hits 71% away from the Rogers Centre" },
+    { name:"M. Betts", role:"batter", team:"LAD", side:"home", calls:"34/48", edge:"+4.9", units:"+2.3", streak:"W2", note:"strike/foul reads hold up against right-handed relief" },
+    { name:"L. Castillo", role:"pitcher", team:"SEA", side:"away", calls:"41/68", edge:"−4.2", units:"−2.6", streak:"L3", note:"fatigue curve is steeper than the published baseline" },
+    { name:"B. Nimmo", role:"batter", team:"NYM", side:"away", calls:"22/46", edge:"−7.5", units:"−3.9", streak:"L4", note:"walk calls under-fire in three-ball counts" },
+  ];
+
+  HERO = {
+    "g-nym": { label:"Strike / foul", pct:"71%", batter:"Francisco Alvarez", pitcher:"Raisel Iglesias", meta:"NYM @ ATL · ▼9 · 2-1",
+      dist:[["Strike / foul","71%"],["Ball","21%"],["In play","8%"]], velo:"96.2", proj:"4.6", acc:"14/19", accPct:"74%", seen:5, abCount:"▼9 · 2-1 count · 5 pitches seen", abStat:"pitch 4/5 · 80% · MAE 1.2" },
+    "g-sd": { label:"Ball", pct:"66%", batter:"Manny Machado", pitcher:"Blake Treinen", meta:"SD @ LAD · ▲8 · 0-2",
+      dist:[["Ball","66%"],["Strike / foul","27%"],["In play","7%"]], velo:"93.8", proj:"4.1", acc:"11/16", accPct:"69%", seen:3, abCount:"▲8 · 0-2 count · 3 pitches seen", abStat:"pitch 2/3 · 67% · MAE 1.5" },
+    "g-hou": { label:"In play", pct:"52%", batter:"Julio Rodríguez", pitcher:"Framber Valdez", meta:"HOU @ SEA · ▼6 · 1-1",
+      dist:[["In play","52%"],["Strike / foul","33%"],["Ball","15%"]], velo:"94.4", proj:"4.3", acc:"9/14", accPct:"64%", seen:2, abCount:"▼6 · 1-1 count · 2 pitches seen", abStat:"pitch 1/2 · 50% · MAE 1.6" },
+    "g-bos": { label:"Ball", pct:"63%", batter:"Rafael Devers", pitcher:"Gerrit Cole", meta:"BOS @ NYY · ▲3 · 3-1",
+      dist:[["Ball","63%"],["Strike / foul","29%"],["In play","8%"]], velo:"97.1", proj:"4.2", acc:"5/8", accPct:"63%", seen:4, abCount:"▲3 · 3-1 count · 4 pitches seen", abStat:"pitch 3/4 · 75% · MAE 1.1" },
+  };
+
+  C = { txt:"#eef3f9", dim:"#aebdd2", mut:"#8493aa", faint:"#6f7f96", grn:"#4ade80", amb:"#f0c063", red:"#ff9b8f", acc:"#22a566" };
+
+  GAMES = [
+    { id:"g-nym", away:"NYM", home:"ATL", as:4, hs:2, state:"live", inn:"BOT 9", innSort:18.5, count:"2-1", outs:"2 out", bases:[1,0,1],
+      ml:["NYM","78%"], tot:["U 8.5","61%"], venue:"Truist Park", weather:"Clear · 81°F", wind:"7 mph out to LF", ump:"Pat Hoberg", first:"7:20 PM ET", att:"41,904", roof:"Open",
+      call:["TOP CALL","Strike / foul 71% · F. Alvarez"], acc:"14/19", accW:"74%",
+      rows:[["▼9","NYM","F. Alvarez","R. Iglesias","Strike / foul","71%","→ pending",null,"4 / 4.6","3/4"],
+            ["▲9","ATL","M. Ozuna","E. Diaz","Strikeout","64%","→ strikeout",true,"5 / 4.2","4/5"],
+            ["▼8","NYM","B. Nimmo","A. Minter","Out","58%","→ walk",false,"6 / 4.9","3/6"]] },
+    { id:"g-sd", away:"SD", home:"LAD", as:1, hs:1, state:"live", inn:"TOP 8", innSort:16, count:"0-2", outs:"1 out", bases:[0,1,0],
+      ml:["LAD","64%"], tot:["O 8.5","57%"], venue:"Dodger Stadium", weather:"Clear · 74°F", wind:"4 mph in from CF", ump:"Lance Barksdale", first:"9:10 PM ET", att:"52,110", roof:"Open",
+      call:["TOP CALL","Ball 66% · M. Machado"], acc:"11/16", accW:"69%",
+      rows:[["▲8","SD","M. Machado","B. Treinen","Ball","66%","→ pending",null,"3 / 4.1","2/3"],
+            ["▼7","LAD","M. Betts","R. Suarez","Out","61%","→ out",true,"4 / 3.8","3/4"],
+            ["▲7","SD","F. Tatis Jr.","B. Treinen","Strikeout","55%","→ single",false,"6 / 4.4","3/6"]] },
+    { id:"g-hou", away:"HOU", home:"SEA", as:3, hs:5, state:"live", inn:"BOT 6", innSort:12.5, count:"1-1", outs:"0 out", bases:[1,1,0],
+      ml:["SEA","71%"], tot:["U 7.5","54%"], venue:"T-Mobile Park", weather:"Overcast · 66°F", wind:"—", ump:"Alan Porter", first:"9:40 PM ET", att:"—", roof:"Closed",
+      call:["TOP CALL","In play 52% · J. Rodríguez"], acc:"9/14", accW:"64%",
+      rows:[["▼6","SEA","J. Rodríguez","F. Valdez","In play","52%","→ pending",null,"2 / 4.3","1/2"],
+            ["▲6","HOU","Y. Alvarez","L. Castillo","Strike / foul","69%","→ strike",true,"5 / 4.0","4/5"],
+            ["▼5","SEA","C. Raleigh","F. Valdez","Walk","47%","→ strikeout",false,"5 / 4.5","2/5"]] },
+    { id:"g-bos", away:"BOS", home:"NYY", as:0, hs:2, state:"live", inn:"TOP 3", innSort:5, count:"3-1", outs:"2 out", bases:[0,0,0],
+      ml:["NYY","69%"], tot:["O 9.5","58%"], venue:"Yankee Stadium", weather:"Partly cloudy · 78°F", wind:"11 mph out to RF", ump:"—", first:"7:05 PM ET", att:"46,320", roof:"Open",
+      call:["TOP CALL","Ball 63% · R. Devers"], acc:"5/8", accW:"63%",
+      rows:[["▲3","BOS","R. Devers","G. Cole","Ball","63%","→ pending",null,"4 / 4.2","3/4"],
+            ["▼2","NYY","A. Judge","B. Bello","Strikeout","58%","→ home run",false,"4 / 4.1","2/4"],
+            ["▲2","BOS","J. Abreu","G. Cole","Out","61%","→ out",true,"3 / 3.9","3/3"]] },
+    { id:"g-mil", away:"MIL", home:"CHC", as:6, hs:3, state:"final", inn:"FINAL", innSort:-1, count:"—", outs:"—", bases:null,
+      ml:["MIL","57%"], tot:["O 8.5","55%"], venue:"Wrigley Field", weather:"Sunny · 84°F", wind:"14 mph out to CF", ump:"Mark Wegner", first:"2:20 PM ET", att:"38,455", roof:"Open",
+      call:["GRADED","Called MIL · won"], acc:"31/44", accW:"70%",
+      rows:[["▼9","CHC","D. Swanson","T. Megill","Strikeout","67%","→ strikeout",true,"4 / 4.3","4/4"],
+            ["▲9","MIL","W. Contreras","P. Wicks","Out","55%","→ double",false,"5 / 4.0","3/5"],
+            ["▼8","CHC","I. Happ","J. Payamps","Out","62%","→ out",true,"3 / 3.7","2/3"]] },
+    { id:"g-tor", away:"TOR", home:"BAL", as:2, hs:7, state:"final", inn:"FINAL", innSort:-1, count:"—", outs:"—", bases:null,
+      ml:["BAL","62%"], tot:["U 9.0","52%"], venue:"Oriole Park at Camden Yards", weather:"Clear · 79°F", wind:"6 mph in from LF", ump:"Tripp Gibson", first:"1:05 PM ET", att:"29,880", roof:"Open",
+      call:["GRADED","Called BAL · won"], acc:"28/41", accW:"68%",
+      rows:[["▼8","BAL","G. Henderson","Y. Kikuchi","Home run","41%","→ home run",true,"5 / 4.4","4/5"],
+            ["▲8","TOR","V. Guerrero Jr.","C. Irvin","Out","59%","→ out",true,"4 / 4.1","3/4"],
+            ["▼7","BAL","A. Rutschman","T. Richards","Walk","48%","→ walk",true,"6 / 4.6","4/6"]] },
+    { id:"g-phi", away:"PHI", home:"WSH", as:null, hs:null, state:"sched", inn:"7:45 PM", innSort:1, count:"—", outs:"—", bases:null,
+      ml:["PHI","66%"], tot:["O 8.0","56%"], venue:"Nationals Park", weather:"—", wind:"—", ump:"—", first:"7:45 PM ET", att:"—", roof:"Open",
+      call:["FIRST AB","Strike / foul 68% · T. Turner vs M. Gore"], acc:"—", accW:"0%", start:"in 1h 12m",
+      rows:[["▲1","PHI","T. Turner","M. Gore","Strike / foul","68%","→ opening call",null,"— / 4.2","—"],
+            ["▲1","PHI","B. Harper","M. Gore","Out","57%","→ opening call",null,"— / 4.4","—"]] },
+    { id:"g-sf", away:"SF", home:"COL", as:null, hs:null, state:"sched", inn:"8:40 PM", innSort:0.5, count:"—", outs:"—", bases:null,
+      ml:["SF","59%"], tot:["O 11.5","63%"], venue:"Coors Field", weather:"—", wind:"—", ump:"—", first:"8:40 PM ET", att:"—", roof:"Open",
+      call:["FIRST AB","Ball 61% · H. Ramos vs K. Freeland"], acc:"—", accW:"0%", start:"in 2h 07m",
+      rows:[["▲1","SF","H. Ramos","K. Freeland","Ball","61%","→ opening call",null,"— / 4.3","—"],
+            ["▲1","SF","M. Chapman","K. Freeland","Strikeout","54%","→ opening call",null,"— / 4.5","—"]] },
+    { id:"g-min", away:"MIN", home:"TEX", as:null, hs:null, state:"sched", inn:"9:05 PM", innSort:0.2, count:"—", outs:"—", bases:null,
+      ml:["TEX","54%"], tot:["U 8.5","51%"], venue:"Globe Life Field", weather:"—", wind:"—", ump:"—", first:"9:05 PM ET", att:"—", roof:"Closed",
+      call:["FIRST AB","Strike / foul 65% · W. Castro vs N. Eovaldi"], acc:"—", accW:"0%", start:"in 2h 32m",
+      rows:[["▲1","MIN","W. Castro","N. Eovaldi","Strike / foul","65%","→ opening call",null,"— / 4.1","—"],
+            ["▲1","MIN","C. Correa","N. Eovaldi","Out","58%","→ opening call",null,"— / 4.2","—"]] },
+  ];
+
+  go(view) { return () => this.setState({ view }); }
+  toggle(map, id) {
+    return (e) => {
+      if (e && e.stopPropagation) e.stopPropagation();
+      const m = Object.assign({}, this.state[map]);
+      m[id] = !m[id];
+      this.setState({ [map]: m });
+    };
+  }
+  openEntity(kind, name) {
+    return (e) => { if (e && e.stopPropagation) e.stopPropagation(); this.setState({ entity: { kind, name } }); };
+  }
+
+  pctOf(ratio) {
+    if (!ratio || ratio === "—") return "—";
+    const p = String(ratio).split("/");
+    const c = parseInt(p[0], 10), n = parseInt(p[1], 10);
+    return isNaN(c) || isNaN(n) || !n ? "—" : Math.round((c / n) * 100) + "%";
+  }
+  accFg(w) { const n = parseInt(w, 10); return isNaN(n) ? this.C.faint : n >= 66 ? this.C.grn : n >= 50 ? this.C.amb : this.C.red; }
+
+  chip(g) {
+    if (g.state === "live") return { chipText: "● " + g.inn, chipFg: "#4ade80", chipBg: "rgba(74,222,128,.13)" };
+    if (g.state === "final") return { chipText: "FINAL", chipFg: "#8493aa", chipBg: "#1b2942" };
+    return { chipText: g.inn, chipFg: "#7fa0c4", chipBg: "#16294a" };
+  }
+
+  pill(g, openMap) {
+    const c = this.chip(g);
+    const bases = g.bases || [0, 0, 0];
+    const on = "#e0a83a", off = "transparent";
+    const scored = g.as != null;
+    return Object.assign({
+      id: g.id, label: g.away + " @ " + g.home,
+      sub: g.state === "sched" ? g.venue + " · " + g.start : g.venue,
+      score: scored ? g.as + " – " + g.hs : "—",
+      scoreFg: g.state === "live" ? "#eef3f9" : g.state === "final" ? "#aebdd2" : "#6f7f96",
+      scoreSub: g.state === "live" ? g.inn.toLowerCase() : g.state === "final" ? "final" : "first pitch",
+      count: g.count, outs: g.outs,
+      b1: g.bases ? (bases[0] ? on : off) : off,
+      b2: g.bases ? (bases[1] ? on : off) : off,
+      b3: g.bases ? (bases[2] ? on : off) : off,
+      mlPick: g.ml[0], mlProb: g.ml[1], mlFg: this.accFg(g.ml[1]),
+      totPick: g.tot[0], totProb: g.tot[1], totFg: this.accFg(g.tot[1]),
+      cta: g.state === "live" ? "Live feed →" : g.state === "final" ? "Recap →" : "Preview →",
+      chev: this.state[openMap] && this.state[openMap][g.id] ? "▾" : "▸",
+      open: !!(this.state[openMap] && this.state[openMap][g.id]),
+      jump: () => this.setState({ view: "live", lfOpen: Object.assign({}, this.state.lfOpen, { [g.id]: true }) }),
+      toggle: this.toggle(openMap, g.id),
+      meta: [
+        { k: "STADIUM", v: g.venue }, { k: "ROOF", v: g.roof }, { k: "WEATHER", v: g.weather }, { k: "WIND", v: g.wind },
+        { k: "HP UMPIRE", v: g.ump }, { k: "FIRST PITCH", v: g.first }, { k: "ATTENDANCE", v: g.att },
+        { k: "MODEL VERSION", v: "pitch_result v7" },
+      ],
+      metaNote: g.state === "sched"
+        ? "Weather and umpire land at lineup post; a dash means the feed hasn't published it yet."
+        : "Context is published by the nightly warehouse job — dashes mean not yet written for this game.",
+    }, c);
+  }
+
+  bars(seed, n, base) {
+    const out = [];
+    for (let i = 0; i < n; i++) {
+      const v = base + Math.sin((i + seed) * 1.7) * 9 + Math.cos((i + seed) * 0.8) * 5;
+      const r = Math.max(38, Math.min(88, v));
+      out.push({ h: Math.round(r * 0.45) + "px", fg: r >= 66 ? this.C.grn : r >= 50 ? this.C.amb : this.C.red });
+    }
+    return out;
+  }
+
+  renderVals() {
+    const C = this.C, v = this.state.view;
+    const tab = (k, label) => ({
+      label, go: this.go(k),
+      bg: v === k ? "#cdd9ea" : "transparent",
+      fg: v === k ? "#0c1424" : "#8493aa",
+    });
+
+    const live = this.GAMES.filter((g) => g.state === "live").sort((a, b) => b.innSort - a.innSort);
+    const finals = this.GAMES.filter((g) => g.state === "final");
+    const sched = this.GAMES.filter((g) => g.state === "sched").sort((a, b) => b.innSort - a.innSort);
+
+    const groups = [
+      { title: "LIVE NOW", fg: C.grn, count: live.length + " games", games: live.map((g) => this.pill(g, "open")) },
+      { title: "FINAL", fg: C.mut, count: finals.length + " games", games: finals.map((g) => this.pill(g, "open")) },
+      { title: "UPCOMING", fg: "#7fa0c4", count: sched.length + " games", games: sched.map((g) => this.pill(g, "open")) },
+    ];
+
+    const order = live.concat(finals, sched);
+    const liveFeedGames = order.map((g) => {
+      const p = this.pill(g, "lfOpen");
+      const isSched = g.state === "sched";
+      return Object.assign(p, {
+        bd: g.state === "live" ? "#1f3d2b" : "#253449",
+        callChip: g.call[0], callText: g.call[1],
+        callChipFg: isSched ? "#7fa0c4" : g.state === "final" ? "#8493aa" : C.grn,
+        callChipBg: isSched ? "#16294a" : g.state === "final" ? "#1b2942" : "rgba(74,222,128,.13)",
+        acc: g.acc, accPct: g.state === "sched" ? "—" : this.pctOf(g.acc), accW: g.accW, accFg: this.accFg(g.accW),
+        bodyTitle: isSched ? "OPENING AT-BAT PREDICTIONS" : "AT-BAT CALLS",
+        bodyNote: isSched ? "frozen pregame lines above · first-at-bat reads open when the lineup posts" : "expand an at-bat in the Data Feed for pitch by pitch",
+        rows: g.rows.map((r) => ({
+          inn: r[0], team: r[1], batter: r[2], pitcher: r[3],
+          call: r[4], callPct: r[5], actual: r[6],
+          callBg: r[7] == null ? "transparent" : r[7] ? "rgba(34,165,102,.22)" : "rgba(242,86,76,.20)",
+          callFg: r[7] == null ? C.dim : r[7] ? "#5fe094" : "#ff9b8f",
+          pitches: r[8], acc: r[9], accPct: this.pctOf(r[9]), accFg: this.accFg(this.pctOf(r[9]) === "—" ? "0" : this.pctOf(r[9])),
+          entity: this.openEntity("BATTER", r[2]),
+        })),
+      });
+    });
+
+    const dfDays = [
+      { label: "Sat · Aug 22", games: "15 games", note: "settled 03:04 ET", acc: "184/271", accW: "68%", pitchAcc: "912/1344", mae: "1.4" },
+      { label: "Fri · Aug 21", games: "14 games", note: "settled 03:02 ET", acc: "171/258", accW: "66%", pitchAcc: "864/1291", mae: "1.5" },
+      { label: "Thu · Aug 20", games: "9 games", note: "settled 03:01 ET", acc: "119/164", accW: "73%", pitchAcc: "561/822", mae: "1.3" },
+    ];
+    const dfGames = [
+      { label: "NYM @ ATL", score: "4 – 2", note: "9 innings · 271 pitches", acc: "14/19", accW: "74%", mae: "1.2" },
+      { label: "SD @ LAD", score: "1 – 3", note: "9 innings · 288 pitches", acc: "11/17", accW: "65%", mae: "1.6" },
+      { label: "HOU @ SEA", score: "3 – 5", note: "9 innings · 301 pitches", acc: "9/15", accW: "60%", mae: "1.5" },
+    ];
+    const dfAbs = [
+      { inn: "▼9", team: "NYM", batter: "F. Alvarez", pitcher: "R. Iglesias", call: "Strike / foul", callPct: "71%", actual: "→ strikeout", ok: true, pitches: "5 / 4.6", acc: "4/5" },
+      { inn: "▲9", team: "ATL", batter: "M. Ozuna", pitcher: "E. Diaz", call: "Strikeout", callPct: "64%", actual: "→ strikeout", ok: true, pitches: "5 / 4.2", acc: "4/5" },
+      { inn: "▼8", team: "NYM", batter: "B. Nimmo", pitcher: "A. Minter", call: "Out", callPct: "58%", actual: "→ walk", ok: false, pitches: "6 / 4.9", acc: "3/6" },
+    ];
+    const dfPitches = [
+      { n: 1, count: "0-0", type: "FF", typeFg: "#e0392f", velo: "96.4", veloSub: "95.8 · +0.6", result: "Strike", called: "called strike / foul", pct: "68%", ok: true, err: 0.6 },
+      { n: 2, count: "0-1", type: "SL", typeFg: "#2f8fd6", velo: "87.1", veloSub: "86.2 · +0.9", result: "Ball", called: "called strike / foul", pct: "61%", ok: false, err: 0.9 },
+      { n: 3, count: "1-1", type: "FF", typeFg: "#e0392f", velo: "97.0", veloSub: "96.1 · +0.9", result: "Foul", called: "called strike / foul", pct: "70%", ok: true, err: 0.9 },
+      { n: 4, count: "1-2", type: "CH", typeFg: "#26a269", velo: "88.6", veloSub: "89.9 · −1.3", result: "Ball", called: "called strike / foul", pct: "58%", ok: false, err: -1.3 },
+      { n: 5, count: "2-2", type: "SL", typeFg: "#2f8fd6", velo: "86.8", veloSub: "86.5 · +0.3", result: "Strikeout", called: "called strike / foul", pct: "72%", ok: true, err: 0.3 },
+    ];
+    const grade = (p) => {
+      const bad = Math.abs(p.err) >= 2;
+      const band = p.ok && !bad ? "good" : !p.ok && bad ? "bad" : p.ok ? "good" : "amber";
+      const map = { good: ["#5fe094", "rgba(34,165,102,.22)"], amber: ["#f0c063", "rgba(224,168,58,.20)"], bad: ["#ff9b8f", "rgba(242,86,76,.20)"] };
+      return { gFg: map[band][0], gBg: map[band][1], grade: (p.ok ? "HIT" : "MISS") + " · " + Math.abs(p.err).toFixed(1) };
+    };
+
+    const days = dfDays.map((d, di) => {
+      const dk = "d-" + di;
+      return Object.assign({}, d, {
+        chev: this.state.dfOpen[dk] ? "▾" : "▸", open: !!this.state.dfOpen[dk],
+        toggle: this.toggle("dfOpen", dk), accFg: this.accFg(d.accW),
+        accPct: this.pctOf(d.acc), pitchAccPct: this.pctOf(d.pitchAcc),
+        gameList: dfGames.map((g, gi) => {
+          const gk = dk + "/g-" + gi;
+          return Object.assign({}, g, {
+            chev: this.state.dfOpen[gk] ? "▾" : "▸", open: !!this.state.dfOpen[gk],
+            toggle: this.toggle("dfOpen", gk), accFg: this.accFg(g.accW), accPct: this.pctOf(g.acc),
+            abs: dfAbs.map((ab, ai) => {
+              const ak = gk + "/ab-" + ai;
+              return Object.assign({}, ab, {
+                chev: this.state.dfOpen[ak] ? "▾" : "▸", open: !!this.state.dfOpen[ak],
+                toggle: this.toggle("dfOpen", ak), accPct: this.pctOf(ab.acc),
+                callBg: ab.ok ? "rgba(34,165,102,.22)" : "rgba(242,86,76,.20)",
+                callFg: ab.ok ? "#5fe094" : "#ff9b8f",
+                accFg: ab.ok ? C.grn : C.amb,
+                pitchList: dfPitches.map((p) => Object.assign({}, p, grade(p), {
+                  vBg: Math.abs(p.err) >= 2 ? "rgba(242,86,76,.20)" : "rgba(34,165,102,.22)",
+                  vFg: Math.abs(p.err) >= 2 ? "#ff9b8f" : "#5fe094",
+                  rFg: p.ok ? "#5fe094" : "#ff9b8f",
+                })),
+              });
+            }),
+          });
+        }),
+      });
+    });
+
+    const rangeLabels = ["Today", "7 days", "14 days", "30 days", "Custom"];
+    const ranges = rangeLabels.map((label) => ({
+      label, go: () => this.setState({ range: label }),
+      bd: this.state.range === label ? C.acc : "#253449",
+      bg: this.state.range === label ? "#12301f" : "#1b2942",
+      fg: this.state.range === label ? C.grn : C.dim,
+    }));
+
+    const ent = this.state.entity;
+
+    const st = this.state;
+    const teamOpts = ["ATL","BAL","BOS","CHC","COL","HOU","LAD","MIL","MIN","NYM","NYY","PHI","SD","SEA","SF","TEX","TOR","WSH"];
+    const playerOpts = this.TRENDS.map((t) => t.name).sort();
+    const sel = (key, label, value, opts, allLabel) => ({
+      label, value: value || "",
+      onChange: (e) => this.setState({ [key]: e.target.value }),
+      bd: value ? C.acc : "#253449",
+      options: [{ v: "", t: allLabel }].concat(opts.map((o) => ({ v: o, t: o }))),
+    });
+    const seg = (key, label, opts) => ({
+      label,
+      items: opts.map((o) => ({
+        label: o[1],
+        go: () => this.setState({ [key]: o[0] }),
+        bd: st[key] === o[0] ? C.acc : "#253449",
+        bg: st[key] === o[0] ? "#12301f" : "#1b2942",
+        fg: st[key] === o[0] ? C.grn : C.dim,
+      })),
+    });
+    const dfSelects = [
+      sel("dfTeam", "TEAM", st.dfTeam, teamOpts, "All teams"),
+      sel("dfPlayer", "PLAYER", st.dfPlayer, playerOpts, "All players"),
+    ];
+    const dfSegs = [
+      seg("dfSide", "SPLIT", [["all","Both"],["home","Home"],["away","Away"]]),
+      seg("dfRole", "ROLE", [["all","All"],["batter","Batters"],["pitcher","Pitchers"]]),
+    ];
+    const dfDirty = !!(st.dfTeam || st.dfPlayer || st.dfSide !== "all" || st.dfRole !== "all");
+    const trends = this.TRENDS.filter((t) =>
+      (!st.dfTeam || t.team === st.dfTeam)
+      && (!st.dfPlayer || t.name === st.dfPlayer)
+      && (st.dfSide === "all" || t.side === st.dfSide)
+      && (st.dfRole === "all" || t.role === st.dfRole))
+      .map((t) => ({
+        name: t.name, team: t.team, note: t.note,
+        role: t.role === "batter" ? "BAT" : "PIT",
+        roleFg: t.role === "batter" ? "#7fa0c4" : "#b49bff",
+        side: t.side === "home" ? "Home" : "Away",
+        calls: t.calls, callsPct: this.pctOf(t.calls),
+        callsFg: this.accFg(this.pctOf(t.calls)),
+        edge: t.edge + " pt", edgeFg: t.edge.charAt(0) === "−" ? C.red : C.grn,
+        units: t.units + "u", unitsFg: t.units.charAt(0) === "−" ? C.red : C.grn,
+        streak: t.streak, streakFg: t.streak.charAt(0) === "L" ? C.red : C.grn,
+        w: Math.min(100, Math.abs(parseFloat(t.edge)) * 8) + "%",
+        entity: this.openEntity(t.role === "batter" ? "BATTER" : "PITCHER", t.name),
+      }));
+    const dfSummary = [
+      st.dfTeam || "All teams",
+      st.dfPlayer || "All players",
+      st.dfSide === "all" ? "home + away" : st.dfSide,
+      st.dfRole === "all" ? "batters + pitchers" : st.dfRole + "s",
+      this.state.range.toLowerCase(),
+    ].join(" · ") + " — " + trends.length + " qualified player" + (trends.length === 1 ? "" : "s");
+
+    const hSel = this.state.heroSel;
+    const topId = live.reduce((a, g) => (a && parseInt(this.HERO[a.id].pct, 10) >= parseInt(this.HERO[g.id].pct, 10) ? a : g), null);
+    const heroId = hSel === "top" || !this.HERO[hSel] ? (topId ? topId.id : live[0].id) : hSel;
+    const H = this.HERO[heroId];
+    const heroChips = [{ id: "top", label: "★ Top at-bat" }].concat(live.map((g) => ({ id: g.id, label: g.away + " @ " + g.home })))
+      .map((c) => ({
+        label: c.label,
+        go: () => this.setState({ heroSel: c.id }),
+        bd: hSel === c.id ? C.acc : "#253449",
+        bg: hSel === c.id ? "#12301f" : "#1b2942",
+        fg: hSel === c.id ? C.grn : C.dim,
+      }));
+    const heroBadge = hSel === "top" ? "TOP AT-BAT · ALL GAMES" : "SELECTED GAME";
+    const heroNote = hSel === "top"
+      ? "highest model probability of " + live.length + " open at-bats"
+      : "the open at-bat in this game";
+    const whySuffix = hSel === "top"
+      ? "the model's most confident open call across every live game."
+      : "the model's read on the at-bat in progress here.";
+
+    return {
+      tabs: [tab("home", "Home"), tab("live", "Live Feed"), tab("data", "Data Feed")],
+      isHome: v === "home", isLive: v === "live", isData: v === "data",
+      tabNote: v === "home" ? "Home · game pills replace the card grid" : v === "live" ? "Live Feed · every game on the slate" : "Data Feed · analytics up top, drilldown below",
+      liveText: live.length + " games live · auto-refreshing",
+      goLive: this.go("live"),
+      glance: [
+        { big: String(live.length), lbl: "live right now" },
+        { big: String(finals.length), lbl: "games completed" },
+        { big: String(live.length + sched.length), lbl: "games left today" },
+        { big: "7:45 PM", lbl: "next game first pitch" },
+      ],
+      promoBullets: [
+        { t: "Live at-bat panels", d: "One panel per game — the count, bases, and the model's read on the next pitch." },
+        { t: "Pitch-by-pitch feed", d: "Type, velo and result next to predicted speed and strike / ball / in-play probabilities." },
+        { t: "Broadcast situation", d: "Bases, balls, strikes, outs, score and the model call in a single glance." },
+      ],
+      steps: [
+        { n: "1", t: "Ingest", d: "Historical Statcast plus a live MLB feed give us pitch-by-pitch context for every matchup." },
+        { n: "2", t: "Model", d: "Dedicated models project the next pitch and at-bat in real time, updating with every pitch." },
+        { n: "3", t: "Watch", d: "Every live at-bat gets a model read — probabilities and projections stream to the live board." },
+        { n: "4", t: "Grade", d: "Every call is checked against what actually happened, building an open accuracy record." },
+      ],
+      groups, liveFeedGames, days, ranges,
+      dfSelects, dfSegs, dfDirty, dfSummary, trends,
+      dfClear: () => this.setState({ dfTeam: "", dfPlayer: "", dfSide: "all", dfRole: "all" }),
+      trendHead: [
+        { t: "PLAYER", a: "left" }, { t: "TEAM", a: "left" }, { t: "SPLIT", a: "left" },
+        { t: "GRADED CALLS", a: "right" }, { t: "EDGE VS BASELINE", a: "left" },
+        { t: "UNITS", a: "right" }, { t: "STREAK", a: "right" },
+      ],
+
+      heroChips, heroBadge, heroNote, heroLabel: H.label, heroPct: H.pct,
+      heroMeta: H.meta, heroWhy: H.batter + " vs " + H.pitcher + " — " + whySuffix,
+      heroSubMobile: H.batter.split(" ")[0][0] + ". " + H.batter.split(" ").slice(1).join(" ") + " vs " + H.pitcher.split(" ").slice(1).join(" ") + " · next pitch result",
+      abBatter: H.batter, abPitcher: H.pitcher, abCount: H.abCount, abStat: H.abStat,
+      heroDist: H.dist.map((d, i) => ({ label: d[0], pct: d[1], w: d[1], fill: i === 0 ? C.acc : "#1f3d2b" })),
+      heroTiles: [
+        { v: H.velo, l: "PROJ VELO (MPH)", fg: C.txt },
+        { v: H.proj, l: "PROJ PITCHES IN AB", fg: C.txt },
+        { v: H.acc + " · " + H.accPct, l: "CALLS CORRECT THIS GAME", fg: C.grn },
+      ],
+      currentAb: dfPitches.slice(0, H.seen).map((p) => Object.assign({}, p, {
+        vBg: "rgba(34,165,102,.22)", vFg: "#5fe094",
+        rBg: p.ok ? "rgba(34,165,102,.22)" : "rgba(242,86,76,.20)",
+        rFg: p.ok ? "#5fe094" : "#ff9b8f",
+        called: "called strike / foul",
+      })),
+
+      kpis: [
+        { big: "68%", label: "At-bat call accuracy", sub: "184 of 271 graded at-bats", fg: C.txt },
+        { big: "67%", label: "Pitch result accuracy", sub: "912 of 1,344 graded pitches", fg: C.txt },
+        { big: "1.4", label: "Velo MAE (mph)", sub: "mean abs error, all graded pitches", fg: "#5fe094" },
+        { big: "74%", label: "High-confidence accuracy", sub: "96 calls at 65%+", fg: C.grn },
+        { big: "38", label: "Games graded", sub: this.state.range.toLowerCase() + " window", fg: C.dim },
+      ],
+      accRows: [
+        { label: "Pitch result", bars: this.bars(1, 14, 68), now: "71%", delta: "+3pt", dFg: C.grn },
+        { label: "Pitch velo O/U", bars: this.bars(4, 14, 61), now: "58%", delta: "−2pt", dFg: C.red },
+        { label: "AB result", bars: this.bars(7, 14, 64), now: "66%", delta: "+1pt", dFg: C.grn },
+        { label: "AB pitches O/U", bars: this.bars(11, 14, 55), now: "54%", delta: "−1pt", dFg: C.red },
+      ],
+      countRows: [
+        { label: "0-2", pct: "81%", w: "81%", n: "142", fg: C.grn },
+        { label: "1-2", pct: "76%", w: "76%", n: "168", fg: C.grn },
+        { label: "0-1", pct: "70%", w: "70%", n: "204", fg: C.grn },
+        { label: "2-2", pct: "66%", w: "66%", n: "121", fg: C.grn },
+        { label: "0-0", pct: "62%", w: "62%", n: "331", fg: C.amb },
+        { label: "1-1", pct: "58%", w: "58%", n: "186", fg: C.amb },
+        { label: "3-1", pct: "51%", w: "51%", n: "44", fg: C.amb },
+        { label: "3-0", pct: "44%", w: "44%", n: "27", fg: C.red },
+      ],
+      mix: [
+        { label: "FF", pct: "34%", w: "34%", fg: "#e0392f" },
+        { label: "SL", pct: "22%", w: "22%", fg: "#2f8fd6" },
+        { label: "SI", pct: "15%", w: "15%", fg: "#e8863a" },
+        { label: "CH", pct: "12%", w: "12%", fg: "#26a269" },
+        { label: "CU", pct: "10%", w: "10%", fg: "#8a5cf0" },
+        { label: "FC", pct: "7%", w: "7%", fg: "#d6a11e" },
+      ],
+      veloBuckets: [
+        { label: "1–25", val: "94.6", h: "44px" }, { label: "26–50", val: "94.1", h: "38px" },
+        { label: "51–75", val: "93.4", h: "30px" }, { label: "76+", val: "92.6", h: "20px" },
+      ],
+      batters: [
+        { name: "F. Alvarez", ab: "19", str: "63%", acc: "74%", accFg: C.grn, mix: [{ fg: "#a37bff", w: "34%" }, { fg: "#4fb877", w: "16%" }, { fg: "#e0a83a", w: "22%" }, { fg: "#6aa2ff", w: "28%" }] },
+        { name: "M. Ozuna", ab: "17", str: "59%", acc: "69%", accFg: C.grn, mix: [{ fg: "#a37bff", w: "28%" }, { fg: "#4fb877", w: "18%" }, { fg: "#e0a83a", w: "24%" }, { fg: "#6aa2ff", w: "30%" }] },
+        { name: "A. Judge", ab: "16", str: "55%", acc: "56%", accFg: C.amb, mix: [{ fg: "#a37bff", w: "31%" }, { fg: "#4fb877", w: "25%" }, { fg: "#e0a83a", w: "19%" }, { fg: "#6aa2ff", w: "25%" }] },
+        { name: "M. Betts", ab: "15", str: "61%", acc: "71%", accFg: C.grn, mix: [{ fg: "#a37bff", w: "20%" }, { fg: "#4fb877", w: "20%" }, { fg: "#e0a83a", w: "27%" }, { fg: "#6aa2ff", w: "33%" }] },
+        { name: "J. Rodríguez", ab: "14", str: "64%", acc: "64%", accFg: C.amb, mix: [{ fg: "#a37bff", w: "36%" }, { fg: "#4fb877", w: "12%" }, { fg: "#e0a83a", w: "22%" }, { fg: "#6aa2ff", w: "30%" }] },
+        { name: "B. Nimmo", ab: "13", str: "57%", acc: "48%", accFg: C.red, mix: [{ fg: "#a37bff", w: "22%" }, { fg: "#4fb877", w: "28%" }, { fg: "#e0a83a", w: "20%" }, { fg: "#6aa2ff", w: "30%" }] },
+      ].map((b) => Object.assign(b, { entity: this.openEntity("BATTER", b.name) })),
+      pitcherHead: [
+        { t: "PITCHER", a: "left" }, { t: "PITCHES", a: "right" }, { t: "K%", a: "right" }, { t: "WHIFF", a: "right" },
+        { t: "VELO", a: "right" }, { t: "VELO BY DAY", a: "left" }, { t: "FATIGUE Δ", a: "right" }, { t: "ACC", a: "right" },
+      ],
+      pitchers: [
+        { name: "G. Cole", pitches: "412", k: "29%", whiff: "31%", velo: "97.1", fatigue: "−0.8 mph", fatFg: C.amb, acc: "72%", accFg: C.grn, spark: this.bars(2, 10, 70) },
+        { name: "F. Valdez", pitches: "388", k: "24%", whiff: "26%", velo: "94.3", fatigue: "−0.4 mph", fatFg: C.grn, acc: "68%", accFg: C.grn, spark: this.bars(5, 10, 66) },
+        { name: "L. Castillo", pitches: "371", k: "27%", whiff: "29%", velo: "95.8", fatigue: "−1.2 mph", fatFg: C.red, acc: "61%", accFg: C.amb, spark: this.bars(8, 10, 60) },
+        { name: "R. Suarez", pitches: "344", k: "22%", whiff: "23%", velo: "92.6", fatigue: "−0.3 mph", fatFg: C.grn, acc: "66%", accFg: C.grn, spark: this.bars(3, 10, 64) },
+        { name: "T. Megill", pitches: "298", k: "26%", whiff: "28%", velo: "95.1", fatigue: "−0.9 mph", fatFg: C.amb, acc: "59%", accFg: C.amb, spark: this.bars(9, 10, 58) },
+        { name: "Y. Kikuchi", pitches: "281", k: "25%", whiff: "27%", velo: "94.8", fatigue: "−0.6 mph", fatFg: C.grn, acc: "70%", accFg: C.grn, spark: this.bars(6, 10, 69) },
+      ].map((p) => Object.assign(p, { entity: this.openEntity("PITCHER", p.name) })),
+      historyNote: "184/271 at-bat calls · 912/1344 pitch calls · MAE 1.4",
+      pitchHead: [
+        { t: "P", a: "left" }, { t: "CNT", a: "left" }, { t: "TYPE", a: "left" },
+        { t: "VELO ACT · CALL · Δ", a: "left" }, { t: "RESULT vs CALL", a: "left" }, { t: "GRADE", a: "right" },
+      ],
+
+      entityOpen: !!ent,
+      entityKind: ent ? ent.kind : "",
+      entityLower: ent ? ent.kind.toLowerCase() : "",
+      entityName: ent ? ent.name : "",
+      closeEntity: () => this.setState({ entity: null }),
+      entityStats: [
+        { big: "68%", label: "Call accuracy", fg: C.grn },
+        { big: "112", label: "Graded calls", fg: C.txt },
+        { big: "1.3", label: "Velo MAE", fg: "#5fe094" },
+        { big: "24", label: "Games", fg: C.dim },
+      ],
+      entityBars: this.bars(13, 30, 66),
+      entityRows: [
+        { label: "Strike / foul", val: "62%", w: "62%", fg: C.acc },
+        { label: "Ball", val: "24%", w: "24%", fg: "#8493aa" },
+        { label: "In play", val: "14%", w: "14%", fg: "#6aa2ff" },
+        { label: "Chase rate", val: "31%", w: "31%", fg: "#e0a83a" },
+        { label: "Zone rate", val: "48%", w: "48%", fg: "#7c5cd6" },
+      ],
+    };
+  }
+}
+
+</script>
+</body>
+</html>

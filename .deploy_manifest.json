@@ -1,0 +1,72 @@
+{
+ "api": [
+  "_shared/aggregates.ts",
+  "_shared/db.ts",
+  "_shared/http.ts",
+  "_shared/mlb.ts",
+  "_shared/pitchfeed.ts",
+  "_shared/vocab.ts",
+  "api/index.ts"
+ ],
+ "backfill": [
+  "_shared/db.ts",
+  "_shared/http.ts",
+  "_shared/ingest.ts",
+  "_shared/mlb.ts",
+  "_shared/vocab.ts",
+  "backfill/index.ts"
+ ],
+ "backfill-predictions": [
+  "_shared/db.ts",
+  "_shared/livepitch.ts",
+  "_shared/market.ts",
+  "_shared/model.ts",
+  "_shared/vocab.ts",
+  "backfill-predictions/index.ts"
+ ],
+ "daily-ingest": [
+  "_shared/db.ts",
+  "_shared/http.ts",
+  "_shared/ingest.ts",
+  "_shared/mlb.ts",
+  "_shared/vocab.ts",
+  "daily-ingest/index.ts"
+ ],
+ "game-predict": [
+  "_shared/batterprojection.ts",
+  "_shared/db.ts",
+  "_shared/http.ts",
+  "_shared/ingest.ts",
+  "_shared/market.ts",
+  "_shared/mlb.ts",
+  "_shared/model.ts",
+  "_shared/vocab.ts",
+  "game-predict/index.ts"
+ ],
+ "live-poll": [
+  "_shared/db.ts",
+  "_shared/http.ts",
+  "_shared/ingest.ts",
+  "_shared/livepitch.ts",
+  "_shared/market.ts",
+  "_shared/mlb.ts",
+  "_shared/model.ts",
+  "_shared/vocab.ts",
+  "live-poll/index.ts"
+ ],
+ "odds-ingest": [
+  "_shared/db.ts",
+  "_shared/http.ts",
+  "_shared/mlb.ts",
+  "_shared/model.ts",
+  "_shared/novig.ts",
+  "_shared/vocab.ts",
+  "odds-ingest/index.ts"
+ ],
+ "settle": [
+  "_shared/batterprojection.ts",
+  "_shared/db.ts",
+  "_shared/model.ts",
+  "settle/index.ts"
+ ]
+}

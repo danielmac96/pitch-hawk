@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="" />
+<link href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<style>
+  html, body { margin: 0; padding: 0; background: #0c1424; }
+  * { box-sizing: border-box; }
+  a { color: #4ade80; text-decoration: none; }
+  a:hover { color: #22a566; }
+  select { font-family: 'Hanken Grotesk', sans-serif; }
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: #253449; border-radius: 6px; }
+</style>
+</helmet>
+
+<div style="min-height:100vh;background:#0c1424;color:#eef3f9;font-family:'Hanken Grotesk',-apple-system,sans-serif;-webkit-font-smoothing:antialiased;">
+
+  <div style="position:sticky;top:0;z-index:20;background:#0a1322;border-bottom:1px solid #253449;padding:0 26px;display:flex;align-items:stretch;gap:28px;">
+    <div style="display:flex;align-items:center;gap:9px;padding:14px 0;">
+      <span style="width:9px;height:9px;border-radius:50%;background:#22a566;display:block;"></span>
+      <span style="font-size:13.5px;font-weight:800;letter-spacing:.14em;">PITCH HAWK</span>
+    </div>
+    <div style="display:flex;align-items:stretch;gap:2px;">
+      <button onClick="{{ onLive }}" style="position:relative;border:0;background:transparent;color:#eef3f9;font-family:inherit;font-size:13px;font-weight:700;letter-spacing:.03em;padding:0 16px;cursor:pointer;" style-hover="color:#4ade80;">
+        Live Feed
+        <sc-if value="{{ isLive }}" hint-placeholder-val="{{ true }}"><span style="position:absolute;left:10px;right:10px;bottom:0;height:2px;background:#22a566;border-radius:2px 2px 0 0;display:block;"></span></sc-if>
+      </button>
+      <button onClick="{{ onData }}" style="position:relative;border:0;background:transparent;color:#aebdd2;font-family:inherit;font-size:13px;font-weight:700;letter-spacing:.03em;padding:0 16px;cursor:pointer;" style-hover="color:#4ade80;">
+        Data Feed
+        <sc-if value="{{ isData }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;left:10px;right:10px;bottom:0;height:2px;background:#22a566;border-radius:2px 2px 0 0;display:block;"></span></sc-if>
+      </button>
+    </div>
+    <div style="margin-left:auto;display:flex;align-items:center;gap:14px;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6f7f96;">
+      <span>MODEL v4.2</span>
+      <span style="width:1px;height:12px;background:#253449;display:block;"></span>
+      <span style="color:#aebdd2;">{{ clock }}</span>
+    </div>
+  </div>
+
+  <div style="max-width:1240px;margin:0 auto;padding:20px 26px 70px;">
+
+    <sc-if value="{{ isLive }}" hint-placeholder-val="{{ true }}">
+      <div style="display:grid;grid-template-columns:1.55fr 1fr;gap:14px;margin-bottom:26px;align-items:start;">
+
+        <div style="border:1px solid #1f3d2b;border-radius:14px;background:linear-gradient(180deg,#12301f,#0f1f18);padding:16px 18px;">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+            <span style="font-size:10px;font-weight:800;letter-spacing:.09em;color:#4ade80;background:rgba(74,222,128,.14);padding:3px 7px;border-radius:5px;">BEST CALL NOW</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#82ae92;">{{ live.situation }}</span>
+            <span style="margin-left:auto;font-size:11.5px;color:#82ae92;">highest confidence of {{ live.poolCount }} open calls</span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:11px;flex-wrap:wrap;margin-bottom:4px;">
+            <span style="font-size:30px;font-weight:800;letter-spacing:-.03em;line-height:1;">{{ live.bestLabel }}</span>
+            <span style="font-family:'IBM Plex Mono',monospace;font-size:23px;font-weight:600;color:#4ade80;line-height:1;">{{ live.bestProb }}</span>
+            <span style="font-size:12px;color:#82ae92;">{{ live.bestMarket }}</span>
+          </div>
+          <div style="font-size:12.5px;color:#a6c5b3;margin-bottom:14px;">{{ live.bestWhy }}</div>
+          <div style="display:flex;flex-direction:column;gap:5px;margin-bottom:15px;">
+            <sc-for list="{{ live.dist }}" as="r" hint-placeholder-count="3">
+              <div style="display:grid;grid-template-columns:96px 1fr 46px;gap:10px;align-items:center;">
+                <span style="font-size:12.5px;color:#82ae92;">{{ r.label }}</span>
+                <span style="height:7px;background:#0b1c14;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ r.color }};width:{{ r.w }}"></span></span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;text-align:right;">{{ r.pct }}</span>
+              </div>
+            </sc-for>
+          </div>
+          <div style="display:flex;gap:22px;border-top:1px solid #1f3d2b;padding-top:12px;">
+            <div style="display:flex;flex-direction:column;gap:2px;">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:700;">{{ live.veloPred }}</span>
+              <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#82ae92;">PROJ VELO (MPH)</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:2px;">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:700;">{{ live.abPitches }}</span>
+              <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#82ae92;">PROJ PITCHES IN AB</span>
+            </div>
+            <div style="display:flex;flex-direction:column;gap:2px;">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:19px;font-weight:700;color:#4ade80;">{{ live.gameAcc }}</span>
+              <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#82ae92;">CALLS CORRECT THIS GAME</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="border:1px solid #253449;border-radius:14px;background:#141f33;padding:14px 16px;">
+          <div style="display:flex;align-items:baseline;gap:10px;margin-bottom:12px;">
+            <span style="font-size:10px;font-weight:800;letter-spacing:.09em;color:#6f7f96;">CURRENT AT-BAT</span>
+            <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8493aa;">{{ live.abAcc }}</span>
+          </div>
+          <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:3px;">
+            <span style="font-size:16px;font-weight:700;">{{ live.batter }}</span>
+            <span style="font-size:11.5px;color:#8493aa;">vs {{ live.pitcher }}</span>
+          </div>
+          <div style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#6f7f96;margin-bottom:12px;">{{ live.abLine }}</div>
+          <div style="display:flex;flex-direction:column;gap:3px;">
+            <sc-for list="{{ live.pitches }}" as="p" hint-placeholder-count="3">
+              <div style="display:grid;grid-template-columns:14px 28px 26px 116px 1fr;gap:7px;align-items:center;padding:5px 7px;border-radius:7px;background:#101b2e;">
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6f7f96;">{{ p.n }}</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;">{{ p.count }}</span>
+                <span style="font-size:11px;font-weight:800;color:{{ p.typeColor }};">{{ p.type }}</span>
+                <span style="display:flex;align-items:baseline;gap:5px;padding:2px 6px;border-radius:6px;white-space:nowrap;background:{{ p.veloBg }};">
+                  <b style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:{{ p.veloFg }};">{{ p.velo }}</b>
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ p.veloSub }}</span>
+                </span>
+                <span style="display:flex;align-items:baseline;gap:5px;padding:2px 6px;border-radius:6px;white-space:nowrap;overflow:hidden;background:{{ p.resBg }};">
+                  <b style="font-size:11.5px;font-weight:700;color:{{ p.resFg }};">{{ p.result }}</b>
+                  <span style="font-size:10px;color:#8493aa;">{{ p.resSub }}</span>
+                </span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <sc-if value="{{ isData }}" hint-placeholder-val="{{ false }}">
+      <div style="margin-bottom:22px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;">
+          <span style="font-size:15px;font-weight:800;letter-spacing:-.01em;">Model performance</span>
+          <select value="{{ range }}" onChange="{{ onRange }}" style="margin-left:auto;background:#141f33;color:#eef3f9;border:1px solid #253449;border-radius:8px;font-size:12px;font-weight:600;padding:6px 9px;cursor:pointer;">
+            <sc-for list="{{ rangeOpts }}" as="opt" hint-placeholder-count="3"><option value="{{ opt.value }}">{{ opt.label }}</option></sc-for>
+          </select>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:16px;">
+          <sc-for list="{{ kpis }}" as="k" hint-placeholder-count="5">
+            <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:12px 13px;display:flex;flex-direction:column;gap:5px;">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:22px;font-weight:700;color:{{ k.color }};line-height:1;">{{ k.big }}</span>
+              <span style="font-size:10.5px;font-weight:700;letter-spacing:.05em;color:#8493aa;text-transform:uppercase;">{{ k.label }}</span>
+              <span style="font-size:11px;color:#6f7f96;">{{ k.sub }}</span>
+            </div>
+          </sc-for>
+        </div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+
+          <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;">
+            <div style="font-size:12.5px;font-weight:700;margin-bottom:2px;">Accuracy over time by market</div>
+            <div style="font-size:11px;color:#6f7f96;margin-bottom:14px;">share of calls graded correct, per game day</div>
+            <div style="display:flex;flex-direction:column;gap:11px;">
+              <sc-for list="{{ charts.markets }}" as="m" hint-placeholder-count="4">
+                <div style="display:grid;grid-template-columns:104px 1fr 74px;gap:12px;align-items:end;">
+                  <span style="font-size:11.5px;color:#aebdd2;padding-bottom:2px;">{{ m.label }}</span>
+                  <span style="display:flex;align-items:flex-end;gap:3px;height:40px;">
+                    <sc-for list="{{ m.bars }}" as="b" hint-placeholder-count="10"><span style="flex:1;border-radius:2px 2px 0 0;background:{{ b.color }};height:{{ b.h }};display:block;"></span></sc-for>
+                  </span>
+                  <span style="display:flex;flex-direction:column;align-items:flex-end;">
+                    <b style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;">{{ m.now }}</b>
+                    <span style="font-family:'IBM Plex Mono',monospace;font-size:10.5px;color:{{ m.deltaColor }};">{{ m.delta }}</span>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;">
+            <div style="font-size:12.5px;font-weight:700;margin-bottom:2px;">Pitch-result accuracy by count</div>
+            <div style="font-size:11px;color:#6f7f96;margin-bottom:14px;">the model reads two-strike counts best</div>
+            <div style="display:flex;flex-direction:column;gap:6px;">
+              <sc-for list="{{ charts.counts }}" as="c" hint-placeholder-count="8">
+                <div style="display:grid;grid-template-columns:44px 1fr 84px;gap:10px;align-items:center;">
+                  <span style="font-family:'IBM Plex Mono',monospace;font-size:12px;color:#aebdd2;">{{ c.label }}</span>
+                  <span style="height:9px;background:#101b2e;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ c.color }};width:{{ c.w }}"></span></span>
+                  <span style="display:flex;gap:7px;justify-content:flex-end;font-family:'IBM Plex Mono',monospace;font-size:11.5px;">
+                    <b style="font-weight:600;">{{ c.pct }}</b>
+                    <span style="color:#6f7f96;">{{ c.n }}</span>
+                  </span>
+                </div>
+              </sc-for>
+            </div>
+          </div>
+
+          <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;">
+            <div style="font-size:12.5px;font-weight:700;margin-bottom:2px;">Pitch mix and velocity trend</div>
+            <div style="font-size:11px;color:#6f7f96;margin-bottom:14px;">mix across the range, average velo by pitcher workload</div>
+            <div style="display:flex;height:11px;border-radius:999px;overflow:hidden;background:#101b2e;margin-bottom:9px;">
+              <sc-for list="{{ charts.mix }}" as="s" hint-placeholder-count="5"><span style="display:block;height:100%;background:{{ s.color }};width:{{ s.w }}"></span></sc-for>
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-bottom:16px;">
+              <sc-for list="{{ charts.mix }}" as="s" hint-placeholder-count="5">
+                <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#aebdd2;">
+                  <span style="width:7px;height:7px;border-radius:2px;background:{{ s.color }};display:block;"></span>{{ s.label }}
+                  <b style="font-family:'IBM Plex Mono',monospace;font-weight:600;color:#eef3f9;">{{ s.pct }}</b>
+                </span>
+              </sc-for>
+            </div>
+            <div style="display:flex;align-items:flex-end;gap:8px;height:62px;border-bottom:1px solid #253449;padding-bottom:0;">
+              <sc-for list="{{ charts.velo }}" as="v" hint-placeholder-count="4">
+                <span style="flex:1;display:flex;flex-direction:column;align-items:center;gap:4px;justify-content:flex-end;height:100%;">
+                  <b style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;">{{ v.avg }}</b>
+                  <span style="width:100%;border-radius:3px 3px 0 0;background:#2f6b4c;height:{{ v.h }};display:block;"></span>
+                </span>
+              </sc-for>
+            </div>
+            <div style="display:flex;gap:8px;margin-top:6px;">
+              <sc-for list="{{ charts.velo }}" as="v" hint-placeholder-count="4"><span style="flex:1;text-align:center;font-family:'IBM Plex Mono',monospace;font-size:10px;color:#6f7f96;">{{ v.label }}</span></sc-for>
+            </div>
+          </div>
+
+          <div style="border:1px solid #253449;border-radius:12px;background:#141f33;padding:14px 16px;">
+            <div style="font-size:12.5px;font-weight:700;margin-bottom:2px;">Batter tendencies</div>
+            <div style="font-size:11px;color:#6f7f96;margin-bottom:12px;">most-seen batters in range, outcome mix and call accuracy</div>
+            <div style="display:grid;grid-template-columns:1.4fr 52px 52px 1fr 46px;gap:8px;padding:0 2px 7px;border-bottom:1px solid #253449;">
+              <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">BATTER</span>
+              <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:right;">AB</span>
+              <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:right;">STR%</span>
+              <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">OUTCOME MIX</span>
+              <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:right;">ACC</span>
+            </div>
+            <sc-for list="{{ charts.batters }}" as="b" hint-placeholder-count="6">
+              <div style="display:grid;grid-template-columns:1.4fr 52px 52px 1fr 46px;gap:8px;align-items:center;padding:7px 2px;border-bottom:1px solid #1a2740;">
+                <span style="font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ b.name }}</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ b.ab }}</span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ b.str }}</span>
+                <span style="display:flex;height:8px;border-radius:999px;overflow:hidden;background:#101b2e;">
+                  <sc-for list="{{ b.mix }}" as="s" hint-placeholder-count="4"><span style="display:block;height:100%;background:{{ s.color }};width:{{ s.w }}"></span></sc-for>
+                </span>
+                <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;font-weight:600;color:{{ b.accColor }};text-align:right;">{{ b.acc }}</span>
+              </div>
+            </sc-for>
+            <div style="display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:10px;">
+              <sc-for list="{{ charts.outcomeLegend }}" as="s" hint-placeholder-count="4">
+                <span style="display:inline-flex;align-items:center;gap:5px;font-size:11px;color:#8493aa;"><span style="width:7px;height:7px;border-radius:2px;background:{{ s.color }};display:block;"></span>{{ s.label }}</span>
+              </sc-for>
+            </div>
+          </div>
+        </div>
+      </div>
+    </sc-if>
+
+    <div style="display:flex;align-items:baseline;gap:12px;margin:0 0 10px;">
+      <span style="font-size:15px;font-weight:800;letter-spacing:-.01em;">{{ sectionTitle }}</span>
+      <span style="font-size:11.5px;color:#6f7f96;">{{ sectionSub }}</span>
+      <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#8493aa;">{{ sectionAcc }}</span>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:7px;">
+      <sc-for list="{{ games }}" as="g" hint-placeholder-count="6">
+        <div style="border:1px solid #253449;border-radius:12px;background:#141f33;overflow:hidden;">
+
+          <button onClick="{{ g.onToggle }}" style="width:100%;display:grid;grid-template-columns:18px 168px 128px 1fr 150px 138px;gap:14px;align-items:center;text-align:left;border:0;background:transparent;color:#eef3f9;font-family:inherit;padding:12px 14px;cursor:pointer;" style-hover="background:#18243b;">
+            <span style="font-size:15px;font-weight:700;color:#aebdd2;line-height:1;">{{ g.chev }}</span>
+            <span style="display:flex;flex-direction:column;gap:2px;">
+              <b style="font-size:13.5px;font-weight:800;letter-spacing:.01em;">{{ g.label }}</b>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8493aa;">{{ g.when }}</span>
+            </span>
+            <span style="display:flex;align-items:baseline;gap:7px;font-family:'IBM Plex Mono',monospace;">
+              <b style="font-size:17px;font-weight:700;">{{ g.score }}</b>
+              <span style="font-size:10px;font-weight:700;letter-spacing:.05em;color:{{ g.statusColor }};">{{ g.status }}</span>
+            </span>
+            <span style="display:flex;align-items:center;gap:8px;min-width:0;">
+              <span style="font-size:10px;font-weight:800;letter-spacing:.05em;color:#4ade80;background:rgba(74,222,128,.13);padding:2px 6px;border-radius:5px;white-space:nowrap;">TOP CALL</span>
+              <span style="font-size:12px;color:#aebdd2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ g.topCall }}</span>
+            </span>
+            <span style="display:flex;flex-direction:column;gap:2px;">
+              <span style="display:flex;align-items:baseline;gap:6px;">
+                <b style="font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;color:{{ g.accColor }};">{{ g.acc }}</b>
+                <span style="font-size:10.5px;color:#6f7f96;">at-bat calls</span>
+              </span>
+              <span style="height:5px;background:#101b2e;border-radius:999px;overflow:hidden;display:block;"><span style="display:block;height:100%;border-radius:999px;background:{{ g.accColor }};width:{{ g.accW }}"></span></span>
+            </span>
+            <span style="display:flex;flex-direction:column;gap:2px;text-align:right;">
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#aebdd2;">{{ g.pitchAcc }} <span style="font-size:10px;color:#6f7f96;">pitch</span></span>
+              <span style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;color:#aebdd2;">{{ g.mae }} <span style="font-size:10px;color:#6f7f96;">mph MAE</span></span>
+            </span>
+          </button>
+
+          <sc-if value="{{ g.expanded }}" hint-placeholder-val="{{ false }}">
+            <div style="border-top:1px solid #253449;background:#101b2e;padding:12px 14px 14px;">
+
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:11px;">
+                <span style="font-size:10px;font-weight:800;letter-spacing:.06em;color:#6f7f96;">FILTER</span>
+                <select value="{{ g.f.team }}" onChange="{{ g.f.onTeam }}" style="background:#141f33;color:#eef3f9;border:1px solid #253449;border-radius:7px;font-size:11.5px;font-weight:600;padding:5px 8px;cursor:pointer;">
+                  <sc-for list="{{ g.f.teamOpts }}" as="opt" hint-placeholder-count="3"><option value="{{ opt.value }}">{{ opt.label }}</option></sc-for>
+                </select>
+                <select value="{{ g.f.batter }}" onChange="{{ g.f.onBatter }}" style="background:#141f33;color:#eef3f9;border:1px solid #253449;border-radius:7px;font-size:11.5px;font-weight:600;padding:5px 8px;cursor:pointer;max-width:190px;">
+                  <sc-for list="{{ g.f.batterOpts }}" as="opt" hint-placeholder-count="4"><option value="{{ opt.value }}">{{ opt.label }}</option></sc-for>
+                </select>
+                <select value="{{ g.f.pitcher }}" onChange="{{ g.f.onPitcher }}" style="background:#141f33;color:#eef3f9;border:1px solid #253449;border-radius:7px;font-size:11.5px;font-weight:600;padding:5px 8px;cursor:pointer;max-width:190px;">
+                  <sc-for list="{{ g.f.pitcherOpts }}" as="opt" hint-placeholder-count="3"><option value="{{ opt.value }}">{{ opt.label }}</option></sc-for>
+                </select>
+                <sc-if value="{{ g.f.dirty }}" hint-placeholder-val="{{ false }}">
+                  <button onClick="{{ g.f.onReset }}" style="border:1px solid #253449;background:transparent;color:#aebdd2;font-family:inherit;font-size:11px;font-weight:600;padding:5px 8px;border-radius:7px;cursor:pointer;" style-hover="color:#eef3f9;border-color:#31435f;">Clear</button>
+                </sc-if>
+                <span style="margin-left:auto;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8493aa;">{{ g.filterAcc }}</span>
+              </div>
+
+              <div style="display:grid;grid-template-columns:16px 34px 1fr 1fr 208px 96px 88px;gap:10px;padding:0 8px 6px;">
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">#</span>
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">INN</span>
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">BATTER</span>
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">PITCHER</span>
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">CALL → RESULT</span>
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:right;">PITCHES</span>
+                <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:right;">PITCH ACC</span>
+              </div>
+
+              <div style="display:flex;flex-direction:column;gap:4px;">
+                <sc-for list="{{ g.abs }}" as="ab" hint-placeholder-count="5">
+                  <div style="border:1px solid #1a2740;border-radius:9px;background:#141f33;overflow:hidden;">
+                    <button onClick="{{ ab.onToggle }}" style="width:100%;display:grid;grid-template-columns:16px 34px 1fr 1fr 208px 96px 88px;gap:10px;align-items:center;text-align:left;border:0;background:transparent;color:#eef3f9;font-family:inherit;padding:8px;cursor:pointer;" style-hover="background:#18243b;">
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6f7f96;">{{ ab.n }}</span>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;">{{ ab.inn }}</span>
+                      <span style="display:flex;align-items:center;gap:6px;min-width:0;">
+                        <span style="font-size:9.5px;font-weight:800;color:#7fa0c4;">{{ ab.team }}</span>
+                        <span style="font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ ab.batter }}</span>
+                        <sc-if value="{{ ab.isTop }}" hint-placeholder-val="{{ false }}"><span style="font-size:9.5px;font-weight:800;color:#4ade80;background:rgba(74,222,128,.13);padding:2px 5px;border-radius:4px;white-space:nowrap;">TOP</span></sc-if>
+                      </span>
+                      <span style="font-size:12px;color:#aebdd2;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ ab.pitcher }}</span>
+                      <span style="display:flex;align-items:baseline;gap:6px;padding:3px 7px;border-radius:7px;white-space:nowrap;overflow:hidden;background:{{ ab.gradeBg }};">
+                        <b style="font-size:11.5px;font-weight:700;color:{{ ab.gradeFg }};">{{ ab.predLabel }}</b>
+                        <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ ab.predProb }}</span>
+                        <span style="font-size:10px;color:#6f7f96;">→ {{ ab.actual }}</span>
+                      </span>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;text-align:right;">{{ ab.pitches }}</span>
+                      <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:{{ ab.pAccColor }};text-align:right;">{{ ab.pitchAcc }}</span>
+                    </button>
+
+                    <sc-if value="{{ ab.expanded }}" hint-placeholder-val="{{ false }}">
+                      <div style="border-top:1px solid #1a2740;background:#0d1729;padding:9px 10px 11px;">
+                        <div style="display:grid;grid-template-columns:18px 38px 38px 130px 1fr 78px;gap:10px;padding:0 4px 5px;">
+                          <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">P</span>
+                          <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">CNT</span>
+                          <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">TYPE</span>
+                          <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;">VELO ACT · CALL · Δ</span>
+                          <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;"><span style="font-size:9.5px;">RESULT vs CALL</span></span>
+                          <span style="font-size:9.5px;font-weight:800;letter-spacing:.05em;color:#6f7f96;text-align:right;">GRADE</span>
+                        </div>
+                        <sc-for list="{{ ab.plist }}" as="p" hint-placeholder-count="4">
+                          <div style="display:grid;grid-template-columns:18px 38px 38px 130px 1fr 78px;gap:10px;align-items:center;padding:5px 4px;border-top:1px solid #141f33;">
+                            <span style="font-family:'IBM Plex Mono',monospace;font-size:11px;color:#6f7f96;">{{ p.n }}</span>
+                            <span style="font-family:'IBM Plex Mono',monospace;font-size:11.5px;color:#aebdd2;">{{ p.count }}</span>
+                            <span style="font-size:11px;font-weight:800;color:{{ p.typeColor }};">{{ p.type }}</span>
+                            <span style="display:inline-flex;align-items:baseline;gap:6px;padding:2px 7px;border-radius:6px;white-space:nowrap;background:{{ p.veloBg }};">
+                              <b style="font-family:'IBM Plex Mono',monospace;font-size:12.5px;font-weight:600;color:{{ p.veloFg }};">{{ p.velo }}</b>
+                              <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ p.veloSub }}</span>
+                            </span>
+                            <span style="display:inline-flex;align-items:baseline;gap:6px;">
+                              <b style="font-size:11.5px;font-weight:700;color:{{ p.resFg }};">{{ p.result }}</b>
+                              <span style="font-size:10.5px;color:#6f7f96;">called {{ p.predResult }}</span>
+                              <span style="font-family:'IBM Plex Mono',monospace;font-size:10px;color:#8493aa;">{{ p.predProb }}</span>
+                            </span>
+                            <span style="text-align:right;"><span style="display:inline-block;font-family:'IBM Plex Mono',monospace;font-size:10.5px;font-weight:600;padding:2px 6px;border-radius:5px;color:{{ p.gradeFg }};background:{{ p.gradeBg }};">{{ p.grade }}</span></span>
+                          </div>
+                        </sc-for>
+                        <div style="display:flex;gap:16px;margin-top:9px;padding-top:8px;border-top:1px solid #141f33;font-family:'IBM Plex Mono',monospace;font-size:11px;color:#8493aa;">
+                          <span>pitch result {{ ab.pitchAcc }}</span>
+                          <span>velo MAE {{ ab.mae }} mph</span>
+                          <span>proj pitches {{ ab.projPitches }} · actual {{ ab.actPitches }}</span>
+                        </div>
+                      </div>
+                    </sc-if>
+                  </div>
+                </sc-for>
+              </div>
+              <sc-if value="{{ g.empty }}" hint-placeholder-val="{{ false }}">
+                <div style="padding:16px 8px;font-size:12px;color:#6f7f96;">No at-bats match this filter.</div>
+              </sc-if>
+            </div>
+          </sc-if>
+        </div>
+      </sc-for>
+    </div>
+  </div>
+</div>
+
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;confidenceThreshold&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:0.4,&quot;min&quot;:0.2,&quot;max&quot;:0.7,&quot;step&quot;:0.01,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Prediction surfacing&quot;},&quot;showVeloGrades&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prediction surfacing&quot;}}">
+class Component extends DCLogic {
+  constructor(props) {
+    super(props);
+    this.C = { good: "#4ade80", ok: "#e0a83a", bad: "#ff7b6b", dim: "#aebdd2" };
+    this.PT = { FF: "#ff7b6b", SL: "#e0a83a", CH: "#4ade80", CU: "#6aa2ff", SI: "#b49bff" };
+    this.OUT = { Strikeout: "#ff7b6b", Walk: "#6aa2ff", Hit: "#4ade80", Out: "#8493aa" };
+    this.data = this.build();
+    const lg = this.data.today.find((g) => g.live);
+    const openG = {}, openAb = {};
+    if (lg) { openG[lg.pk] = true; openAb[lg.pk + ":" + lg.abs[lg.abs.length - 1].n] = true; }
+    this.state = { view: "live", openG, openAb, filters: {}, range: "Last 7 days" };
+  }
+
+  // ── synthetic but internally consistent data ────────────────────────────
+  rng(seed) { let s = seed; return () => { s = (s * 1664525 + 1013904223) % 4294967296; return s / 4294967296; }; }
+
+  build() {
+    const R = this.rng(20260817);
+    const T = {
+      NYY: { p: "G. Cole", b: ["A. Judge", "J. Soto", "A. Volpe", "G. Torres"] },
+      BOS: { p: "B. Bello", b: ["R. Devers", "J. Duran", "T. Story", "C. Yorke"] },
+      LAD: { p: "Y. Yamamoto", b: ["S. Ohtani", "M. Betts", "F. Freeman", "W. Smith"] },
+      SD: { p: "D. Cease", b: ["F. Tatis Jr.", "M. Machado", "X. Bogaerts", "J. Merrill"] },
+      CLE: { p: "T. Bibee", b: ["J. Ramirez", "S. Kwan", "J. Naylor", "A. Rocchio"] },
+      TOR: { p: "K. Gausman", b: ["V. Guerrero Jr.", "B. Bichette", "D. Varsho", "A. Kirk"] },
+      HOU: { p: "F. Valdez", b: ["Y. Alvarez", "J. Altuve", "A. Bregman", "K. Tucker"] },
+      SEA: { p: "L. Castillo", b: ["J. Rodriguez", "C. Raleigh", "R. Arozarena", "J. Polanco"] },
+      ATL: { p: "S. Strider", b: ["R. Acuna Jr.", "M. Olson", "M. Ozuna", "A. Riley"] },
+      PHI: { p: "Z. Wheeler", b: ["B. Harper", "T. Turner", "K. Schwarber", "A. Bohm"] },
+    };
+    const AB_OUT = ["Strikeout", "Walk", "Hit", "Out"];
+    const PR = ["Strike/Foul", "Ball", "In Play"];
+    const TYPES = ["FF", "SL", "CH", "CU", "SI"];
+    const BASE = { FF: 95.4, SI: 93.8, SL: 86.2, CH: 84.6, CU: 79.4 };
+
+    const mkGame = (away, home, when, live, dateKey, nAb) => {
+      const abs = [];
+      let ci = 0, hi = 0, pcA = 0, pcH = 0;
+      for (let i = 1; i <= nAb; i++) {
+        const half = i % 2 === 1 ? "T" : "B";
+        const inn = Math.ceil(i / 2);
+        const bt = half === "T" ? away : home;
+        const pt = half === "T" ? home : away;
+        const batter = T[bt].b[(half === "T" ? ci++ : hi++) % 4];
+        const pitcher = T[pt].p;
+        const probs = AB_OUT.map(() => 0.12 + R() * 0.5);
+        const sum = probs.reduce((a, b) => a + b, 0);
+        const norm = probs.map((p) => p / sum);
+        let bi = 0; norm.forEach((p, k) => { if (p > norm[bi]) bi = k; });
+        const predLabel = AB_OUT[bi], predProb = norm[bi];
+        const hit = R() < predProb + 0.22;
+        const actual = hit ? predLabel : AB_OUT[(bi + 1 + Math.floor(R() * 3)) % 4];
+        const np = 2 + Math.floor(R() * 5);
+        const pitches = [];
+        let b = 0, s = 0;
+        for (let j = 1; j <= np; j++) {
+          const type = TYPES[Math.floor(R() * TYPES.length)];
+          const predVelo = BASE[type] + (R() - 0.5) * 2.6 - (half === "T" ? pcH : pcA) * 0.012;
+          const err = (R() + R() + R() - 1.5) * 2.1;
+          const velo = predVelo + err;
+          const prProbs = [0.3 + R() * 0.3, 0.22 + R() * 0.25, 0.06 + R() * 0.12];
+          const ps = prProbs.reduce((a, x) => a + x, 0);
+          const pn = prProbs.map((x) => x / ps);
+          let pbi = 0; pn.forEach((p, k) => { if (p > pn[pbi]) pbi = k; });
+          const predResult = PR[pbi];
+          const rOk = R() < pn[pbi] + 0.28;
+          const result = rOk ? predResult : PR[(pbi + 1 + Math.floor(R() * 2)) % 3];
+          const count = b + "-" + s;
+          if (result === "Ball") b = Math.min(3, b + 1); else if (result === "Strike/Foul") s = Math.min(2, s + 1);
+          if (half === "T") pcH++; else pcA++;
+          pitches.push({ n: j, count, type, predVelo, velo, err, predResult, predProb: pn[pbi], result, ok: result === predResult, pc: half === "T" ? pcH : pcA });
+        }
+        abs.push({ n: i, inn: half + inn, team: bt, batter, pitcher, predLabel, predProb, actual, ok: actual === predLabel, projPitches: Math.max(1, np + (R() < 0.5 ? -1 : 1)), actPitches: np, pitches });
+      }
+      const away_s = 1 + Math.floor(R() * 6), home_s = 1 + Math.floor(R() * 6);
+      return { pk: away + home + dateKey, away, home, when, live, dateKey, score: away_s + "–" + home_s, abs };
+    };
+
+    const today = [
+      mkGame("NYY", "BOS", "7:05 PM · T4", true, "0817", 7),
+      mkGame("LAD", "SD", "9:40 PM · B2", true, "0817", 5),
+      mkGame("CLE", "TOR", "1:07 PM", false, "0817", 8),
+      mkGame("HOU", "SEA", "3:10 PM", false, "0817", 8),
+      mkGame("ATL", "PHI", "1:35 PM", false, "0817", 7),
+      mkGame("SD", "CLE", "12:05 PM", false, "0817", 7),
+    ];
+    const hpairs = [["TOR", "CLE", "0816"], ["BOS", "NYY", "0816"], ["SEA", "HOU", "0815"], ["PHI", "ATL", "0815"], ["SD", "LAD", "0814"], ["NYY", "TOR", "0814"], ["CLE", "BOS", "0813"], ["ATL", "SEA", "0813"], ["LAD", "PHI", "0812"], ["HOU", "SD", "0811"]];
+    const historic = hpairs.map(([a, h, d], i) => mkGame(a, h, "Aug " + d.slice(2) + " · Final", false, d, 7 + (i % 3)));
+    return { today, historic };
+  }
+
+  // ── formatting helpers ──────────────────────────────────────────────────
+  pct(x) { return Math.round(x * 100) + "%"; }
+  band(v, hi, mid) { return v >= hi ? "good" : v >= mid ? "ok" : "bad"; }
+  bandColor(b) { return b === "good" ? "#4ade80" : b === "ok" ? "#e0a83a" : "#ff7b6b"; }
+  bandBg(b) { return b === "good" ? "rgba(74,222,128,.12)" : b === "ok" ? "rgba(224,168,58,.13)" : "rgba(255,123,107,.13)"; }
+  veloBand(e) { const a = Math.abs(e); return a <= 1 ? "good" : a <= 2.5 ? "ok" : "bad"; }
+
+  abStats(ab) {
+    const c = ab.pitches.filter((p) => p.ok).length;
+    const mae = ab.pitches.reduce((a, p) => a + Math.abs(p.err), 0) / ab.pitches.length;
+    return { c, n: ab.pitches.length, mae };
+  }
+  gameStats(abs) {
+    let ac = 0, pc = 0, pn = 0, es = 0;
+    abs.forEach((ab) => { if (ab.ok) ac++; ab.pitches.forEach((p) => { pn++; if (p.ok) pc++; es += Math.abs(p.err); }); });
+    return { abC: ac, abN: abs.length, pC: pc, pN: pn, mae: pn ? es / pn : 0 };
+  }
+
+  // ── view models ─────────────────────────────────────────────────────────
+  filterFor(pk) { return this.state.filters[pk] || { team: "All teams", batter: "All batters", pitcher: "All pitchers" }; }
+  setFilter(pk, key, val) {
+    this.setState((s) => ({ filters: Object.assign({}, s.filters, { [pk]: Object.assign({}, this.filterFor(pk), { [key]: val }) }) }));
+  }
+
+  gameVM(g) {
+    const st = this.gameStats(g.abs);
+    const expanded = !!this.state.openG[g.pk];
+    const f = this.filterFor(g.pk);
+    const abs = g.abs.filter((ab) =>
+      (f.team === "All teams" || ab.team === f.team) &&
+      (f.batter === "All batters" || ab.batter === f.batter) &&
+      (f.pitcher === "All pitchers" || ab.pitcher === f.pitcher));
+    const fst = this.gameStats(abs);
+    const top = g.abs.reduce((a, b) => (b.predProb > a.predProb ? b : a), g.abs[0]);
+    const accRate = st.abN ? st.abC / st.abN : 0;
+    const bandG = this.band(accRate, 0.66, 0.5);
+    const thr = this.props.confidenceThreshold ?? 0.4;
+    return {
+      pk: g.pk,
+      label: g.away + " @ " + g.home,
+      when: g.when,
+      score: g.score,
+      status: g.live ? "LIVE" : "FINAL",
+      statusColor: g.live ? "#4ade80" : "#6f7f96",
+      chev: expanded ? "▾" : "▸",
+      expanded,
+      topCall: top.predLabel + " " + this.pct(top.predProb) + " · " + top.batter,
+      acc: st.abC + "/" + st.abN,
+      accColor: this.bandColor(bandG),
+      accW: Math.round(accRate * 100) + "%",
+      pitchAcc: st.pC + "/" + st.pN,
+      mae: st.mae.toFixed(1),
+      empty: expanded && abs.length === 0,
+      filterAcc: abs.length === g.abs.length
+        ? "all " + st.abN + " at-bats · pitch " + st.pC + "/" + st.pN + " · MAE " + st.mae.toFixed(1)
+        : abs.length + " of " + g.abs.length + " at-bats · " + fst.abC + "/" + fst.abN + " calls · MAE " + fst.mae.toFixed(1),
+      onToggle: () => this.setState((s) => ({ openG: Object.assign({}, s.openG, { [g.pk]: !s.openG[g.pk] }) })),
+      f: {
+        team: f.team, batter: f.batter, pitcher: f.pitcher,
+        dirty: f.team !== "All teams" || f.batter !== "All batters" || f.pitcher !== "All pitchers",
+        teamOpts: ["All teams", g.away, g.home].map((v) => ({ label: v, value: v })),
+        batterOpts: ["All batters"].concat(Array.from(new Set(g.abs.map((a) => a.batter)))).map((v) => ({ label: v, value: v })),
+        pitcherOpts: ["All pitchers"].concat(Array.from(new Set(g.abs.map((a) => a.pitcher)))).map((v) => ({ label: v, value: v })),
+        onTeam: (e) => this.setFilter(g.pk, "team", e.target.value),
+        onBatter: (e) => this.setFilter(g.pk, "batter", e.target.value),
+        onPitcher: (e) => this.setFilter(g.pk, "pitcher", e.target.value),
+        onReset: () => this.setState((s) => ({ filters: Object.assign({}, s.filters, { [g.pk]: null }) })),
+      },
+      abs: abs.map((ab) => {
+        const s = this.abStats(ab);
+        const key = g.pk + ":" + ab.n;
+        const pb = this.band(s.c / s.n, 0.66, 0.5);
+        return {
+          key, n: ab.n, inn: ab.inn, team: ab.team, batter: ab.batter, pitcher: ab.pitcher,
+          predLabel: ab.predLabel, predProb: this.pct(ab.predProb), actual: ab.actual,
+          gradeBg: this.bandBg(ab.ok ? "good" : "bad"),
+          gradeFg: ab.ok ? "#4ade80" : "#ff7b6b",
+          isTop: ab.predProb >= Math.max(thr, top.predProb - 0.001),
+          pitches: ab.actPitches + " / " + ab.projPitches,
+          projPitches: ab.projPitches, actPitches: ab.actPitches,
+          pitchAcc: s.c + "/" + s.n,
+          pAccColor: this.bandColor(pb),
+          mae: s.mae.toFixed(1),
+          expanded: !!this.state.openAb[key],
+          onToggle: () => this.setState((st2) => ({ openAb: Object.assign({}, st2.openAb, { [key]: !st2.openAb[key] }) })),
+          plist: ab.pitches.map((p) => this.pitchVM(p)),
+        };
+      }),
+    };
+  }
+
+  pitchVM(p) {
+    const vb = this.veloBand(p.err);
+    const graded = this.props.showVeloGrades ?? true;
+    const d = (p.velo - p.predVelo >= 0 ? "+" : "−") + Math.abs(p.velo - p.predVelo).toFixed(1);
+    return {
+      n: p.n, count: p.count, type: p.type, typeColor: this.PT[p.type],
+      velo: p.velo.toFixed(1),
+      veloSub: p.predVelo.toFixed(1) + " · " + d,
+      veloFg: graded ? this.bandColor(vb) : "#eef3f9",
+      veloBg: graded ? this.bandBg(vb) : "transparent",
+      result: p.result, predResult: p.predResult, predProb: this.pct(p.predProb),
+      resFg: p.ok ? "#4ade80" : "#ff7b6b",
+      resBg: this.bandBg(p.ok ? "good" : "bad"),
+      grade: (p.ok ? "HIT" : "MISS") + " · " + Math.abs(p.err).toFixed(1),
+      gradeFg: this.bandColor(p.ok && vb !== "bad" ? "good" : !p.ok && vb === "bad" ? "bad" : "ok"),
+      gradeBg: this.bandBg(p.ok && vb !== "bad" ? "good" : !p.ok && vb === "bad" ? "bad" : "ok"),
+    };
+  }
+
+  liveVM() {
+    const g = this.data.today.find((x) => x.live);
+    const ab = g.abs[g.abs.length - 1];
+    const s = this.abStats(ab);
+    const gs = this.gameStats(g.abs);
+    const last = ab.pitches[ab.pitches.length - 1];
+    const dist = [
+      { label: "Strike / Foul", p: 0.46 }, { label: "Ball", p: 0.33 }, { label: "In Play", p: 0.21 },
+    ];
+    return {
+      situation: g.away + " @ " + g.home + " · " + ab.inn + " · " + last.count,
+      poolCount: 4,
+      bestLabel: ab.predLabel,
+      bestProb: this.pct(ab.predProb),
+      bestMarket: "At-Bat Result",
+      bestWhy: ab.batter + " vs " + ab.pitcher + " — model's most confident open call across the four micro-markets.",
+      dist: dist.map((r, i) => ({ label: r.label, pct: this.pct(r.p), w: Math.round(r.p * 100) + "%", color: i === 0 ? "#22a566" : "#2f6b4c" })),
+      veloPred: last.predVelo.toFixed(1),
+      abPitches: ab.projPitches + ".5",
+      gameAcc: gs.abC + "/" + gs.abN,
+      batter: ab.batter, pitcher: ab.pitcher,
+      abLine: ab.inn + " · " + last.count + " count · " + ab.pitches.length + " pitches seen",
+      abAcc: "pitch " + s.c + "/" + s.n + " · MAE " + s.mae.toFixed(1),
+      pitches: ab.pitches.map((p) => {
+        const vm = this.pitchVM(p);
+        vm.resSub = "called " + p.predResult;
+        return vm;
+      }),
+    };
+  }
+
+  charts(games) {
+    const all = [];
+    games.forEach((g) => g.abs.forEach((ab) => ab.pitches.forEach((p) => all.push({ p, ab, g }))));
+    const R = this.rng(77);
+    const mkts = [
+      { label: "At-Bat Result", base: 0.61 }, { label: "Pitch Result", base: 0.68 },
+      { label: "Pitch Speed O/U", base: 0.72 }, { label: "Pitches in AB", base: 0.57 },
+    ];
+    const markets = mkts.map((m) => {
+      const series = Array.from({ length: 12 }, () => m.base + (R() - 0.5) * 0.16);
+      const now = series[series.length - 1], prev = series[series.length - 2];
+      return {
+        label: m.label,
+        bars: series.map((v) => ({ h: Math.max(4, Math.round(v * 52)) + "px", color: v >= 0.66 ? "#22a566" : v >= 0.5 ? "#2f6b4c" : "#5c3730" })),
+        now: this.pct(now),
+        delta: (now >= prev ? "+" : "−") + Math.abs(Math.round((now - prev) * 100)) + "pt",
+        deltaColor: now >= prev ? "#4ade80" : "#ff7b6b",
+      };
+    });
+
+    const byCount = {};
+    all.forEach(({ p }) => { (byCount[p.count] = byCount[p.count] || []).push(p); });
+    const counts = Object.keys(byCount).map((k) => {
+      const arr = byCount[k], c = arr.filter((p) => p.ok).length, r = c / arr.length;
+      return { label: k, n: arr.length, r, pct: this.pct(r), w: Math.round(r * 100) + "%", color: this.bandColor(this.band(r, 0.66, 0.5)) };
+    }).filter((c) => c.n >= 6).sort((a, b) => b.r - a.r).slice(0, 8);
+
+    const tc = {};
+    all.forEach(({ p }) => { tc[p.type] = (tc[p.type] || 0) + 1; });
+    const tot = all.length;
+    const mix = Object.keys(tc).sort((a, b) => tc[b] - tc[a]).map((k) => ({
+      label: k, color: this.PT[k], pct: Math.round((tc[k] / tot) * 100) + "%", w: (tc[k] / tot) * 100 + "%",
+    }));
+
+    const buckets = [[1, 25], [26, 50], [51, 75], [76, 120]];
+    const velo = buckets.map(([lo, hi]) => {
+      const arr = all.filter(({ p }) => p.pc >= lo && p.pc <= hi);
+      const avg = arr.length ? arr.reduce((a, x) => a + x.p.velo, 0) / arr.length : 0;
+      return { label: lo + "–" + (hi === 120 ? "100+" : hi), avg: avg.toFixed(1), raw: avg };
+    });
+    const vmin = Math.min.apply(null, velo.map((v) => v.raw)) - 1.2;
+    const vmax = Math.max.apply(null, velo.map((v) => v.raw)) + 0.6;
+    velo.forEach((v) => { v.h = Math.round(10 + ((v.raw - vmin) / (vmax - vmin)) * 34) + "px"; });
+
+    const bt = {};
+    games.forEach((g) => g.abs.forEach((ab) => {
+      const e = bt[ab.batter] = bt[ab.batter] || { name: ab.batter, ab: 0, ok: 0, str: 0, pn: 0, mix: {} };
+      e.ab++; if (ab.ok) e.ok++;
+      e.mix[ab.actual] = (e.mix[ab.actual] || 0) + 1;
+      ab.pitches.forEach((p) => { e.pn++; if (p.result === "Strike/Foul") e.str++; });
+    }));
+    const batters = Object.values(bt).sort((a, b) => b.ab - a.ab).slice(0, 7).map((e) => {
+      const r = e.ok / e.ab;
+      return {
+        name: e.name, ab: e.ab, str: Math.round((e.str / e.pn) * 100) + "%",
+        acc: this.pct(r), accColor: this.bandColor(this.band(r, 0.6, 0.45)),
+        mix: ["Strikeout", "Walk", "Hit", "Out"].filter((k) => e.mix[k]).map((k) => ({ color: this.OUT[k], w: ((e.mix[k] / e.ab) * 100) + "%" })),
+      };
+    });
+
+    const gs = this.gameStats([].concat.apply([], games.map((g) => g.abs)));
+    const hiConf = [];
+    games.forEach((g) => g.abs.forEach((ab) => { if (ab.predProb >= 0.42) hiConf.push(ab); }));
+    const hc = hiConf.filter((a) => a.ok).length / Math.max(1, hiConf.length);
+    const kpis = [
+      { big: this.pct(gs.abC / gs.abN), label: "At-bat call accuracy", sub: gs.abC + " of " + gs.abN + " at-bats", color: "#eef3f9" },
+      { big: this.pct(gs.pC / gs.pN), label: "Pitch result accuracy", sub: gs.pC + " of " + gs.pN + " pitches", color: "#eef3f9" },
+      { big: gs.mae.toFixed(2), label: "Velo MAE (mph)", sub: "mean abs error, all pitches", color: "#eef3f9" },
+      { big: this.pct(hc), label: "High-confidence accuracy", sub: hiConf.length + " calls at 42%+", color: "#4ade80" },
+      { big: games.length + "", label: "Games graded", sub: this.state.range.toLowerCase(), color: "#aebdd2" },
+    ];
+    return { markets, counts, mix, velo, batters, kpis, outcomeLegend: ["Strikeout", "Walk", "Hit", "Out"].map((k) => ({ label: k, color: this.OUT[k] })) };
+  }
+
+  renderVals() {
+    const isLive = this.state.view === "live";
+    const source = isLive ? this.data.today : this.data.historic;
+    const games = source.map((g) => this.gameVM(g));
+    const gs = this.gameStats([].concat.apply([], source.map((g) => g.abs)));
+    const ch = isLive ? null : this.charts(this.data.historic);
+    return {
+      isLive, isData: !isLive,
+      clock: "Aug 17 · 7:42 PM ET",
+      onLive: () => this.setState({ view: "live" }),
+      onData: () => this.setState({ view: "data" }),
+      live: isLive ? this.liveVM() : {},
+      games,
+      sectionTitle: isLive ? "Today's games" : "Graded game history",
+      sectionSub: isLive ? "expand a game for at-bat calls, then an at-bat for pitch by pitch" : "same drill-down, fully settled",
+      sectionAcc: gs.abC + "/" + gs.abN + " at-bat calls · " + gs.pC + "/" + gs.pN + " pitch calls · MAE " + gs.mae.toFixed(2),
+      range: this.state.range,
+      rangeOpts: ["Last 7 days", "Last 30 days", "Season to date"].map((v) => ({ label: v, value: v })),
+      onRange: (e) => this.setState({ range: e.target.value }),
+      kpis: ch ? ch.kpis : [],
+      charts: ch || {},
+    };
+  }
+}
+
+</script>
+</body>
+</html>
