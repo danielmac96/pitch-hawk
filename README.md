@@ -217,6 +217,7 @@ pip install -r dashboard/requirements.txt && streamlit run dashboard/app.py
 | [`docs/DATABASE.md`](docs/DATABASE.md) | table-by-table reference and retention policy |
 | [`docs/FRONTEND.md`](docs/FRONTEND.md) | the SPA, the build, and the wagering feature flag |
 | [`docs/design-tokens.md`](docs/design-tokens.md) | frontend design system |
+| [`docs/METRICS-INVENTORY-2026-09-28.md`](docs/METRICS-INVENTORY-2026-09-28.md) | dated snapshot: every metric collected/calculated, R2 vs Supabase, what the UI shows, and the back-end backlog |
 | [`dashboard/README.md`](dashboard/README.md) | the QA dashboard and how its thresholds were calibrated |
 
 **One rule these docs try to keep:** a number a command can print belongs in a
