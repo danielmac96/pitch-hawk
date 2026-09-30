@@ -10,6 +10,11 @@
 body { margin: 0; }
 
 @keyframes ph-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+/* Played once when a freshness stamp changes. The board re-renders every
+   poll, so Board.flashIf() adds the class only on the render where the stamp
+   moved; a class left on would replay the flash every eight seconds. */
+@keyframes ph-flash { 0% { background: rgba(74,222,128,.45); color: #0c1424; } 100% { background: transparent; } }
+.ph-flash { animation: ph-flash 1.6s ease-out 1; }
 
 .ph-root {
   --bg:#f5f7fb; --surface:#ffffff; --surface-2:#f6f8fc;
@@ -45,6 +50,18 @@ body { margin: 0; }
   --blue:#6aa2ff; --blue-bg:#16294a; --purple:#b49bff; --purple-bg:#241d3d; --amber:#e0a83a; --amber-bg:#33280d;
   --bad:#ff7b6b; --bad-bg:#3a1c1a;
   --accent:#22a566; --bc-bg:#0a1322; --bc-inner:#132239;
+  /* 2026-09 four-tab redesign (design/redesign/README.md). Only the tokens
+     the handoff names that had no variable yet; the rest map onto the ones
+     above (chip → --track, active → --seg-active-bg, bd2 → --border-2,
+     row → --row-border, panel2 → --surface-2). */
+  --panel3:#0d1729;
+  --grn:#4ade80; --grn-edge:#1f3d2b; --grn-sel-bg:#12301f;
+  --phase-blue:#7fa0c4; --data-blue:#2f8fd6; --amb-edge:#6b5220;
+  --err-bg:#3a1c1a; --err-bd:#5a2a26; --err-fg:#ff9b8f;
+  --res-good-fg:#5fe094; --res-good-bg:rgba(34,165,102,.22);
+  --res-amber-fg:#f0c063; --res-amber-bg:rgba(224,168,58,.20);
+  --res-bad-fg:#ff9b8f; --res-bad-bg:rgba(242,86,76,.20);
+  --live-chip-bg:rgba(74,222,128,.13);
 }
 
 /* Hover lift for edge/market cards (the DC used a style-hover attribute; here
@@ -186,3 +203,344 @@ body { margin: 0; }
   .ph-main.phv-wide { padding-bottom: 0; }
 }
 
+/* ============================================================
+   Four-tab redesign — shell (design/redesign/README.md "Global
+   shell"). Desktop only for now; the 390px layout is not designed,
+   so the mobile rules above are left as they are.
+   ============================================================ */
+.ph-mono { font-family: 'IBM Plex Mono', monospace; }
+
+/* The redesign's content measure. Home and Predictions use it now; Live and
+   Data Feed move onto it when their phases replace the phv-wide views. */
+.ph-main.ph-shell,
+.ph-header-inner.ph-shell,
+.ph-footer-inner,
+.ph-gutter {
+  width: 100%;
+  max-width: 1368px;
+  padding-left: 24px;
+  padding-right: 24px;
+  margin: 0 auto;
+}
+.ph-main.ph-shell, .ph-gutter { padding-top: 1.2rem; }
+
+.ph-brand {
+  display: flex; align-items: center; gap: .5rem;
+  font-weight: 800; font-size: 1.16rem; letter-spacing: -.02em;
+  color: inherit; cursor: pointer;
+}
+.ph-brand-mark { color: var(--accent); font-size: .85rem; }
+.ph-brand-hawk { color: var(--accent); }
+
+.ph-livecount {
+  display: flex; align-items: center; gap: .42rem;
+  font-size: .78rem; color: var(--muted); font-weight: 600; white-space: nowrap;
+}
+/* Green means live and nothing else, so the dot is only green — and only
+   pulses — while a game is actually in progress. */
+.ph-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--faint); flex: none; }
+.ph-dot.is-live { background: var(--accent); animation: ph-pulse 1.8s ease-in-out infinite; }
+
+.ph-kicker {
+  font-size: 10px; font-weight: 800; letter-spacing: .08em;
+  text-transform: uppercase; color: var(--text-2); white-space: nowrap;
+}
+
+/* API unreachable. Deliberately unlike the empty-slate panel: a connection
+   failure must never read as a quiet day. */
+.ph-banner-err {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border: 1px solid var(--err-bd); background: var(--err-bg);
+  border-radius: 12px; padding: 12px 16px; margin-bottom: 14px;
+}
+.ph-banner-err .ph-kicker { color: var(--err-fg); }
+.ph-banner-err-body { font-size: 13px; color: var(--text); }
+.ph-banner-err-when { margin-left: auto; font-size: 11.5px; color: var(--text-2); }
+
+/* ★ WATCHING row. */
+.ph-watch { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+.ph-watch-pill {
+  display: flex; align-items: center; gap: 8px;
+  border: 1px solid var(--border); background: var(--surface);
+  border-radius: 999px; padding: 4px 6px 4px 12px; white-space: nowrap;
+}
+.ph-watch-go {
+  border: 0; background: transparent; color: var(--text); cursor: pointer;
+  display: flex; align-items: baseline; gap: 8px; padding: 0; font-family: inherit;
+}
+.ph-watch-go b { font-size: 12.5px; font-weight: 800; }
+.ph-watch-sub { font-size: 11.5px; color: var(--text-2); }
+.ph-watch-unpin {
+  border: 0; background: var(--track); color: var(--amber); cursor: pointer;
+  border-radius: 999px; width: 24px; height: 24px; font-size: 12px; font-family: inherit;
+}
+
+/* The missing-value tag that rides beside a "—". Three kinds, one shape:
+   NOT SERVED (the data exists, no route yet), NOT MODELED (no model),
+   NEEDS ROUTE (a route has to be built before the slot can fill). */
+.ph-missing { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.ph-missing-dash { font-family: 'IBM Plex Mono', monospace; color: var(--faint); }
+.ph-tag {
+  display: inline-block; font-size: 8.5px; font-weight: 800; letter-spacing: .05em;
+  text-transform: uppercase; line-height: 1; padding: 3px 6px; border-radius: 999px;
+  border: 1px solid var(--border-2); color: var(--muted); white-space: nowrap;
+}
+.ph-tag--needsroute { border-color: var(--amb-edge); color: var(--amber); }
+
+.ph-footer-inner {
+  display: flex; justify-content: space-between; gap: 1rem;
+  flex-wrap: wrap; align-items: center;
+}
+.ph-footer-brand {
+  display: flex; align-items: center; gap: .5rem;
+  font-weight: 800; font-size: 1.05rem; color: inherit; cursor: pointer;
+}
+.ph-footer-brand span { color: var(--grn); }
+.ph-footer-note { margin: 0; font-size: .74rem; color: #8a9bb2; max-width: 46rem; flex: 1; min-width: 240px; }
+
+/* Page title row shared by the redesigned tabs. */
+.ph-h1 { margin: 0; font-size: 28px; font-weight: 800; letter-spacing: -.02em; }
+.ph-sub { margin: .35rem 0 0; color: var(--muted); font-size: 13px; }
+
+/* ============================================================
+   Four-tab redesign — Home (design/redesign/README.md "Screen:
+   Home"). Desktop only.
+   ============================================================ */
+.ph-dot-sm { width: 6px; height: 6px; }
+.ph-dim { color: var(--text-2); }
+.ph-ellip { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.ph-kicker--mut { color: var(--muted); }
+.ph-kicker.is-live { color: var(--grn); }
+.ph-kicker.is-pre { color: var(--phase-blue); }
+
+/* Title row */
+.ph-titlerow { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
+.ph-titlerow-date { font-size: 12px; color: var(--muted); }
+.ph-titlerow-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+
+/* Segmented control and filter chips — shared by every tab from here on. */
+.ph-seg {
+  display: flex; gap: 2px; background: var(--track); border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px;
+}
+.ph-seg-btn {
+  border: 0; cursor: pointer; font-family: inherit; font-weight: 700; font-size: 12.5px;
+  padding: 6px 14px; border-radius: 999px; display: flex; align-items: center; gap: 6px;
+  background: transparent; color: var(--muted); white-space: nowrap;
+}
+.ph-seg-btn.is-on { background: var(--seg-active-bg); color: var(--seg-active-fg); }
+.ph-chip {
+  cursor: pointer; font-family: inherit; font-weight: 700; font-size: 11.5px; padding: 4px 10px;
+  border-radius: 999px; border: 1px solid var(--border); background: var(--track);
+  color: var(--text-2); white-space: nowrap;
+}
+.ph-chip.is-on { border-color: var(--accent); background: var(--grn-sel-bg); color: var(--grn); }
+
+/* Status bar */
+.ph-statusbar {
+  display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
+  border: 1px solid var(--border); background: var(--surface-2); border-radius: 12px;
+  padding: 9px 16px; margin-bottom: 14px; font-size: 12px; color: var(--text-2);
+}
+.ph-statusbar b { color: var(--text); font-weight: 700; }
+.ph-statusbar-live { display: flex; align-items: center; gap: 6px; color: var(--grn); }
+.ph-statusbar-live b { color: var(--grn); }
+.ph-statusbar-up, .ph-statusbar-up b { color: var(--phase-blue); }
+.ph-statusbar-upd { margin-left: auto; white-space: nowrap; }
+.ph-statusbar-upd b { font-weight: 400; padding: 1px 3px; border-radius: 4px; }
+
+.ph-empty {
+  padding: 2.4rem 1rem; text-align: center; border: 1px solid var(--border);
+  border-radius: 12px; background: var(--surface); color: var(--text-2); font-size: 14px;
+}
+.ph-empty--sm { padding: 1.1rem 1rem; font-size: 13px; margin-bottom: 22px; }
+
+/* Decision strip */
+.ph-strip-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 8px; }
+.ph-strip-sub { font-size: 12px; color: var(--muted); }
+.ph-cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 22px; }
+.ph-card {
+  text-align: left; cursor: pointer; color: var(--text); font-family: inherit;
+  border: 1px solid var(--border); background: var(--surface); border-radius: 12px;
+  padding: 13px 14px 12px; display: flex; flex-direction: column; gap: 7px; min-width: 0;
+}
+.ph-card:hover { border-color: var(--border-2); }
+.ph-card.is-live { border-color: var(--grn-edge); }
+.ph-card-head { display: flex; align-items: center; gap: 8px; }
+.ph-card-head .ph-phase { margin-left: auto; }
+.ph-card-id { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ph-card-title { font-size: 16px; font-weight: 800; letter-spacing: -.01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph-card-sub { font-size: 11.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph-card-val { display: flex; align-items: baseline; gap: 8px; }
+.ph-card-val > b { font-size: 26px; font-weight: 700; line-height: 1; }
+.ph-card-base { margin-left: auto; font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.ph-card-spark { display: flex; align-items: center; gap: 8px; height: 26px; border: 1px dashed var(--border-2); border-radius: 8px; padding: 0 8px; }
+.ph-card-spark-note { font-size: 10.5px; color: var(--muted); }
+.ph-card-why { display: flex; flex-direction: column; gap: 1px; font-size: 11px; color: var(--text-2); min-width: 0; }
+.ph-card-why > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ph-card-why .ph-tag { font-family: 'Hanken Grotesk', sans-serif; vertical-align: 1px; }
+.ph-card-why2 { color: var(--muted); }
+.ph-card-foot {
+  display: flex; align-items: center; gap: 6px; padding-top: 7px;
+  border-top: 1px solid var(--row-border); font-size: 10.5px; color: var(--muted); min-width: 0;
+}
+.ph-card-fresh { white-space: nowrap; padding: 1px 4px; border-radius: 4px; }
+.ph-status {
+  margin-left: auto; font-size: 9px; font-weight: 800; letter-spacing: .06em; white-space: nowrap;
+  color: var(--text-2); border: 1px solid var(--border-2); background: var(--track);
+  padding: 1px 6px; border-radius: 999px;
+}
+.ph-status--dashed { border-style: dashed; background: transparent; }
+.ph-status--route { color: var(--amber); border-color: var(--amb-edge); background: transparent; }
+
+/* Phase chip (LIVE / PREGAME / FINAL) */
+.ph-phase { font-size: 9px; font-weight: 800; letter-spacing: .06em; padding: 2px 6px; border-radius: 999px; white-space: nowrap; }
+.ph-phase--live { color: var(--grn); background: var(--live-chip-bg); }
+.ph-phase--pre { color: var(--phase-blue); background: var(--blue-bg); }
+.ph-phase--final { color: var(--text-2); background: var(--track); }
+
+/* Probability colour bands (relative to league) and lift chips */
+.ph-band-good { color: var(--grn); }
+.ph-band-low { color: var(--muted); }
+.ph-band-avg { color: var(--text); }
+.ph-band-bg-good { background: var(--grn); }
+.ph-band-bg-low { background: var(--muted); }
+.ph-band-bg-avg { background: var(--text); }
+.ph-lift {
+  font-size: 10.5px; font-weight: 700; padding: 1px 6px; border-radius: 999px; white-space: nowrap;
+  color: var(--text-2); background: var(--track);
+}
+.ph-lift--good { color: var(--res-good-fg); background: var(--res-good-bg); }
+.ph-lift--low { color: var(--muted); }
+.ph-card-val .ph-lift { font-size: 11px; padding: 2px 7px; }
+
+/* 5px bar with a white league tick */
+.ph-bar { position: relative; display: block; height: 5px; background: var(--track); border-radius: 999px; margin: 3px 0; }
+.ph-bar-fill { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 999px; }
+.ph-bar-tick { position: absolute; top: -3px; width: 2px; height: 11px; border-radius: 1px; background: var(--text); }
+
+/* Probability cell */
+.ph-pc { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ph-pc-top { display: flex; align-items: baseline; gap: 7px; }
+.ph-pc-val { font-size: 15px; font-weight: 700; }
+.ph-pc-base { margin-left: auto; font-size: 10px; color: var(--muted); white-space: nowrap; }
+.ph-pc .ph-bar { margin: 0; }
+.ph-pc-foot { font-size: 10px; color: var(--muted); }
+
+/* Game groups */
+.ph-group { margin-bottom: 18px; }
+.ph-group-head { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+.ph-group-n { font-size: 10.5px; color: var(--muted); }
+.ph-rule { flex: 1; height: 1px; background: var(--row-border); }
+.ph-group-hint { font-size: 10px; font-weight: 700; letter-spacing: .05em; color: var(--muted); white-space: nowrap; }
+.ph-pills { display: flex; flex-direction: column; gap: 6px; }
+
+/* Game pill */
+.ph-gpill { border: 1px solid var(--border); border-radius: 12px; background: var(--surface); overflow: hidden; }
+.ph-gpill.is-live { border-color: var(--grn-edge); }
+.ph-gpill-row {
+  display: grid;
+  grid-template-columns: 24px 84px minmax(140px,1fr) 100px 104px 176px 118px minmax(220px,1.35fr) 24px;
+  gap: 12px; align-items: center; padding: 10px 14px;
+}
+.ph-pin { border: 0; background: transparent; cursor: pointer; font-size: 14px; padding: 0; color: var(--muted); font-family: inherit; }
+.ph-pin.is-on { color: var(--amber); }
+.ph-gpill-match {
+  border: 0; background: transparent; padding: 0; text-align: left; cursor: pointer; font-family: inherit;
+  color: var(--text); display: flex; flex-direction: column; gap: 2px; min-width: 0;
+}
+.ph-gpill-match b { font-size: 13.5px; font-weight: 800; letter-spacing: .01em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ph-gpill-match span { font-size: 10.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ph-gpill-score { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.ph-gpill-score b { font-size: 19px; font-weight: 700; white-space: nowrap; line-height: 1.1; }
+.ph-gpill-score b.is-live { color: var(--text); }
+.ph-gpill-score b.is-final { color: var(--text-2); }
+.ph-gpill-score b.is-pre { color: var(--muted); }
+.ph-gpill-score span { font-size: 10.5px; color: var(--muted); white-space: nowrap; }
+.ph-gpill-sit { display: flex; align-items: center; gap: 10px; }
+.ph-gpill-sit .ph-mono { display: flex; flex-direction: column; gap: 1px; }
+.ph-gpill-sit b { font-size: 12.5px; font-weight: 600; }
+.ph-gpill-sit .ph-mono span { font-size: 10px; color: var(--muted); }
+.ph-gpill-cell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ph-gpill-line { display: flex; align-items: baseline; gap: 6px; white-space: nowrap; min-width: 0; }
+.ph-gpill-line > b { font-size: 12.5px; font-weight: 800; }
+.ph-gpill-num { font-size: 13px; font-weight: 700; }
+.ph-gpill-num.is-dim { font-size: 12.5px; font-weight: 600; color: var(--text-2); }
+.ph-gpill-from { font-size: 10.5px; color: var(--muted); }
+.ph-gpill-mkt { font-size: 10.5px; color: var(--text-2); }
+.ph-delta { font-size: 11px; font-weight: 700; color: var(--text-2); }
+.ph-delta.is-up { color: var(--res-good-fg); }
+.ph-delta.is-down { color: var(--res-bad-fg); }
+.ph-cap { font-size: 9.5px; font-weight: 800; letter-spacing: .05em; color: var(--muted); white-space: nowrap; }
+.ph-cap.is-live { color: var(--grn); }
+.ph-cap.is-pre { color: var(--phase-blue); }
+.ph-chev { justify-self: end; border: 0; background: transparent; color: var(--muted); font-weight: 700; cursor: pointer; font-size: 14px; padding: 4px; line-height: 1; font-family: inherit; }
+
+/* Expanded pill */
+.ph-gpill-body { border-top: 1px solid var(--border); background: var(--surface-2); padding: 12px 14px 14px; }
+.ph-meta-grid {
+  display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 10px 18px;
+  padding-bottom: 12px; border-bottom: 1px solid var(--row-border);
+}
+.ph-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; align-items: flex-start; }
+.ph-meta-k { font-size: 9.5px; font-weight: 800; letter-spacing: .06em; color: var(--muted); white-space: nowrap; }
+.ph-meta-v { font-size: 12px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
+.ph-gpill-ctrl { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0 8px; }
+.ph-gpill-ctrl .ph-seg-btn { font-size: 12px; padding: 5px 12px; }
+.ph-sort { display: flex; align-items: center; gap: 6px; }
+.ph-gpill-note { margin-left: auto; font-size: 11px; color: var(--muted); }
+.ph-note { font-size: 11.5px; color: var(--muted); margin-bottom: 8px; }
+.ph-pending {
+  display: flex; align-items: center; gap: 10px; border: 1px dashed var(--border-2);
+  border-radius: 10px; padding: 9px 12px; margin-bottom: 8px; font-size: 12px; color: var(--text-2);
+}
+.ph-pending-chip {
+  font-size: 9.5px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: var(--text-2);
+  border: 1px dashed var(--border-2); border-radius: 999px; padding: 2px 7px; white-space: nowrap;
+}
+
+/* Batter + starter tables */
+.ph-btable, .ph-stable { display: flex; flex-direction: column; }
+.ph-btable-row {
+  display: grid;
+  grid-template-columns: 22px 24px minmax(150px,1.1fr) minmax(190px,1.35fr) minmax(190px,1.35fr) 88px 88px 92px 58px 84px 86px;
+  gap: 10px; align-items: center; padding: 8px; border-top: 1px solid var(--row-border);
+}
+.ph-stable-row {
+  display: grid; grid-template-columns: minmax(170px,1.2fr) repeat(5, minmax(0,.8fr)) repeat(5, 64px);
+  gap: 10px; align-items: center; padding: 8px; border-top: 1px solid var(--row-border); font-size: 12.5px;
+}
+.ph-btable-head {
+  border-top: 0; padding-top: 0; padding-bottom: 6px;
+  font-size: 9.5px; font-weight: 800; letter-spacing: .06em; color: var(--muted);
+}
+.ph-bname { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.ph-bname > b { font-size: 13px; font-weight: 700; }
+.ph-bname > span { font-size: 11px; color: var(--muted); }
+.ph-spname { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+.ph-spname b { font-size: 13px; font-weight: 700; }
+.ph-sp-tag { font-size: 9px; font-weight: 800; letter-spacing: .05em; color: var(--purple); background: var(--purple-bg); padding: 1px 5px; border-radius: 4px; }
+.ph-nm { display: flex; flex-direction: column; gap: 3px; border: 1px dashed var(--border-2); border-radius: 8px; padding: 4px 7px; min-width: 0; align-items: flex-start; }
+.ph-nm-line { font-size: 10px; color: var(--muted); }
+.ph-nm-line b { font-size: 13px; }
+.ph-btable-foot {
+  display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 8px 0;
+  border-top: 1px solid var(--row-border); font-size: 11px; color: var(--muted);
+}
+
+/* Result chips. Pending is never a miss; DNP is outlined and excluded. */
+.ph-res2 { display: flex; flex-direction: column; gap: 3px; }
+.ph-res2 > span { display: flex; align-items: center; gap: 5px; }
+.ph-res-k { font-size: 9px; font-weight: 800; color: var(--muted); width: 16px; }
+.ph-res {
+  font-size: 9.5px; font-weight: 800; letter-spacing: .05em; padding: 2px 6px; border-radius: 999px;
+  border: 1px solid transparent; white-space: nowrap;
+}
+.ph-res--good { color: var(--res-good-fg); background: var(--res-good-bg); }
+.ph-res--bad { color: var(--res-bad-fg); background: var(--res-bad-bg); }
+.ph-res--dnp { color: var(--text-2); border-color: var(--border-2); }
+.ph-res--pending { color: var(--text-2); background: var(--track); }
+
+
+/* Narrow numeric columns: the tag sits under its dash rather than beside it. */
+.ph-stable-row .ph-missing, .ph-btable-row .ph-missing { flex-direction: column; align-items: flex-start; gap: 3px; }

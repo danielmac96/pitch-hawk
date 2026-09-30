@@ -530,9 +530,12 @@ async function picksToday(): Promise<Response> {
 // P(home run) for a slate.
 //
 // An ANALYTICS surface, not a price. Every row is `model_fair`: there is no
-// prop source for these markets, so there is no edge figure and deliberately
-// no `result` — `player_game_projections` is not graded. The response says
+// prop source for these markets, so there is no edge figure. The response says
 // `book` explicitly rather than leaving a reader to assume a line exists.
+//
+// `result` is the settle job's grade: 'hit' | 'miss' | 'void', null while the
+// game is unsettled. `void` is a batter who did not bat (DNP) and is not a
+// miss; null is pending and is not a miss either.
 //
 // Ordered by probability so the interesting rows arrive first; a slate is
 // ~270 rows per market, which is one page.
@@ -547,7 +550,8 @@ async function projections(url: URL): Promise<Response> {
   let q = svc().from("player_game_projections")
     .select("game_pk,player_id,market,team_id,opponent_id,is_home," +
             "lineup_slot,opposing_pitcher_id,probability,per_pa_probability," +
-            "expected_pa,model_version,book,updated_at")
+            "expected_pa,model_version,book,updated_at," +
+            "result,actual_count,plate_appearances")
     .eq("official_date", date);
   if (market) q = q.eq("market", market);
   const { data } = await q.order("probability", { ascending: false }).limit(1000);
@@ -580,6 +584,9 @@ async function projections(url: URL): Promise<Response> {
       model_version: r.model_version,
       book: r.book,
       updated_at: r.updated_at,
+      result: r.result ?? null,
+      actual_count: r.actual_count ?? null,
+      plate_appearances: r.plate_appearances ?? null,
     })),
   });
 }
