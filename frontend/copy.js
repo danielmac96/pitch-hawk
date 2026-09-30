@@ -17,31 +17,51 @@
 window.PH_COPY = (function () {
   var C = {
     // header
-    tabs: [["home", "Home"], ["live", "Live Feed"], ["data", "Data Feed"]],
+    tabs: [["home", "Home"], ["pred", "Predictions"], ["live", "Live"], ["data", "Data Feed"]],
+    liveCount: "{n} game{s} live · auto-refreshing",
+    noLive: "No games live right now",
 
-    // home · hero
-    heroBadge: "MLB · Live At-Bat Analytics",
-    heroTitle: "Every pitch, read before it lands.",
-    heroSub:
-      "Live pitch-by-pitch data with model-predicted probabilities for every " +
-      "at-bat. The board wakes at first pitch and follows every game as it unfolds.",
-    heroCta: "Open the live feed →",
-    heroCompliance: null, // no betting content on the page → no 21+ line
+    // shell · API unreachable. Worded so it cannot be read as an empty slate.
+    apiDownTitle: "✗ Feed unreachable",
+    apiDownBody:
+      "Couldn't reach the Pitch Hawk API. This is a connection problem, not an " +
+      "empty slate. Retrying on the 8-second poll.",
+    apiDownLastGood: "last good update",
+    apiDownNever: "no update received yet",
 
-    // home · today's games
-    slateTitle: "Today's games",
-    slateSub: "Live now first, latest inning at the top, then what's up next with time to first pitch, then today's finals.",
-    slateHint: "latest inning first · tap a game for the live feed",
-    slateHintShort: "latest inning first",
-    // Why a metadata field is a dash. Two notes, because the reason differs:
-    // a finished game is waiting on the nightly publish, a scheduled one is
-    // waiting on the lineup card.
-    slateMetaNote:
-      "Context is published by the nightly warehouse job — dashes mean not yet " +
-      "written for this game.",
-    slateMetaNoteSched:
-      "Weather and umpire land at lineup post; a dash means the feed hasn't " +
-      "published it yet.",
+    // shell · ★ WATCHING row
+    watchingLabel: "★ Watching",
+    watchUnpin: "Stop watching",
+    // A pin whose game or batter is not on today's board (yesterday's pin,
+    // or projections still loading). Kept visible so it can still be removed.
+    watchUnresolved: "not on today's board",
+
+    // predictions (filled in phase 3)
+    predTitle: "Predictions",
+    predSub: "Every model-fair probability on today's slate, ranked by lift over the league rate.",
+
+    // home · 2026-09 redesign
+    homeTitle: "Today's slate",
+    homeNoGames: "No MLB games on today's schedule. The board wakes with tomorrow's slate.",
+    homeLoading: "Loading today's slate…",
+    // Only reached when nothing has ever loaded; the banner above says why.
+    homeUnreachable: "Couldn't reach the schedule feed. A connection problem, not an empty slate.",
+    stripSubLive: "what moves right now · tap a card for its full context",
+    stripSubPre: "strongest reads before first pitch across {n} games not yet final · ranked by lift",
+    stripEmptyLive: "Nothing live right now. Switch to Pregame for the strongest reads before first pitch.",
+    stripEmptyPre: "No pregame reads yet. Batter projections land when game-predict runs, hourly before first pitch.",
+    marketsNote: "model-fair probabilities · not prices",
+    finalGradedNote:
+      "Graded after the final out. DNP means the batter did not bat (late scratch) " +
+      "and is excluded from accuracy. Pending is never a miss.",
+    lineupPending:
+      "{team} lineup posts about 3 h before first pitch. Until then every batter is " +
+      "scored at 4.04 xPA and re-scored each hour.",
+    noProjections: "No {team} batter projections yet. They land when game-predict runs, hourly before first pitch.",
+    tickLegend: "▎ tick = league rate at the batter's xPA · lift = value − tick",
+    startersNote:
+      "Pitcher props have no model yet. Supporting form is the 30-day rolling window, " +
+      "refreshed nightly · fatigue = FB velo change at pitches 75–99.",
     // The bases diamond is always empty because the live feed carries no
     // runners. Said out loud rather than letting an empty diamond read as a
     // claim that the bases are clear.
@@ -49,27 +69,6 @@ window.PH_COPY = (function () {
     // The PRE value beside a live game-level call. Named so it cannot be read
     // as a second live number.
     pregameCallNote: "The call the model opened with, before first pitch — not a live number.",
-
-    // home · live-board promo
-    promoBadge: "The live board",
-    promoTitle: "Watch the game with the model open.",
-    promoSub:
-      "Real-time reads on every live at-bat — model probabilities, the " +
-      "pitch-by-pitch feed, and the broadcast situation at a glance.",
-    promoBullets: [
-      ["Live at-bat panels", "One panel per game — the count, bases, and the model's read on the next pitch."],
-      ["Pitch-by-pitch feed", "Type, velo and result next to predicted speed and strike / ball / in-play probabilities."],
-      ["Broadcast situation", "Bases, balls, strikes, outs, score and the model call in a single glance."],
-    ],
-
-    // home · how it works
-    howTitle: "How it works",
-    steps: [
-      ["1", "Ingest", "Historical Statcast plus a live MLB feed give us pitch-by-pitch context for every matchup."],
-      ["2", "Model", "Dedicated models project the next pitch and at-bat in real time, updating with every pitch."],
-      ["3", "Watch", "Every live at-bat gets a model read — probabilities and projections stream to the live board."],
-      ["4", "Grade", "Every call is checked against what actually happened, building an open accuracy record."],
-    ],
 
     // live feed
     // The Showing selector sits above the hero, so the hero still needs no
@@ -164,25 +163,7 @@ window.PH_COPY = (function () {
   };
 
   var WAGERING_OVERRIDES = {
-    tabs: [["home", "Home"], ["live", "Live Markets"], ["data", "Data Feed"]],
-    heroCta: "Open the live markets →",
-    heroBadge: "MLB · At-Bat Markets",
-    heroSub:
-      "Live pitch-by-pitch data with model-predicted probabilities for every " +
-      "at-bat. The board wakes at first pitch and follows every game — odds " +
-      "comparison and graded picks are on the way.",
-    heroCompliance: "21+ · For entertainment · 1-800-GAMBLER",
-    promoBullets: [
-      ["Live at-bat panels", "One panel per game — the count, bases, and the model's read on the next pitch."],
-      ["Pitch-by-pitch feed", "Type, velo and result next to predicted speed and strike / ball / in-play odds."],
-      ["Broadcast situation", "Bases, balls, strikes, outs, score and the model call in a single glance."],
-    ],
-    steps: [
-      ["1", "Ingest", "Historical Statcast plus a live MLB feed give us pitch-by-pitch context for every matchup."],
-      ["2", "Model", "Per-market models project the next pitch and at-bat in real time, updating with every pitch."],
-      ["3", "Watch", "Every live at-bat gets a model read — probabilities and projections stream to the live board."],
-      ["4", "Next up", "Live odds comparison, +EV picks, and a public graded record are on the way."],
-    ],
+    tabs: [["home", "Home"], ["pred", "Predictions"], ["live", "Live Markets"], ["data", "Data Feed"]],
     footerDisclaimer:
       "Live MLB data with model-driven projections, for information and " +
       "entertainment only — nothing here is betting advice. 21+ where betting " +
