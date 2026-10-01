@@ -72,7 +72,7 @@ split) and **900px** (promo splits). Verified at 360 / 390 / 768 / 1024 /
 
 - `.ph-nav`: fixed bottom tab bar under 768px (48px targets,
   `safe-area-inset-bottom`); header pill row above.
-- `.ph-hero` / `.ph-promo`: single column on phones.
+- `.ph-hero` is the Live tab's green hero panel (2026-09 redesign); the old Home hero/promo split is gone.
 - Wide tables scroll inside their card — the page itself never scrolls
   horizontally (fixed-width grids are guarded with
   `minmax(min(Npx, 100%), 1fr)`). The board builds these inline in

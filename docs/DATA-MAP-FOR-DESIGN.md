@@ -147,9 +147,12 @@ Base: `/api/<route>` on the Supabase edge function. All JSON, CDN-cached.
 | `GET /board?date=` | `{date, recap, live, upcoming, final}` | past slates |
 | `GET /projections?date=&market=` | `{date, priced:false, rows[{game_pk, player_id, player, market, team_id, opponent_id, is_home, lineup_slot, opposing_pitcher_id, opposing_pitcher, probability, per_pa_probability, expected_pa, model_version, book, updated_at, result, actual_count, plate_appearances}]}` (`result` null while pending) | **player markets dropdown** |
 | `GET /pitches?date=&game_pk=` | graded per-pitch/per-AB rows (`PitchFeedRow`) | drill-downs |
-| `GET /accuracy?from&to&market` | per-day, per-market accuracy | charts |
+| `GET /accuracy?from&to&market` | per-day, per-market accuracy (`win_rate`, `mean_confidence`, `mean_abs_error` for the regression markets) | charts |
 | `GET /trends?...` | per-player accuracy vs baseline, streaks | Data Feed |
 | `GET /feed?from&to` | game-level prediction history | game history |
+| `GET /graded?from&to&market&team&venue&hand&side&limit&cursor` | resolved reads newest first, one row per read graded at lock-time probability (`result` hit/miss/void), cursor-paged; from `graded_read`, refreshed every 15 min | Data Feed resolved-markets list |
+| `GET /graded/summary?…same filters` | `{overall, bins[10], daily, by_market, by_team, splits}` as `{n, exp, act, brier}`; daily ignores the timeframe, by_market the market filter, by_team the team filter | Data Feed charts |
+| `GET /graded/venues` | stadiums with graded reads + home club | Data Feed stadium filter |
 | `GET /coverage` | per-game market coverage | QA / badges |
 | `GET /player/{id}/profile·splits·fatigue` | nightly profiles | player drawer |
 | `GET /matchup/{pitcher}/{batter}` | head-to-head (`found:false` under 3 PA, the norm) | matchup chip |
