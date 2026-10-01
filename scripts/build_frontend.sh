@@ -20,6 +20,8 @@ URL="${SUPABASE_FUNCTIONS_URL-https://gfxpchtyncgsczqdvohr.supabase.co/functions
 rm -rf "$OUT"
 mkdir -p "$OUT"
 cp -r "$SRC"/. "$OUT"/
+# Development-only files (the Data Feed sample fixture) never ship.
+rm -rf "$OUT/dev"
 
 if [ -n "$URL" ]; then
   # Replace the placeholder in the copied config.js only.

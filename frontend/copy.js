@@ -36,9 +36,22 @@ window.PH_COPY = (function () {
     // or projections still loading). Kept visible so it can still be removed.
     watchUnresolved: "not on today's board",
 
-    // predictions (filled in phase 3)
+    // predictions
     predTitle: "Predictions",
     predSub: "Every model-fair probability on today's slate, ranked by lift over the league rate.",
+    predTableTitle: {
+      hit: "1+ Hit · batter reads", hr: "1+ Home run · batter reads",
+      wp: "Win probability · games", tot: "Totals · games", sp: "Starting pitchers",
+    },
+    predSubBatPre: "Pregame mode: sorted by lift over the league rate at the batter's xPA",
+    predSubBatLive: "Live mode: in-progress games first, then by your sort · reads froze at first pitch",
+    predSubWpLive: "Live mode: biggest swing since first pitch first",
+    predSubGame: "sorted by strength of the pregame read",
+    predSubSp: "every starter · props reserved until modeled · supporting form served",
+    predEmptyTitle: "No predictions match these filters",
+    predEmptyBody: "Lower the minimum lift, include pending lineups, or widen the status and team filters.",
+    predNoneTitle: "No predictions today",
+    predNoneBody: "Nothing is scheduled, so there is nothing to rank.",
 
     // home · 2026-09 redesign
     homeTitle: "Today's slate",
@@ -70,84 +83,43 @@ window.PH_COPY = (function () {
     // as a second live number.
     pregameCallNote: "The call the model opened with, before first pitch — not a live number.",
 
-    // live feed
-    // The Showing selector sits above the hero, so the hero still needs no
-    // title of its own -- the selected call IS the top of the page.
-    liveListHint:
-      "live games expand to at-bat calls · pregame games show the opening-at-bat read",
-    heroNothingLive:
-      "The hero returns the moment a game is in progress. Today's record is " +
-      "below either way.",
+    // live
+    // The selected game has no scored call on the current at-bat yet.
     heroNoCallInGame:
       "This game is live but the model has not scored a market into the " +
       "current at-bat yet. It fills in on the next poll.",
-    // Shown on a scheduled game's opening calls. Says what the numbers are and
-    // what they are not: a read on a league-average hitter, because a pregame
-    // call cannot know who bats first.
-    openingCallNote:
-      "scored against both probable starters and a league-average hitter · " +
-      "per-batter reads open when the lineup posts",
-    // A live or finished game whose graded rows could not be loaded. Not the
-    // same as a game that was never called.
-    noGradedRows:
-      "No graded calls loaded for this game yet. That is a loading gap, not a " +
-      "game the model said nothing about — the game lines above are unaffected.",
+    liveNothingTitle: "Nothing live right now",
+    liveNothingBody:
+      "The live view returns the moment a game is in progress. Pregame reads " +
+      "are on Home and Predictions.",
+    railNoProjection:
+      "No pregame projection for this batter — he was not in the lineup the model " +
+      "scored, or projections have not run for this game.",
+    railPropsNote: "all five pitcher props · [LINE] pending a model",
 
     // data feed
-    dataTitle: "Data feed",
-    dataSub: "Model performance first, then the graded record — day by day, down to the pitch.",
-    dfHistoryHint: "open a day for its games, a game for its at-bats, an at-bat for pitch by pitch",
-    // The server-backed game-level log below the accordion. Retitled because
-    // the accordion above it is now the prediction history — this panel is a
-    // different record: one row per game-level call, including the two
-    // game markets the accordion has no at-bat to hang off.
-    feedPanelTitle: "Game-level call log",
-    feedPanelSub: "moneyline and total included · stored server-side, survives reload",
-    // A day older than the raw-prediction retention horizon. Its record still
-    // stands (the nightly rollup is never pruned) but the individual calls
-    // behind it are gone, which is a different thing from a day with no calls.
-    dfAgedOut:
-      "The individual calls for this slate have aged past the prediction " +
-      "retention window. The day's record above comes from the nightly rollup, " +
-      "which is kept permanently.",
-    // The three charts built from raw per-pitch rows. Those rows are paged one
-    // slate at a time, so a multi-day window has nothing to draw them from.
-    // The accordion is the record; the filters above it are a lens on the
-    // analytics. Saying so stops a filtered page reading as a filtered record.
-    dfHistoryUnfiltered:
-      "The team, player, split and role filters scope the analytics above. The " +
-      "record below follows the window only — it is the whole graded history " +
-      "for these days.",
-    // Entity overlay. Each note names a specific limit rather than leaving an
-    // empty panel to be read as "this player has no tendencies".
-    entityTeamNote:
-      "Zone, chase and whiff rates are published per player, not per team — " +
-      "open a batter or a pitcher for those.",
-    entityNoId:
-      "This name arrived without a player id, so the published profile can't " +
-      "be looked up for it.",
-    entityNoProfile:
-      "No published 30-day profile for this player yet. Profiles need 30+ " +
-      "pitches in the window and are rebuilt nightly.",
-    entityScopeNote:
-      "The record and the pitch outcomes above are counted from the slates " +
-      "currently loaded, not from a fixed 30 days — open more days in the " +
-      "Data Feed history to widen them. The tendencies are a true 30-day " +
-      "window from the nightly warehouse.",
-    // Profitable trends.
-    trendsNote:
-      "players the model has read better — or worse — than its own baseline, under the filters above",
-    trendsFloorNote:
-      "Ranked on win rate against the window baseline. A player needs {n} or " +
-      "more graded calls to appear, so a short hot streak cannot top the table.",
-    trendsStreakNote:
-      "Streaks look back {d} days; a dash means no call settled in that window.",
-    dfNoMatch:
-      "No calls in the loaded slates match these filters. Relax one, or open " +
-      "another day in the record below.",
-    dfRowChartWide:
-      "Built from raw per-pitch calls, which are held one slate at a time — " +
-      "pick the Today window, or open a day below, to see this.",
+    dataTitle: "Data Feed",
+    dataSub: "How resolved predictions have landed. Pick a scenario to see the model's record on it.",
+    dCaption:
+      "A read lands when the model's pick happens. Each read is graded once, at the " +
+      "probability it carried when the market locked. DNP reads are voided.",
+    dSplitsNote:
+      "Win prob and totals have no pitcher hand, batting side or lineup slot, so " +
+      "these splits leave them out. Filtering on hand or side does the same.",
+    dEmptyTitle: "Nothing graded for this scenario",
+    dEmptyBody:
+      "Widen the timeframe or clear a filter. Win prob and totals have no hand " +
+      "or side, so those filters hide them.",
+    dFeedEmpty: "No resolved reads for this scenario.",
+    dLoading: "Loading graded reads…",
+    dLoadError: "Couldn't load graded reads. A connection problem, not an empty record.",
+    // Production, before /graded is deployed: say so rather than draw nothing.
+    dMissingTitle: "The graded-reads route isn't live yet",
+    dMissingBody:
+      "The Data Feed reads /api/graded, which has not been deployed to this " +
+      "environment. Nothing here is estimated in the meantime.",
+    // Localhost only, when /graded is missing and the dev fixture is in use.
+    dFixtureNote: "SAMPLE DATA — /api/graded isn't deployed here, so this page is drawn from the dev fixture. None of these reads are real.",
 
     // shown when a view throws while rendering (see viewErrorHtml)
     viewError:

@@ -65,6 +65,9 @@ const TTL: Record<string, number> = {
   // land every 30s and the Data Feed is the surface watching them arrive, so a
   // 60s cache would make it visibly lag the board it sits next to.
   "pitches": 15,
+  // Data Feed reads. graded_read is rebuilt every 15 minutes, so nothing here
+  // moves faster than that; the venue list only grows when a new park appears.
+  "graded": 60, "graded/summary": 120, "graded/venues": 3600,
 };
 
 // In-instance memo so even a CDN miss on a warm instance skips Postgres.
@@ -591,6 +594,100 @@ async function projections(url: URL): Promise<Response> {
   });
 }
 
+// ── /api/graded, /api/graded/summary, /api/graded/venues ─────────────────
+// The Data Feed: every resolved read, one row each, graded once at the
+// probability it carried when its market locked. Rows live in graded_read,
+// rebuilt every 15 minutes by refresh_graded_reads() (see the migration for
+// what counts as a read). `result` is hit | miss | void — never pending, so an
+// unsettled read cannot be counted as a miss.
+//
+// Both routes take the same filters. hand and side exist only for batter,
+// at-bat and pitch reads; filtering on them drops win prob and totals.
+const GRADED_MARKETS = [
+  "batter_hit", "batter_hr", "game_moneyline", "game_total", "ab_result", "pitch_result",
+];
+// 35 days: the pitch and at-bat reads follow the predictions hot window.
+const GRADED_MAX_DAYS = 35;
+function gradedFilters(sp: URLSearchParams) {
+  const market = sp.get("market");
+  const team = (sp.get("team") ?? "").toUpperCase();
+  const hand = (sp.get("hand") ?? "").toUpperCase();
+  const side = (sp.get("side") ?? "").toLowerCase();
+  return {
+    market: market && GRADED_MARKETS.includes(market) ? market : null,
+    team: /^[A-Z]{2,3}$/.test(team) ? team : null,
+    venue: posInt(sp.get("venue")),
+    hand: hand === "L" || hand === "R" ? hand : null,
+    side: side === "home" || side === "away" ? side : null,
+  };
+}
+
+async function graded(url: URL): Promise<Response> {
+  const sp = url.searchParams;
+  const { from, to } = windowParams(url, GRADED_MAX_DAYS);
+  const f = gradedFilters(sp);
+  const limit = Math.min(Math.max(posInt(sp.get("limit")) ?? 40, 1), 200);
+  const cursor = Number(sp.get("cursor")) > 0 ? Number(sp.get("cursor")) : 0;
+
+  let q = svc().from("graded_read")
+    .select("id,resolved_at,official_date,market,game_pk,away_abbr,home_abbr," +
+            "venue_id,venue_name,team_abbrs,subject,probability,result,actual_label," +
+            "opp_pitcher_hand,batting_side,lineup_slot,batter_id,pitcher_id,batter_team",
+            { count: "exact" })
+    .gte("official_date", from).lte("official_date", to);
+  if (f.market) q = q.eq("market", f.market);
+  if (f.team) q = q.contains("team_abbrs", [f.team]);
+  if (f.venue) q = q.eq("venue_id", f.venue);
+  if (f.hand) q = q.eq("opp_pitcher_hand", f.hand);
+  if (f.side) q = q.eq("batting_side", f.side);
+  const { data, error, count } = await q
+    .order("resolved_at", { ascending: false }).order("id", { ascending: false })
+    .range(cursor, cursor + limit - 1);
+  if (error) return json({ error: error.message }, 500);
+
+  // deno-lint-ignore no-explicit-any
+  const rows = (data ?? []) as any[];
+  const names = await playerNames([
+    ...rows.map((r) => r.batter_id), ...rows.map((r) => r.pitcher_id),
+  ].filter(Boolean));
+  const total = count ?? rows.length;
+  return json({
+    from, to, filters: f, total,
+    next_cursor: cursor + rows.length < total ? cursor + rows.length : null,
+    rows: rows.map((r) => ({
+      id: r.id, resolved_at: r.resolved_at, official_date: r.official_date,
+      market: r.market, game_pk: r.game_pk,
+      away_abbr: r.away_abbr, home_abbr: r.home_abbr,
+      venue_id: r.venue_id, venue_name: r.venue_name, team_abbrs: r.team_abbrs,
+      // Batter markets store no subject: the subject is the batter.
+      subject: r.subject ?? names.get(r.batter_id) ?? null,
+      probability: Number(r.probability),
+      result: r.result, actual_label: r.actual_label,
+      opp_pitcher_hand: r.opp_pitcher_hand, batting_side: r.batting_side,
+      lineup_slot: r.lineup_slot, batter_team: r.batter_team,
+      batter_name: names.get(r.batter_id) ?? null,
+      pitcher_name: names.get(r.pitcher_id) ?? null,
+    })),
+  });
+}
+
+async function gradedSummary(url: URL): Promise<Response> {
+  const { from, to } = windowParams(url, GRADED_MAX_DAYS);
+  const f = gradedFilters(url.searchParams);
+  const { data, error } = await svc().rpc("graded_summary", {
+    p_from: from, p_to: to, p_market: f.market, p_team: f.team,
+    p_venue: f.venue, p_hand: f.hand, p_side: f.side,
+  });
+  if (error) return json({ error: error.message }, 500);
+  return json({ from, to, filters: f, ...(data ?? {}) });
+}
+
+async function gradedVenues(): Promise<Response> {
+  const { data, error } = await svc().rpc("graded_venues");
+  if (error) return json({ error: error.message }, 500);
+  return json({ venues: data ?? [] });
+}
+
 async function playerNames(ids: number[]): Promise<Map<number, string>> {
   const uniq = [...new Set(ids.filter(Boolean))];
   if (!uniq.length) return new Map();
@@ -888,7 +985,7 @@ async function accuracy(url: URL): Promise<Response> {
   const db = svc();
   let q = db.from("prediction_accuracy_daily")
     .select("day,market,model_version,n,n_graded,wins,losses,pushes," +
-      "mean_confidence,mean_profit_units")
+      "mean_confidence,mean_profit_units,mean_abs_error")
     .gte("day", from).lte("day", to)
     .order("day", { ascending: true });
   if (market) q = q.eq("market", market);
@@ -905,6 +1002,7 @@ async function accuracy(url: URL): Promise<Response> {
       e = {
         day: r.day, market: r.market, versions: [] as string[],
         n: 0, n_graded: 0, wins: 0, losses: 0, pushes: 0, _conf: 0, _units: 0,
+        _mae: 0, _maeN: 0,
       };
       by.set(key, e);
     }
@@ -918,6 +1016,13 @@ async function accuracy(url: URL): Promise<Response> {
     // the day's mean as hard as one that served four hundred.
     e._conf += Number(r.mean_confidence ?? 0) * g;
     e._units += Number(r.mean_profit_units ?? 0) * g;
+    // Only the regression markets (pitch_speed_ou, ab_pitches_ou) carry an
+    // error. Weighted by graded count over the rows that have one, the same
+    // rule as the trends baseline, so a null never drags the mean to zero.
+    if (r.mean_abs_error != null) {
+      e._mae += Number(r.mean_abs_error) * g;
+      e._maeN += g;
+    }
     // Which model was serving is the first question anyone asks about a day
     // whose accuracy moved, so it travels with the day rather than being
     // summed away.
@@ -941,6 +1046,10 @@ async function accuracy(url: URL): Promise<Response> {
       mean_profit_units: e.n_graded
         ? Math.round((e._units / e.n_graded) * 10000) / 10000
         : null,
+      mean_abs_error: e._maeN
+        ? Math.round((e._mae / e._maeN) * 10000) / 10000
+        : null,
+      mae_n: e._maeN,
     };
   }).sort((a, b) =>
     a.day < b.day ? -1 : a.day > b.day ? 1 : a.market < b.market ? -1 : 1
@@ -1428,6 +1537,10 @@ Deno.serve(async (req) => {
       case "odds/today": return await hit("odds/today", TTL["odds/today"], oddsToday);
       case "projections":
         return await hit(`projections:${url.search}`, TTL["projections"], () => projections(url));
+      case "graded": return await hit("graded", TTL["graded"], () => graded(url));
+      case "graded/summary":
+        return await hit("graded/summary", TTL["graded/summary"], () => gradedSummary(url));
+      case "graded/venues": return await hit("graded/venues", TTL["graded/venues"], gradedVenues);
       case "record": return await hit("record", TTL["record"], record);
       case "sportsbooks":
         return await hit("sportsbooks", TTL["sportsbooks"],
