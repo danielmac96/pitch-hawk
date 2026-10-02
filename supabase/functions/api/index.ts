@@ -10,6 +10,7 @@
 
 import { json, svc } from "../_shared/db.ts";
 import { mlbToday } from "../_shared/mlb.ts";
+import { resolveSlate } from "../_shared/slate.ts";
 import * as aggs from "../_shared/aggregates.ts";
 import { DEFAULT_LIMIT, MAX_LIMIT, pitchFeed } from "../_shared/pitchfeed.ts";
 import { gradingHealth } from "../_shared/settlequeue.ts";
@@ -241,12 +242,16 @@ async function health(): Promise<Response> {
   });
 }
 
+// The schedule for the slate the board shows: today, or -- on an off day --
+// the next date with games (see _shared/slate.ts). `is_today` is what lets the
+// Home tab say "Next slate" instead of presenting tomorrow's games as today's.
 async function games(): Promise<Response> {
-  const today = mlbToday();
-  const { data } = await svc().from("games")
+  const db = svc();
+  const slate = await resolveSlate(db);
+  const { data } = await db.from("games")
     .select("game_pk,status,home_team,away_team,home_abbr,away_abbr,start_ts,home_score,away_score,venue_name")
-    .eq("official_date", today).order("start_ts");
-  return json(data ?? []);
+    .eq("official_date", slate.date).order("start_ts");
+  return json({ date: slate.date, is_today: slate.isToday, games: data ?? [] });
 }
 
 // Every market a fully-covered game carries. Coverage is reported against this
@@ -589,8 +594,11 @@ async function slatePayloads(date: string): Promise<any[]> {
   return payloads;
 }
 
+// The whole slate, not just live games -- and on an off day the NEXT slate,
+// because the Home tab renders from this. Stays a bare array: the slate's date
+// rides on /games.
 async function live(): Promise<Response> {
-  return json(await slatePayloads(mlbToday()));
+  return json(await slatePayloads((await resolveSlate(svc())).date));
 }
 
 function pickOut(row: any): any {
@@ -634,7 +642,7 @@ async function picksToday(): Promise<Response> {
 // Ordered by probability so the interesting rows arrive first; a slate is
 // ~270 rows per market, which is one page.
 async function projections(url: URL): Promise<Response> {
-  const date = parseDate(url.searchParams.get("date")) ?? mlbToday();
+  const date = parseDate(url.searchParams.get("date")) ?? (await resolveSlate(svc())).date;
   const market = url.searchParams.get("market");
   const valid = [
     "batter_hit", "batter_hr", "batter_tb15", "batter_hrr",
@@ -1547,10 +1555,17 @@ async function pitches(url: URL): Promise<Response> {
 }
 
 async function board(url: URL): Promise<Response> {
-  const date = parseDate(url.searchParams.get("date")) ?? mlbToday();
+  // An explicit ?date= is a history request and is served as asked. With none,
+  // the board is the slate: today, or the next day with games.
+  const asked = parseDate(url.searchParams.get("date"));
+  const slate = asked
+    ? { date: asked, isToday: asked === mlbToday() }
+    : await resolveSlate(svc());
+  const date = slate.date;
   const [payloads, recap] = await Promise.all([slatePayloads(date), recapFor(date)]);
   return json({
     date,
+    is_today: slate.isToday,
     recap,
     live: payloads.filter((p) => p.phase === "live"),
     upcoming: payloads.filter((p) => p.phase === "pregame"),

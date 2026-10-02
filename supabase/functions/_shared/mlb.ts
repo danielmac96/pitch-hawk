@@ -76,6 +76,20 @@ export async function getSchedule(dateISO: string): Promise<GameRow[]> {
   return out;
 }
 
+// Every game from `startISO` through `endISO` inclusive, in one request. Used
+// to keep the next week of schedule in `games`, so an off day still has a
+// next slate to point at.
+export async function getScheduleRange(startISO: string, endISO: string): Promise<GameRow[]> {
+  const data = await mlbGet("/schedule", {
+    sportId: "1", startDate: startISO, endDate: endISO, hydrate: "team,linescore",
+  });
+  const out: GameRow[] = [];
+  for (const d of data.dates ?? []) {
+    for (const g of d.games ?? []) if (g.gamePk) out.push(flattenScheduleGame(g));
+  }
+  return out;
+}
+
 export interface ProbableRow {
   game_pk: number;
   home_pitcher_id: number | null;
