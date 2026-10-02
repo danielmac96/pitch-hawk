@@ -47,7 +47,7 @@ Run these in order. Each has a "good" and a "go look at §" column.
 
 | # | Check | Command | Good looks like | If not |
 |---|---|---|---|---|
-| 1 | **Live serving** | `curl -s <supabase>/functions/v1/api/health` | `data_fresh: true`, five active models listed | §3 |
+| 1 | **Live serving** | `curl -s <supabase>/functions/v1/api/health` | `data_fresh: true`, `grading_jammed: false`, five active models listed | §3 |
 | 2 | **Job health, 48 h** | SQL below | every job with `failed = 0` | §3 |
 | 3 | **Warehouse currency** | `py -m warehouse status` | newest day = yesterday; totals rising | §4 |
 | 4 | **Data quality verdict** | `cd dashboard && streamlit run app.py` | verdict line green, no failing chips | §5 |
@@ -451,6 +451,7 @@ treating any of it as current.
 | `daily-ingest` failing, and the failure ratchets | See `DATA-OPERATIONS.md` §8.1. | 🔴 open as of 2026-08-07 — **verify current state before assuming.** |
 | `/api/health` says `ok` while a job fails | It does not read `ingest_runs`. | 🔴 open. Always run check 2. |
 | Nothing alerts on any failure | No alerting exists. | 🟠 open — this runbook is the alerting. |
+| Grading silently stalled 2026-09-11 → 10-01 | Four games crossed midnight ET still in progress and never reached Final; their rows filled every settle batch, so settle ran "ok" and graded nothing. Fixed in settle (queue walk, stale-game refresh) and live-poll (follows yesterday's late games). `/api/health` now reports `grading` per queue and `grading_jammed` — **true means a queue has a row ungraded too long** (pitch/at-bat call > 24 h, or a game-line/projection row for a game before yesterday). Look at the oldest row it names, then at that game's `games.status`. | 🟢 fixed 2026-10-02; check 1 now catches a recurrence. |
 
 ---
 

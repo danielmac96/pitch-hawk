@@ -157,7 +157,7 @@ Base: `/api/<route>` on the Supabase edge function. All JSON, CDN-cached.
 | `GET /player/{id}/profile·splits·fatigue` | nightly profiles | player drawer |
 | `GET /matchup/{pitcher}/{batter}` | head-to-head (`found:false` under 3 PA, the norm) | matchup chip |
 | `GET /game/{pk}/context` | venue, ump, weather, attendance (`found:false` for today's games) | game metadata tier |
-| `GET /health` | active model versions | footer |
+| `GET /health` | job freshness, active model versions, `grading` (oldest ungraded row per queue) and `grading_jammed` | QA check 1 |
 | `odds/today`, `picks/today`, `record`, `edge/{pk}`, `sportsbooks` | wagering | **flag off, don't design** |
 
 ---

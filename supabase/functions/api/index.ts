@@ -12,6 +12,7 @@ import { json, svc } from "../_shared/db.ts";
 import { mlbToday } from "../_shared/mlb.ts";
 import * as aggs from "../_shared/aggregates.ts";
 import { DEFAULT_LIMIT, MAX_LIMIT, pitchFeed } from "../_shared/pitchfeed.ts";
+import { gradingHealth } from "../_shared/settlequeue.ts";
 
 const MARKET_LABELS: Record<string, string> = {
   ab_result: "At-Bat Result",
@@ -139,13 +140,22 @@ async function cached(key: string, ttl: number, origin: string, fn: () => Respon
 
 async function health(): Promise<Response> {
   const db = svc();
-  const [{ count: pitchCount }, { data: runs }, { data: model }, { data: bf }, { data: aggRows }] =
-    await Promise.all([
+  const [
+    { count: pitchCount }, { data: runs }, { data: model }, { data: bf }, { data: aggRows },
+    { data: oldPred }, { data: oldGame }, { data: oldProj },
+  ] = await Promise.all([
       db.from("pitches").select("id", { count: "exact", head: true }),
       db.from("ingest_runs").select("job,finished_at,ok").order("id", { ascending: false }).limit(200),
       db.from("model_params").select("market,version").eq("is_active", true),
       db.from("backfill_progress").select("cursor_date,start_date,done,updated_at").eq("id", 1).maybeSingle(),
       db.rpc("aggregate_freshness"),
+      // The oldest ungraded row of each grading queue. Each is a partial-index
+      // probe (~1ms), so this stays cheap at the board's poll rate.
+      db.from("predictions").select("created_at").is("result", null).order("id").limit(1),
+      db.from("game_predictions").select("official_date").is("result", null)
+        .order("official_date").limit(1),
+      db.from("player_game_projections").select("official_date").is("result", null)
+        .order("official_date").limit(1),
     ]);
   const now = Date.now();
   // Last SUCCESSFUL finish per job + how stale it is.
@@ -190,9 +200,19 @@ async function health(): Promise<Response> {
     };
   });
 
+  // Settle jams are silent -- it keeps running, logs ok, and grades nothing
+  // (2026-09-11 to 10-01). Read the queues directly instead of the job log.
+  const grading = gradingHealth({
+    predictionsOldest: oldPred?.[0]?.created_at ?? null,
+    gameOldestDate: oldGame?.[0]?.official_date ?? null,
+    projectionsOldestDate: oldProj?.[0]?.official_date ?? null,
+  }, now, mlbToday());
+
   return json({
     status: "ok",
     timestamp: new Date().toISOString(),
+    grading,
+    grading_jammed: grading.jammed,
     // NOTE: this is the 35-day hot window since the Phase 3 swap, not all of
     // history. It fell 1,217,858 -> ~126,000 on 2026-08-03 by design; the rest
     // lives in R2. See docs/DATA-PIPELINE.md §5.

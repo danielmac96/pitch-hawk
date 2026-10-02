@@ -3,7 +3,7 @@
 // live win-prob rows from four games stuck "In Progress" filled every batch
 // and pitch/at-bat grading stopped for 19 days.
 import { assertEquals } from "jsr:@std/assert@1";
-import { isStale, isVoidStatus, walkQueue } from "../_shared/settlequeue.ts";
+import { gradingHealth, isStale, isVoidStatus, walkQueue } from "../_shared/settlequeue.ts";
 
 type Row = { id: number; gradable: boolean };
 
@@ -70,4 +70,37 @@ Deno.test("isVoidStatus: postponed and cancelled games void their calls", () => 
   assertEquals(isVoidStatus("Cancelled"), true);
   assertEquals(isVoidStatus("Suspended: Rain"), false);   // resumes later; still gradable
   assertEquals(isVoidStatus("In Progress"), false);
+});
+
+// /health's jam check. NOW is 2026-10-02 00:00 UTC; today in ET is 10-01.
+const NOW = Date.parse("2026-10-02T00:00:00Z");
+const TODAY = "2026-10-01";
+
+Deno.test("gradingHealth: nothing pending is healthy", () => {
+  const h = gradingHealth({ predictionsOldest: null, gameOldestDate: null, projectionsOldestDate: null }, NOW, TODAY);
+  assertEquals(h.jammed, false);
+  assertEquals(h.predictions.age_hours, null);
+});
+
+Deno.test("gradingHealth: a pitch call ungraded for minutes is normal", () => {
+  const h = gradingHealth({ predictionsOldest: "2026-10-01T23:50:00Z", gameOldestDate: TODAY, projectionsOldestDate: TODAY }, NOW, TODAY);
+  assertEquals(h.jammed, false);
+});
+
+Deno.test("gradingHealth: a pitch call ungraded for over a day is a jam", () => {
+  // The 2026-09-11 stall, as /health would have seen it a day later.
+  const h = gradingHealth({ predictionsOldest: "2026-09-30T20:00:00Z", gameOldestDate: null, projectionsOldestDate: null }, NOW, TODAY);
+  assertEquals(h.jammed, true);
+  assertEquals(h.predictions.jammed, true);
+  assertEquals(h.predictions.age_hours, 28);
+});
+
+Deno.test("gradingHealth: yesterday's game lines may still be settling; older ones are a jam", () => {
+  const ok = gradingHealth({ predictionsOldest: null, gameOldestDate: "2026-09-30", projectionsOldestDate: "2026-09-30" }, NOW, TODAY);
+  assertEquals(ok.jammed, false);
+  const stuck = gradingHealth({ predictionsOldest: null, gameOldestDate: "2026-09-29", projectionsOldestDate: null }, NOW, TODAY);
+  assertEquals(stuck.jammed, true);
+  assertEquals(stuck.game_predictions.jammed, true);
+  const proj = gradingHealth({ predictionsOldest: null, gameOldestDate: null, projectionsOldestDate: "2026-09-28" }, NOW, TODAY);
+  assertEquals(proj.projections.jammed, true);
 });

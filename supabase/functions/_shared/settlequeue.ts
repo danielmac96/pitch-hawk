@@ -58,3 +58,43 @@ export function isStale(
   if (isFinal(game.status) || isVoidStatus(game.status)) return false;
   return game.official_date < todayET;
 }
+
+// ── /health: is grading moving? ─────────────────────────────────────────────
+// A jam is silent by nature -- settle keeps running, logs ok, and grades
+// nothing -- so it is detected from the queues themselves:
+//   predictions        pitch and at-bat calls grade minutes after the play;
+//                      one still ungraded after a day means the queue is stuck
+//   game_predictions,  grade once the game is final; a game from before
+//   projections        yesterday still holding ungraded rows is stuck too
+// Each input is the oldest ungraded row of its queue (null when empty).
+const PRED_JAM_HOURS = 24;
+
+export interface GradingInputs {
+  predictionsOldest: string | null;      // created_at of the oldest ungraded prediction
+  gameOldestDate: string | null;         // official_date, oldest ungraded game_prediction
+  projectionsOldestDate: string | null;  // official_date, oldest ungraded projection
+}
+
+function dayBefore(iso: string): string {
+  const d = new Date(`${iso}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+export function gradingHealth(inp: GradingInputs, nowMs: number, todayET: string) {
+  const ageH = inp.predictionsOldest == null
+    ? null
+    : Math.round((nowMs - Date.parse(inp.predictionsOldest)) / 3600_000);
+  const yesterday = dayBefore(todayET);
+  const dateStuck = (d: string | null) => d != null && d < yesterday;
+  const predictions = {
+    oldest_ungraded: inp.predictionsOldest, age_hours: ageH,
+    jammed: ageH != null && ageH > PRED_JAM_HOURS,
+  };
+  const game_predictions = { oldest_ungraded_date: inp.gameOldestDate, jammed: dateStuck(inp.gameOldestDate) };
+  const projections = { oldest_ungraded_date: inp.projectionsOldestDate, jammed: dateStuck(inp.projectionsOldestDate) };
+  return {
+    jammed: predictions.jammed || game_predictions.jammed || projections.jammed,
+    predictions, game_predictions, projections,
+  };
+}
