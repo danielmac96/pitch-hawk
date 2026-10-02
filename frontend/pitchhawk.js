@@ -67,17 +67,33 @@
       : PH.games.length;
 
   // Upcoming games slate (GET /games). null = not loaded yet, [] = none scheduled.
+  //
+  // On an off day /games answers with the NEXT slate and is_today=false, so
+  // Home says "Next slate · Sat, Oct 3" instead of "no games". SLATE_DATE is
+  // that slate's America/New_York date; null until /games has answered, and
+  // read as today. The bare-array shape is the pre-2026-10-02 API, still
+  // accepted so this file can ship before the edge function does.
   let SLATE = null;
   let SLATE_AT = 0;
+  let SLATE_DATE = null;
+  let SLATE_IS_TODAY = true;
   async function fetchSlate() {
     if (SLATE !== null && Date.now() - SLATE_AT < 60000) return false;
-    const rows = await fetchJson("/games");
-    if (!Array.isArray(rows)) return false;
+    const body = await fetchJson("/games");
+    const rows = Array.isArray(body) ? body : (body && Array.isArray(body.games) ? body.games : null);
+    if (!rows) return false;
     SLATE_AT = Date.now();
-    const changed = JSON.stringify(rows) !== JSON.stringify(SLATE);
+    const date = Array.isArray(body) ? null : (body.date || null);
+    const isToday = Array.isArray(body) ? true : body.is_today !== false;
+    const changed = JSON.stringify(rows) !== JSON.stringify(SLATE)
+      || date !== SLATE_DATE || isToday !== SLATE_IS_TODAY;
     SLATE = rows;
+    SLATE_DATE = date;
+    SLATE_IS_TODAY = isToday;
     return changed;
   }
+  // The date the Home and Predictions tabs are about.
+  const slateDate = () => SLATE_DATE || PH.mlbDate(0);
 
   // Last completed slate, graded. Fetched from /board and refreshed rarely —
   // it only changes when a day finishes. This is what the Live Board shows
@@ -555,7 +571,7 @@
           : live && mk === "wp" ? COPY.predSubWpLive : COPY.predSubGame;
       return `<div class="ph-titlerow">
           <h1 class="ph-h1">${esc(COPY.predTitle)}</h1>
-          <span class="ph-strip-sub">${esc(COPY.predSub)}</span>
+          <span class="ph-strip-sub">${esc(SLATE_IS_TODAY ? COPY.predSub : COPY.predSubNext)}</span>
         </div>
         ${this.predFilterBarHtml(count)}
         ${this.trustTilesHtml()}
@@ -808,7 +824,7 @@
     predEmptyHtml() {
       const has = this.todayGames().length > 0;
       return `<div class="ph-empty ph-empty--dash">
-        <b>${esc(has ? COPY.predEmptyTitle : COPY.predNoneTitle)}</b>
+        <b>${esc(has ? COPY.predEmptyTitle : (SLATE_IS_TODAY ? COPY.predNoneTitle : COPY.predNoneTitleNext))}</b>
         <span>${esc(has ? COPY.predEmptyBody : COPY.predNoneBody)}</span>
         ${has ? `<button class="ph-chip is-on" data-act="pClear">Clear filters</button>` : ""}
       </div>`;
@@ -910,7 +926,7 @@
     async loadProjections(force) {
       if (!force && Date.now() - this._projAt < PROJ_TTL_MS) return false;
       this._projAt = Date.now();
-      const date = PH.mlbDate(0);
+      const date = slateDate();
       // One request per batter market (a slate is ~270 rows each) plus all
       // starter props at once: the route pages at 1,000 rows, and a whole
       // slate across every market is more than that.
@@ -1252,11 +1268,15 @@
       return `<div class="ph-seg">${items.map(([k, label]) => `<button class="ph-seg-btn${cur === k ? " is-on" : ""}" data-act="${act}" data-arg="${esc(k)}">${withLiveDot && k === "live" ? `<span class="ph-dot is-live ph-dot-sm"></span>` : ""}${this.numHtml(label)}</button>`).join("")}</div>`;
     }
     homeTitleHtml() {
-      const date = new Date().toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: ET });
+      // The slate's own date, not the clock's: on an off day this is the next
+      // slate. Noon UTC of an ET calendar date is the same date in ET.
+      const date = new Date(`${slateDate()}T12:00:00Z`)
+        .toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: ET });
       const anyLive = this.todayGames().some((g) => g.phase === "live");
+      const next = !SLATE_IS_TODAY;
       return `<div class="ph-titlerow">
-        <h1 class="ph-h1">${esc(COPY.homeTitle)}</h1>
-        <span class="ph-mono ph-titlerow-date">${esc(date)} · all times ET</span>
+        <h1 class="ph-h1">${esc(next ? COPY.homeTitleNext : COPY.homeTitle)}</h1>
+        <span class="ph-mono ph-titlerow-date">${esc(date)} · all times ET${next ? ` · ${esc(COPY.homeNextSub)}` : ""}</span>
         <div class="ph-titlerow-right">
           <span class="ph-kicker ph-kicker--mut">Rank reads for</span>
           ${this.segHtml("mode", this.effectiveMode(), [["pregame", "Pregame"], ["live", "Live"]], anyLive)}
