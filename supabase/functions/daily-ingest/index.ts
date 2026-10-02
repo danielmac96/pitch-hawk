@@ -2,14 +2,15 @@
 //
 // 1. Re-ingest yesterday's (and the day before's, for late finishes) final
 //    games: schedule rows, pitches, at_bats, player_info.
-// 2. Upsert today's schedule so the app knows the upcoming slate.
+// 2. Upsert the next week's schedule so the app knows the upcoming slate --
+//    including on an off day, when the next slate may be days away.
 // 3. Refresh rolling stats + matchup history aggregates.
 //
 // Scheduled via pg_cron (see migration 20260703000002). Requires x-cron-secret.
 
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
 import { ensurePlayers, ingestGame, upsertGames } from "../_shared/ingest.ts";
-import { getSchedule, isFinal, mlbToday } from "../_shared/mlb.ts";
+import { getSchedule, getScheduleRange, isFinal, mlbToday } from "../_shared/mlb.ts";
 
 function dayOffset(offset: number): string {
   return mlbToday(offset);
@@ -40,11 +41,23 @@ Deno.serve(async (req) => {
     }
     detail.finals = { games, pitches, at_bats: atBats };
 
-    // Today + tomorrow's slate for the frontend / pregame picks.
-    for (const offset of [0, 1]) {
-      const sched = await getSchedule(dayOffset(offset));
-      await upsertGames(sched);
+    // Today through a week out, for the frontend / pregame picks. Today and
+    // tomorrow used to be enough, but a postseason gap or the All-Star break
+    // left the next slate missing entirely, and the board had nothing to show.
+    // slate_date() looks 14 days ahead; refreshed daily, 7 always covers the
+    // next slate except in the offseason.
+    let ahead: Awaited<ReturnType<typeof getScheduleRange>>;
+    try {
+      ahead = await getScheduleRange(dayOffset(0), dayOffset(7));
+    } catch (e) {
+      // One request per day is the long-proven path; fall back to it rather
+      // than lose the next slate over the range form.
+      errors.push(`schedule range: ${String(e).slice(0, 120)}`);
+      ahead = [];
+      for (let o = 0; o <= 7; o += 1) ahead.push(...await getSchedule(dayOffset(o)));
     }
+    await upsertGames(ahead);
+    detail.schedule_ahead = ahead.length;
 
     // Enrich any players seen in the last 2 days of at_bats.
     const { data: abPlayers } = await svc()

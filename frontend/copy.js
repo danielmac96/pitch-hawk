@@ -51,11 +51,18 @@ window.PH_COPY = (function () {
     predEmptyTitle: "No predictions match these filters",
     predEmptyBody: "Lower the minimum lift, include pending lineups, or widen the status and team filters.",
     predNoneTitle: "No predictions today",
+    // Off day: the tab shows the next slate (see /games is_today).
+    predSubNext: "No games today. Every model-fair probability on the next slate, ranked by lift over the league rate.",
+    predNoneTitleNext: "No predictions yet for the next slate",
     predNoneBody: "Nothing is scheduled, so there is nothing to rank.",
 
     // home · 2026-09 redesign
     homeTitle: "Today's slate",
-    homeNoGames: "No MLB games on today's schedule. The board wakes with tomorrow's slate.",
+    // Off day: Home shows the next date with games instead of an empty board.
+    homeTitleNext: "Next slate",
+    homeNextSub: "no games today",
+    // Only reached when there is no slate in the next two weeks (offseason).
+    homeNoGames: "No MLB games scheduled in the next two weeks.",
     homeLoading: "Loading today's slate…",
     // Only reached when nothing has ever loaded; the banner above says why.
     homeUnreachable: "Couldn't reach the schedule feed. A connection problem, not an empty slate.",

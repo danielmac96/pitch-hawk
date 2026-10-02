@@ -142,7 +142,7 @@ Base: `/api/<route>` on the Supabase edge function. All JSON, CDN-cached.
 
 | route | returns | use in design |
 |---|---|---|
-| `GET /games` | today's slate: status, teams, abbrs, start, scores, venue | schedule |
+| `GET /games` | `{date, is_today, games}`: the slate the board shows (today, or the next day with games when today has none): status, teams, abbrs, start, scores, venue | schedule |
 | `GET /live` | **whole slate** with `phase`, `situation{inning, half ▲/▼, count, outs, home/away_score}`, `batter_name/hand`, `pitcher_name/hand`, `probable_home/away_pitcher{id,name}`, `markets[]` (latest per market), `markets_pregame[]` (frozen), `current_pa_pitches[]`, `pa_predictions[]`, `coverage{markets_covered, missing[]}` | Home pills, Live Feed |
 | `GET /board?date=` | `{date, recap, live, upcoming, final}` | past slates |
 | `GET /projections?date=&market=` | `{date, priced:false, rows[{game_pk, player_id, player, market, team_id, opponent_id, is_home, lineup_slot, opposing_pitcher_id, opposing_pitcher, probability, per_pa_probability, expected_pa, model_version, book, updated_at, result, actual_count, plate_appearances}]}` (`result` null while pending) | **player markets dropdown** |

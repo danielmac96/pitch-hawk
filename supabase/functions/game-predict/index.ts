@@ -24,7 +24,6 @@ import {
 } from "../_shared/basemodels.ts";
 import {
   getProbables,
-  mlbToday,
   type ProbableRow,
 } from "../_shared/mlb.ts";
 import { latestOdds, ouJoin } from "../_shared/market.ts";
@@ -34,6 +33,7 @@ import {
   predictPitchResult, predictPitchSpeed, ScoreContext, speedOverProb,
   totalOverProb,
 } from "../_shared/model.ts";
+import { resolveSlate } from "../_shared/slate.ts";
 import { probToAmerican } from "../_shared/vocab.ts";
 
 // A game that has started, finished, or been called is not something we can make
@@ -295,9 +295,11 @@ Deno.serve(async (req) => {
   try {
     let body: any = {};
     try { body = await req.json(); } catch { /* pg_cron posts no body */ }
+    // The cron gate passes the slate it looked at; a bare call scores the
+    // same slate the board shows (today, or the next day with games).
     const date = typeof body?.date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(body.date)
       ? body.date
-      : mlbToday();
+      : (await resolveSlate(db)).date;
     detail.date = date;
 
     const { data: gameRows, error: gErr } = await db.from("games")
