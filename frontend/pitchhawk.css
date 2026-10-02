@@ -842,3 +842,12 @@ body { margin: 0; }
 .ph-feed-r2 { display: flex; gap: 8px; justify-content: space-between; font-size: 11px; color: var(--muted); min-width: 0; }
 .ph-feed-r2 .ph-mono { white-space: nowrap; }
 .ph-feed-empty { padding: 18px 14px; font-size: 12.5px; color: var(--text-2); }
+
+/* Base-model values (supabase/functions/_shared/basemodels.ts): a value with a
+   BASE tag, so a placeholder model never reads as a trained one. */
+.ph-tag--base { border-color: var(--phase-blue); color: var(--phase-blue); }
+.ph-base { display: flex; flex-direction: column; gap: 2px; min-width: 0; align-items: flex-start; }
+.ph-base-top { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.ph-base-top > b { font-size: 13px; font-weight: 700; }
+.ph-base-sub { font-size: 10px; color: var(--muted); white-space: nowrap; }
+.ph-nm--solid { border-style: solid; border-color: var(--border); }

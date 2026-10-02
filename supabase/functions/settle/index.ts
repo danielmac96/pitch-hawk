@@ -6,6 +6,7 @@
 
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
 import { gradeProjection } from "../_shared/batterprojection.ts";
+import { gradeBase } from "../_shared/basemodels.ts";
 import { ingestGame, upsertGames } from "../_shared/ingest.ts";
 import { getSchedule, isFinal, mlbToday } from "../_shared/mlb.ts";
 import { isStale, isVoidStatus, walkQueue } from "../_shared/settlequeue.ts";
@@ -17,6 +18,8 @@ const MAX_PAGES = 5;
 // Stale games re-read from MLB per run, each a schedule call and possibly a
 // full re-ingest -- bounded so one bad night cannot blow the run's budget.
 const STALE_REFRESH_LIMIT = 4;
+// Finished games whose projection rows are graded per run (~80 rows each).
+const PROJ_GAMES_PER_RUN = 20;
 
 // ── games, per run ──────────────────────────────────────────────────────────
 // Every grading path asks "is this game over?" through here. A game whose
@@ -397,56 +400,74 @@ async function settleProjections(
 ): Promise<{ graded: number; errors: string[] }> {
   const db = svc();
   const errors: string[] = [];
-  const { data: pending, error } = await db.from("player_game_projections")
-    .select("game_pk,player_id,market,probability")
+  // Game by game, oldest first. With the base-model markets a slate carries
+  // ~1,200 projection rows, so "the newest N ungraded rows" would be today's
+  // unfinished games and never reach yesterday's finished ones -- the same
+  // shape of jam as the 2026-09-11 predictions stall. Unfinished games are
+  // skipped; a stale status is re-read from MLB by loadGame.
+  const { data: pendingRows, error } = await db.from("player_game_projections")
+    .select("game_pk")
     .is("result", null)
-    .order("official_date", { ascending: false })
-    .limit(BATCH);
+    .lte("official_date", mlbToday())
+    .order("official_date", { ascending: true })
+    .limit(5000);
   if (error) return { graded: 0, errors: [error.message] };
-  if (!pending?.length) return { graded: 0, errors: [] };
+  const gamePks = [...new Set((pendingRows ?? []).map((r: any) => r.game_pk))].slice(0, PROJ_GAMES_PER_RUN);
 
   let graded = 0;
-  const gamePks = [...new Set(pending.map((r: any) => r.game_pk).filter(Boolean))];
   for (const gamePk of gamePks) {
     const game = await loadGame(gamePk);
     const status = game?.status ?? "";
-    // A postponed or cancelled game: nobody batted, so every projection is a
-    // DNP -- gradeProjection with no plate appearances grades exactly that.
-    if (!isFinal(status) && !isVoidStatus(status)) continue; // still in progress; try again next run
+    // A postponed or cancelled game: nobody played, so every row grades void
+    // (zero plate appearances / batters faced).
+    const voided = isVoidStatus(status);
+    if (!isFinal(status) && !voided) continue; // still in progress; try again next run
 
-    // Every plate appearance in the game, by batter. `at_bats` is the 35-day
-    // hot window and these rows are pruned at 35 days too, so a projection
-    // always has its at-bats available while it is gradable.
-    const { data: abRows } = await db.from("at_bats")
-      .select("batter_id,result,result_detail").eq("game_pk", gamePk).limit(500);
+    const [{ data: rows }, { data: abRows }] = await Promise.all([
+      db.from("player_game_projections").select("game_pk,player_id,market,line")
+        .eq("game_pk", gamePk).is("result", null),
+      voided ? Promise.resolve({ data: [] as any[] })
+        : db.from("at_bats").select("batter_id,pitcher_id,result,result_detail")
+          .eq("game_pk", gamePk).limit(500),
+    ]);
 
-    const pa = new Map<number, number>();
-    const hits = new Map<number, number>();
-    const homers = new Map<number, number>();
+    // Every plate appearance in the game, by batter and by pitcher.
+    const pa = new Map<number, number>(), hits = new Map<number, number>();
+    const homers = new Map<number, number>(), tb = new Map<number, number>();
+    const bf = new Map<number, number>(), ks = new Map<number, number>();
+    const bbs = new Map<number, number>(), hitsAllowed = new Map<number, number>();
+    const bump = (m: Map<number, number>, id: number, n = 1) => m.set(id, (m.get(id) ?? 0) + n);
+    const TB: Record<string, number> = { single: 1, double: 2, triple: 3, home_run: 4 };
     for (const a of abRows ?? []) {
-      const id = a.batter_id;
-      if (id == null) continue;
-      pa.set(id, (pa.get(id) ?? 0) + 1);
-      if (a.result === "hit") hits.set(id, (hits.get(id) ?? 0) + 1);
-      if (a.result_detail === "home_run") homers.set(id, (homers.get(id) ?? 0) + 1);
+      if (a.batter_id != null) {
+        bump(pa, a.batter_id);
+        if (a.result === "hit") bump(hits, a.batter_id);
+        if (a.result_detail === "home_run") bump(homers, a.batter_id);
+        bump(tb, a.batter_id, TB[a.result_detail] ?? 0);
+      }
+      if (a.pitcher_id != null) {
+        bump(bf, a.pitcher_id);
+        if (a.result === "strikeout") bump(ks, a.pitcher_id);
+        if (a.result === "walk") bump(bbs, a.pitcher_id);
+        if (a.result === "hit") bump(hitsAllowed, a.pitcher_id);
+      }
     }
 
-    for (const r of pending.filter((x: any) => x.game_pk === gamePk) as any[]) {
-      const g = gradeProjection(
-        r.market,
-        pa.get(r.player_id) ?? 0,
-        hits.get(r.player_id) ?? 0,
-        homers.get(r.player_id) ?? 0,
-      );
-
+    for (const r of (rows ?? []) as any[]) {
+      const id = r.player_id;
+      const g = r.market === "batter_hit" || r.market === "batter_hr"
+        ? gradeProjection(r.market, pa.get(id) ?? 0, hits.get(id) ?? 0, homers.get(id) ?? 0)
+        : gradeBase(r.market, r.line == null ? null : Number(r.line), {
+          pa: pa.get(id) ?? 0, tb: tb.get(id) ?? 0,
+          bf: bf.get(id) ?? 0, k: ks.get(id) ?? 0, bb: bbs.get(id) ?? 0, hits: hitsAllowed.get(id) ?? 0,
+        });
       const { error: uerr } = await db.from("player_game_projections").update({
         result: g.result,
         actual_count: g.actual_count,
         plate_appearances: g.plate_appearances,
         graded_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      }).eq("game_pk", r.game_pk).eq("player_id", r.player_id)
-        .eq("market", r.market);
+      }).eq("game_pk", r.game_pk).eq("player_id", r.player_id).eq("market", r.market);
       if (uerr) errors.push(uerr.message);
       else graded += 1;
     }

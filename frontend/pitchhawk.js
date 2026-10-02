@@ -371,8 +371,18 @@
     // strings like "BOS @ NYY · 3–2" or "O 8.5". Every number a reader
     // compares is Plex Mono, including the ones inside a sentence.
     numHtml(s) {
+      // Match on the RAW text and escape each piece. Escaping first turned an
+      // apostrophe into "&#39;", whose "39" was then wrapped as a number,
+      // breaking the entity ("the starter&#39;s" on screen).
       // A unit glued to the number ("7D", "30d") stays with it.
-      return esc(s).replace(/\d[\d:.,–\-%]*(?:[A-Za-z]{1,2}\b)?(?:\s?[AP]M)?/g, (m) => `<span class="ph-mono">${m}</span>`);
+      const str = String(s == null ? "" : s);
+      const re = /\d[\d:.,–\-%]*(?:[A-Za-z]{1,2}\b)?(?:\s?[AP]M)?/g;
+      let out = "", last = 0, m;
+      while ((m = re.exec(str))) {
+        out += esc(str.slice(last, m.index)) + `<span class="ph-mono">${esc(m[0])}</span>`;
+        last = m.index + m[0].length;
+      }
+      return out + esc(str.slice(last));
     }
 
     // ── missing values ───────────────────────────────────────────────────
@@ -687,7 +697,11 @@
         const w = this.whyLines(b, m);
         const [pk, pt] = ph(g);
         const fresh = g.phase === "final" ? "graded" : `updated ${this.clockOf(b.updatedAt) || "—"}`;
-        const rog = g.phase === "live" ? this.missingHtml("notmodeled") : `<span class="ph-missing-dash">—</span>`;
+        const live = g.phase === "live" ? this.rogOf(g, b.id) : null;
+        const rogP = live ? live[m] : null;
+        const rog = rogP != null
+          ? this.baseCellHtml(this.pct(rogP), `${Number(live.remaining_pa).toFixed(1)} PA left`)
+          : `<span class="ph-missing-dash">—</span>`;
         const rec = b[m];
         return `<div class="ph-ptable-row ph-ptable-bat">
           <span class="ph-mono ph-dim">${i + 1}</span>
@@ -749,7 +763,10 @@
           </span>
           <span class="ph-mono">${t.proj == null ? "—" : t.proj.toFixed(1)}</span>
           <span class="ph-gpill-line"><b>${this.numHtml(t.pick)}</b><span class="ph-mono ph-gpill-num is-dim">${this.pct(t.prob)}</span></span>
-          ${this.notModeledHtml()}
+          ${g.liveModels && g.liveModels.total
+            ? this.baseCellHtml(Number(g.liveModels.total.projected).toFixed(1),
+              `O ${g.liveModels.total.line} · ${this.pct(g.liveModels.total.p_over)}`)
+            : `<span class="ph-missing-dash">—</span>`}
           <span class="ph-res2">
             <span><span class="ph-res-k ph-res-k--w">WP</span>${this.gameResultChipHtml(this.gameResult(g, "wp"))}</span>
             <span><span class="ph-res-k ph-res-k--w">TOT</span>${this.gameResultChipHtml(this.gameResult(g, "tot"))}</span>
@@ -772,7 +789,7 @@
             <span class="ph-ellip">${this.numHtml(`${r.team} vs ${r.opp} · ${this.clockOf(r.g.startTs) || "TBD"}`)}</span>
           </button>
           ${this.slateChipHtml(r.g, false)}
-          ${this.starterCellsHtml(r.id)}
+          ${this.starterCellsHtml(r.id, r.g.gamePk)}
         </div>`).join("");
       const hd = ["STARTER · MATCHUP", "STATUS", "STRIKEOUTS", "OUTS REC.", "HITS ALLOWED", "EARNED RUNS", "WALKS", "30D K%", "WHIFF", "HR/PA", "FB VELO", "FATIGUE"];
       return `<div class="ph-ptable">
@@ -894,13 +911,19 @@
       if (!force && Date.now() - this._projAt < PROJ_TTL_MS) return false;
       this._projAt = Date.now();
       const date = PH.mlbDate(0);
-      const [hit, hr] = await Promise.all(["batter_hit", "batter_hr"].map((m) =>
-        fetchJson(`/projections?date=${date}&market=${m}`)));
-      if (!hit || !hr) {
+      // One request per batter market (a slate is ~270 rows each) plus all
+      // starter props at once: the route pages at 1,000 rows, and a whole
+      // slate across every market is more than that.
+      const reqs = this.BATTER_MARKETS.map((m) => `/projections?date=${date}&market=${m}`)
+        .concat([`/projections?date=${date}&role=pitcher`]);
+      const res = await Promise.all(reqs.map((u) => fetchJson(u)));
+      // 1+ Hit and 1+ HR are the trained markets; without them the batter
+      // surface has nothing to rank, so their failure is the error state.
+      if (!res[0] || !res[1]) {
         this.state.proj = Object.assign({}, this.state.proj, { err: true });
         return false;
       }
-      const rows = [].concat(hit.rows || [], hr.rows || []);
+      const rows = [].concat(...res.map((r) => (r && r.rows) || []));
       const changed = JSON.stringify(rows) !== JSON.stringify(this.state.proj.rows);
       this.state.proj = { rows, err: false };
       return changed;
@@ -948,12 +971,25 @@
     // Today's /projections rows folded to one record per batter per game,
     // holding both markets. Memoised on the rows array, which only changes
     // when a fetch returns something different.
+    // Projection markets served by /projections, and the key each batter
+    // market folds into on a batter record. batter_hit / batter_hr are trained
+    // models; the rest are base models (supabase/functions/_shared/basemodels.ts).
+    BATTER_MARKETS = ["batter_hit", "batter_hr", "batter_tb15", "batter_hrr"];
+    BATTER_KEY = { batter_hit: "hit", batter_hr: "hr", batter_tb15: "tb15", batter_hrr: "hrr" };
+    STARTER_MARKETS = [
+      ["pitcher_k", "Ks"], ["pitcher_outs", "Outs"], ["pitcher_hits", "Hits"],
+      ["pitcher_er", "ER"], ["pitcher_bb", "BB"],
+    ];
+
     batters() {
       const rows = this.state.proj.rows;
       if (!rows) return null;
       if (this._batMemo && this._batMemo.rows === rows) return this._batMemo.list;
       const by = new Map();
       rows.forEach((r) => {
+        if (r.role === "pitcher") return;
+        const mk = this.BATTER_KEY[r.market];
+        if (!mk) return;
         const key = `${r.game_pk}:${r.player_id}`;
         let b = by.get(key);
         if (!b) {
@@ -961,11 +997,12 @@
             key, id: String(r.player_id), name: r.player || null, pk: String(r.game_pk),
             side: r.is_home ? "home" : "away", slot: null, xpa: null,
             spId: r.opposing_pitcher_id == null ? null : String(r.opposing_pitcher_id),
-            spName: r.opposing_pitcher || null, updatedAt: null, hit: null, hr: null,
+            spName: r.opposing_pitcher || null, updatedAt: null,
+            hit: null, hr: null, tb15: null, hrr: null,
           };
           by.set(key, b);
         }
-        b[r.market === "batter_hr" ? "hr" : "hit"] = r;
+        b[mk] = r;
         if (b.slot == null && r.lineup_slot != null) b.slot = Number(r.lineup_slot);
         if (b.xpa == null && r.expected_pa != null) b.xpa = Number(r.expected_pa);
         if (r.updated_at && (!b.updatedAt || r.updated_at > b.updatedAt)) b.updatedAt = r.updated_at;
@@ -975,6 +1012,22 @@
       return list;
     }
     battersOf(pk) { return (this.batters() || []).filter((b) => b.pk === String(pk)); }
+    // Starter props, keyed "gamePk:pitcherId" -> { market: row }. Memoised on
+    // the rows array like batters().
+    starterProps(pk, pitcherId) {
+      const rows = this.state.proj.rows;
+      if (!rows || pitcherId == null) return null;
+      if (!this._spMemo || this._spMemo.rows !== rows) {
+        const by = {};
+        rows.forEach((r) => {
+          if (r.role !== "pitcher") return;
+          const k = `${r.game_pk}:${r.player_id}`;
+          (by[k] = by[k] || {})[r.market] = r;
+        });
+        this._spMemo = { rows, by };
+      }
+      return this._spMemo.by[`${pk}:${pitcherId}`] || null;
+    }
     teamOf(b) {
       const g = this.gameByPk(b.pk);
       return g ? (b.side === "home" ? g.home : g.away) : "—";
@@ -1538,8 +1591,33 @@
         ${cell("PARK HR FACTOR", null)}
       </div>`;
     }
-    notModeledHtml() {
-      return `<span class="ph-nm"><span class="ph-mono ph-nm-line">[LINE] <b>—</b></span>${this.tagHtml("notmodeled")}</span>`;
+    // ── base-model cells ──────────────────────────────────────────────────
+    // Values from a base model (supabase/functions/_shared/basemodels.ts:
+    // league rates x 30-day form) carry a BASE tag, so a placeholder is never
+    // read as a trained model's number. No row renders a plain dash.
+    baseTagHtml() { return `<span class="ph-tag ph-tag--base">Base</span>`; }
+    baseCellHtml(main, sub) {
+      return `<span class="ph-base"><span class="ph-base-top"><b class="ph-mono">${main}</b>${this.baseTagHtml()}</span>${sub ? `<span class="ph-mono ph-base-sub">${sub}</span>` : ""}</span>`;
+    }
+    // TB 1.5+ ("tb") or H+R+RBI 1+ ("hrr") for one batter.
+    baseBatterCellHtml(r, kind) {
+      if (!r || r.probability == null) return `<span class="ph-missing-dash">—</span>`;
+      const sub = kind === "tb"
+        ? (r.expected_value == null ? "" : `exp ${Number(r.expected_value).toFixed(1)} TB`)
+        : (r.per_pa_probability == null ? "" : `per-PA ${this.r3(r.per_pa_probability)}`);
+      return this.baseCellHtml(this.pct(Number(r.probability)), esc(sub));
+    }
+    // A starter prop: the line, P(over) and the projected count.
+    propCellHtml(r) {
+      if (!r || r.line == null) return `<span class="ph-missing-dash">—</span>`;
+      return this.baseCellHtml(`O ${Number(r.line)}`,
+        `${this.pct(Number(r.probability))} over · exp ${r.expected_value == null ? "—" : Number(r.expected_value).toFixed(1)}`);
+    }
+    // Rest-of-game entry for a batter in a live game, from /live.
+    rogOf(g, playerId) {
+      const list = g && g.liveModels && g.liveModels.rest_of_game;
+      if (!list || playerId == null) return null;
+      return list.find((x) => String(x.player_id) === String(playerId)) || null;
     }
     resultChipHtml(r, g) {
       // `result` absent from the row means the route predates the field;
@@ -1585,7 +1663,7 @@
             <span class="ph-bname"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-ellip">vs ${esc(b.spName || "TBD")}</span></span>
             ${this.probCellHtml(b, "hit")}
             ${this.probCellHtml(b, "hr")}
-            ${this.notModeledHtml()}${this.notModeledHtml()}
+            ${this.baseBatterCellHtml(b.hrr, "hrr")}${this.baseBatterCellHtml(b.tb15, "tb")}
             ${this.missingHtml("notserved")}
             <span class="ph-mono ph-dim">${h2h}</span>
             ${this.missingHtml("notserved")}
@@ -1610,10 +1688,11 @@
         fat: num(b75 && b75.velo_delta_vs_bucket0),
       };
     }
-    // The ten cells after a starter's name: five unmodelled props, then form.
-    starterCellsHtml(id) {
+    // The ten cells after a starter's name: five base-model props, then form.
+    starterCellsHtml(id, pk) {
       const s = this.starterStats(id);
-      return `${[1, 2, 3, 4, 5].map(() => this.notModeledHtml()).join("")}
+      const props = this.starterProps(pk, id) || {};
+      return `${this.STARTER_MARKETS.map(([m]) => this.propCellHtml(props[m])).join("")}
           <span class="ph-mono">${this.pct(s.k)}</span>
           <span class="ph-mono">${this.pct(s.whiff)}</span>
           ${this.missingHtml("notserved")}
@@ -1624,7 +1703,7 @@
       const start = this.clockOf(g.startTs) || "TBD";
       const sp = (name, id, team, opp) => `<div class="ph-stable-row">
           <span class="ph-bname"><span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(name || "TBD")}</b></span><span>${this.numHtml(`${team} vs ${opp} · ${start}`)}</span></span>
-          ${this.starterCellsHtml(id)}
+          ${this.starterCellsHtml(id, g.gamePk)}
         </div>`;
       const hd = ["STARTER", "STRIKEOUTS", "OUTS REC.", "HITS ALLOWED", "EARNED RUNS", "WALKS", "30D K%", "WHIFF", "HR/PA", "FB VELO", "FATIGUE"];
       return `<div class="ph-stable">
@@ -2416,7 +2495,12 @@
         ${b ? `<div class="ph-card-why ph-mono"><span>${this.whyLines(b, "hr")[0]}</span></div>`
           : `<div class="ph-note">${esc(COPY.railNoProjection)}</div>`}
         <div class="ph-rail-2">
-          <span class="ph-nm"><span class="ph-meta-k">REST OF GAME · 1+ HIT / HR</span><b class="ph-mono ph-mut">— / —</b>${this.tagHtml("notmodeled")}</span>
+          ${(() => {
+            const e = this.rogOf(g, g.batter && g.batter.id);
+            return e
+              ? `<span class="ph-nm ph-nm--solid"><span class="ph-meta-k">REST OF GAME · 1+ HIT / HR</span><b class="ph-mono">${this.pct(e.hit)} / ${this.pct(e.hr)}</b><span class="ph-base-top">${this.baseTagHtml()}<span class="ph-mono ph-base-sub">${Number(e.remaining_pa).toFixed(1)} PA left</span></span></span>`
+              : `<span class="ph-nm"><span class="ph-meta-k">REST OF GAME · 1+ HIT / HR</span><b class="ph-mono ph-mut">— / —</b></span>`;
+          })()}
           <span class="ph-nm"><span class="ph-meta-k">TODAY SO FAR · H / HR / PA</span><b class="ph-mono ph-mut">—</b>${this.tagHtml("notserved")}</span>
         </div>
       </div>`;
@@ -2424,13 +2508,19 @@
     railPitchingHtml(g) {
       const team = g.half === "▲" ? g.home : g.away;
       const s = this.starterStats(g.pitcher.id);
-      const props = ["Ks", "Outs", "Hits", "ER", "BB"].map((l) => `<span class="ph-nm ph-nm--sm"><span class="ph-meta-k">${l}</span><b class="ph-mono ph-mut">—</b></span>`).join("");
+      const sp = this.starterProps(g.gamePk, g.pitcher.id);
+      const props = this.STARTER_MARKETS.map(([m, l]) => {
+        const r = sp && sp[m];
+        return r
+          ? `<span class="ph-nm ph-nm--sm ph-nm--solid"><span class="ph-meta-k">${l}</span><b class="ph-mono">O ${Number(r.line)}</b><span class="ph-mono ph-base-sub">${this.pct(Number(r.probability))}</span></span>`
+          : `<span class="ph-nm ph-nm--sm"><span class="ph-meta-k">${l}</span><b class="ph-mono ph-mut">—</b></span>`;
+      }).join("");
       return `<div class="ph-rail">
         <div class="ph-rail-head">
           <span class="ph-kicker ph-kicker--pit">Pitching</span><b>${esc(g.pitcher.name)}</b><span class="ph-mono ph-mut">${esc([g.pitcher.hand, team].filter(Boolean).join(" · "))}</span>
         </div>
         <div class="ph-rail-5">${props}</div>
-        <span class="ph-rail-note">${this.tagHtml("notmodeled")} ${esc(COPY.railPropsNote)}</span>
+        <span class="ph-rail-note">${sp ? this.baseTagHtml() : ""} ${esc(sp ? COPY.railPropsNote : COPY.railPropsNone)}</span>
         <div class="ph-rail-3">
           <span class="ph-meta"><span class="ph-meta-k">PITCH COUNT</span>${this.missingHtml("notserved")}</span>
           <span class="ph-meta"><span class="ph-meta-k">30D K%</span><b class="ph-mono">${this.pct(s.k)}</b></span>

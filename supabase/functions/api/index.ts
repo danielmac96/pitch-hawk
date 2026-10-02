@@ -13,6 +13,21 @@ import { mlbToday } from "../_shared/mlb.ts";
 import * as aggs from "../_shared/aggregates.ts";
 import { DEFAULT_LIMIT, MAX_LIMIT, pitchFeed } from "../_shared/pitchfeed.ts";
 import { gradingHealth } from "../_shared/settlequeue.ts";
+import { liveTotal, remainingPa, restOfGame } from "../_shared/basemodels.ts";
+
+// Active model versions for the live base-model markets, cached per instance:
+// /live is the hottest route and these change only when a model is promoted.
+const LIVE_BASE_MARKETS = ["batter_hit_rog", "batter_hr_rog", "game_total_live"];
+let liveModelsCache: { expires: number; versions: Record<string, string> } = { expires: 0, versions: {} };
+async function liveModelVersions(): Promise<Record<string, string>> {
+  if (liveModelsCache.expires > Date.now()) return liveModelsCache.versions;
+  const { data } = await svc().from("model_params").select("market,version")
+    .eq("is_active", true).in("market", LIVE_BASE_MARKETS);
+  const versions: Record<string, string> = {};
+  for (const r of data ?? []) versions[r.market] = r.version;
+  liveModelsCache = { expires: Date.now() + 300_000, versions };
+  return versions;
+}
 
 const MARKET_LABELS: Record<string, string> = {
   ab_result: "At-Bat Result",
@@ -284,7 +299,10 @@ async function slatePayloads(date: string): Promise<any[]> {
 
   // Per-pitch rows are only needed for the games actually live right now.
   const empty = { data: [] as any[] };
-  const [{ data: playerRowsP }, { data: predRows }, { data: paPredRows }, { data: abpRows }] = await Promise.all([
+  const [
+    { data: playerRowsP }, { data: predRows }, { data: paPredRows }, { data: abpRows },
+    { data: projRows }, liveVersions,
+  ] = await Promise.all([
     playerIds.length
       ? db.from("player_info").select("player_id,full_name,pitch_hand,bat_side").in("player_id", playerIds)
       : Promise.resolve(empty),
@@ -308,6 +326,14 @@ async function slatePayloads(date: string): Promise<any[]> {
         .eq("market", "ab_pitches_ou")
         .order("id", { ascending: false }).limit(livePks.length * 3)
       : Promise.resolve(empty),
+    // Frozen pregame per-PA rates and lineup slots, for the live
+    // rest-of-game base model. Live games only.
+    livePks.length
+      ? db.from("player_game_projections")
+        .select("game_pk,player_id,market,per_pa_probability,lineup_slot,is_home")
+        .in("game_pk", livePks).in("market", ["batter_hit", "batter_hr"])
+      : Promise.resolve(empty),
+    livePks.length ? liveModelVersions() : Promise.resolve({} as Record<string, string>),
   ]);
   const playersBy = new Map((playerRowsP ?? []).map((p: any) => [p.player_id, p]));
 
@@ -441,6 +467,48 @@ async function slatePayloads(date: string): Promise<any[]> {
     const probable = (id: number | null) =>
       id == null ? null : { id, name: playersBy.get(id)?.full_name ?? null };
 
+    // Live base models (_shared/basemodels.ts), only for a game in progress
+    // and only while each market has an active model row.
+    let liveModels: any = null;
+    if (isLive && ls.inning != null) {
+      const sit = { inning: Number(ls.inning), top: !!ls.top_inning, outs: Number(ls.outs ?? 0) };
+      liveModels = {};
+      const preTotal = gpPre.get(g.game_pk)?.get("game_total");
+      if (liveVersions["game_total_live"] && preTotal?.line != null) {
+        liveModels.total = {
+          ...liveTotal({ ...sit, home: Number(ls.home_score ?? 0), away: Number(ls.away_score ?? 0) },
+            Number(preTotal.line)),
+          model_version: liveVersions["game_total_live"],
+        };
+      }
+      if (liveVersions["batter_hit_rog"] || liveVersions["batter_hr_rog"]) {
+        const by = new Map<number, any>();
+        for (const r of projRows ?? []) {
+          if (r.game_pk !== g.game_pk) continue;
+          const b = by.get(r.player_id) ?? { player_id: r.player_id, slot: r.lineup_slot, is_home: r.is_home };
+          b[r.market] = r.per_pa_probability != null ? Number(r.per_pa_probability) : null;
+          by.set(r.player_id, b);
+        }
+        // The batting side's current slot, from the batter at the plate.
+        const battingHome = !ls.top_inning;
+        const atPlate = by.get(ls.batter_id);
+        const currentSlot = atPlate?.slot ?? null;
+        liveModels.rest_of_game = [...by.values()].filter((b) => b.slot != null).map((b) => {
+          const side = b.is_home ? "home" : "away";
+          const rem = remainingPa({
+            ...sit, side, slot: b.slot,
+            currentSlot: b.is_home === battingHome ? currentSlot : null,
+          });
+          return {
+            player_id: b.player_id, side, slot: b.slot, remaining_pa: rem,
+            hit: liveVersions["batter_hit_rog"] && b.batter_hit != null ? restOfGame(b.batter_hit, rem) : null,
+            hr: liveVersions["batter_hr_rog"] && b.batter_hr != null ? restOfGame(b.batter_hr, rem) : null,
+          };
+        });
+        liveModels.rest_of_game_version = liveVersions["batter_hit_rog"] ?? liveVersions["batter_hr_rog"];
+      }
+    }
+
     return {
       game_pk: g.game_pk,
       status: g.status,
@@ -490,6 +558,9 @@ async function slatePayloads(date: string): Promise<any[]> {
       // Pregame game-level calls, always, regardless of phase. Empty before
       // game-predict has run for the slate.
       markets_pregame: [...(gpPre.get(g.game_pk)?.values() ?? [])].map(marketOut),
+      // Live base models: projected total vs the pregame line, and each
+      // projected batter's rest-of-game 1+ hit / HR. null unless live.
+      live_models: liveModels,
       current_pa_pitches: isLive ? (raw.current_pa_pitches ?? []) : [],
       pa_predictions: paPredictions,
       markets,
@@ -565,18 +636,28 @@ async function picksToday(): Promise<Response> {
 async function projections(url: URL): Promise<Response> {
   const date = parseDate(url.searchParams.get("date")) ?? mlbToday();
   const market = url.searchParams.get("market");
-  const valid = ["batter_hit", "batter_hr"];
+  const valid = [
+    "batter_hit", "batter_hr", "batter_tb15", "batter_hrr",
+    "pitcher_k", "pitcher_bb", "pitcher_hits", "pitcher_outs", "pitcher_er",
+  ];
   if (market && !valid.includes(market)) {
     return json({ error: `market must be one of ${valid.join(", ")}` }, 400);
+  }
+  // role=pitcher returns every starter prop at once (~10 rows a game); a whole
+  // slate across all markets would pass the 1,000-row page cap.
+  const role = url.searchParams.get("role");
+  if (role && role !== "batter" && role !== "pitcher") {
+    return json({ error: "role must be batter or pitcher" }, 400);
   }
 
   let q = svc().from("player_game_projections")
     .select("game_pk,player_id,market,team_id,opponent_id,is_home," +
             "lineup_slot,opposing_pitcher_id,probability,per_pa_probability," +
             "expected_pa,model_version,book,updated_at," +
-            "result,actual_count,plate_appearances")
+            "result,actual_count,plate_appearances,role,line,expected_value")
     .eq("official_date", date);
   if (market) q = q.eq("market", market);
+  if (role) q = q.eq("role", role);
   const { data } = await q.order("probability", { ascending: false }).limit(1000);
 
   const rows = data ?? [];
@@ -610,6 +691,11 @@ async function projections(url: URL): Promise<Response> {
       result: r.result ?? null,
       actual_count: r.actual_count ?? null,
       plate_appearances: r.plate_appearances ?? null,
+      // Base-model markets: role is batter | pitcher; pitcher_* rows are a
+      // line and P(over) (probability), expected_value the projected count.
+      role: r.role ?? "batter",
+      line: r.line != null ? Number(r.line) : null,
+      expected_value: r.expected_value != null ? Number(r.expected_value) : null,
     })),
   });
 }

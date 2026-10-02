@@ -73,8 +73,10 @@ window.PH_COPY = (function () {
     noProjections: "No {team} batter projections yet. They land when game-predict runs, hourly before first pitch.",
     tickLegend: "▎ tick = league rate at the batter's xPA · lift = value − tick",
     startersNote:
-      "Pitcher props have no model yet. Supporting form is the 30-day rolling window, " +
-      "refreshed nightly · fatigue = FB velo change at pitches 75–99.",
+      "Starter props are BASE models (league rates × the starter's 30-day form, " +
+      "Poisson counts): placeholders until trained models replace them. O = over the " +
+      "line. Supporting form is the 30-day rolling window, refreshed nightly · fatigue = " +
+      "FB velo change at pitches 75–99.",
     // The bases diamond is always empty because the live feed carries no
     // runners. Said out loud rather than letting an empty diamond read as a
     // claim that the bases are clear.
@@ -95,7 +97,8 @@ window.PH_COPY = (function () {
     railNoProjection:
       "No pregame projection for this batter — he was not in the lineup the model " +
       "scored, or projections have not run for this game.",
-    railPropsNote: "all five pitcher props · [LINE] pending a model",
+    railPropsNote: "base models · line and P(over) from league rates × 30-day form",
+    railPropsNone: "props are scored for the probable starter; this pitcher has none",
 
     // data feed
     dataTitle: "Data Feed",

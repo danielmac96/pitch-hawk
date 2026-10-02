@@ -15,9 +15,13 @@
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
 import { ensurePlayers } from "../_shared/ingest.ts";
 import {
+  expectedPa,
   isPlausible,
   projectBatter,
 } from "../_shared/batterprojection.ts";
+import {
+  BASE_VERSION, batterHrr, batterTb15, starterProp, type StarterMarket,
+} from "../_shared/basemodels.ts";
 import {
   getProbables,
   mlbToday,
@@ -134,6 +138,42 @@ async function projectBatters(
       pitcher_info: w.pitcherId != null ? (infoBy.get(w.pitcherId) ?? null) : null,
       batter_info: infoBy.get(w.batterId) ?? null,
     };
+    const rowBase = {
+      game_pk: w.game.game_pk,
+      player_id: w.batterId,
+      official_date: date,
+      team_id: w.isHome ? w.game.home_team_id : w.game.away_team_id,
+      opponent_id: w.isHome ? w.game.away_team_id : w.game.home_team_id,
+      is_home: w.isHome,
+      lineup_slot: w.slot,
+      opposing_pitcher_id: w.pitcherId,
+      role: "batter",
+      book: "model_fair",
+      updated_at: new Date().toISOString(),
+    };
+    // Base models (_shared/basemodels.ts): TB 1.5+ and H+R+RBI 1+. Scored only
+    // while the market has an active model row, so retiring one is a
+    // model_params change, not a deploy.
+    const bat = batBy.get(w.batterId) as any;
+    const inputs = {
+      hitRate: bat?.hit_rate != null ? Number(bat.hit_rate) : null,
+      hrRate: bat?.hr_rate != null ? Number(bat.hr_rate) : null,
+      samplePa: Number(bat?.sample_pas ?? 0),
+    };
+    const pa = expectedPa(w.slot);
+    if (models["batter_tb15"]) {
+      const r = batterTb15(inputs, pa, models["batter_tb15"]);
+      out.push({ ...rowBase, market: "batter_tb15", probability: r.probability,
+        expected_pa: pa, per_pa_probability: null, expected_value: r.expected_value, line: 1.5,
+        model_version: models["batter_tb15"].version ?? BASE_VERSION });
+    }
+    if (models["batter_hrr"]) {
+      const r = batterHrr(inputs, pa, models["batter_hrr"]);
+      out.push({ ...rowBase, market: "batter_hrr", probability: r.probability,
+        expected_pa: pa, per_pa_probability: r.per_pa, expected_value: null, line: 0.5,
+        model_version: models["batter_hrr"].version ?? BASE_VERSION });
+    }
+
     for (const market of ["batter_hit", "batter_hr"]) {
       const p = projectBatter(market, models, ctx, w.slot);
       if (!p) continue;
@@ -151,6 +191,12 @@ async function projectBatters(
         probability: p.probability,
         expected_pa: p.expected_pa,
         per_pa_probability: p.per_pa_probability,
+        // Same keys as the base-model rows in this batch: supabase-js fills a
+        // key missing from some rows with NULL, not the column default, and
+        // role is NOT NULL.
+        role: "batter",
+        line: null,
+        expected_value: null,
         model_version: p.model_version,
         book: "model_fair",
         updated_at: new Date().toISOString(),
@@ -162,6 +208,77 @@ async function projectBatters(
     const { error } = await db.from("player_game_projections")
       .upsert(out, { onConflict: "game_pk,player_id,market" });
     if (error) throw new Error(`player_game_projections: ${error.message}`);
+  }
+  summary.rows = out.length;
+  return summary;
+}
+
+const STARTER_MARKETS: StarterMarket[] = [
+  "pitcher_k", "pitcher_bb", "pitcher_hits", "pitcher_outs", "pitcher_er",
+];
+
+/**
+ * Base-model props for every probable starter: a line and P(over) for
+ * strikeouts, walks, hits allowed, outs recorded and earned runs. Re-scored on
+ * every run, like batters -- the probable can change until first pitch.
+ */
+async function projectStarters(
+  db: ReturnType<typeof svc>,
+  date: string,
+  slate: any[],
+  probBy: Map<number, ProbableRow>,
+  rollBy: Map<number, any>,
+  models: Record<string, any>,
+): Promise<Record<string, number>> {
+  const summary = { starters: 0, rows: 0, no_probable: 0 };
+  const live = STARTER_MARKETS.filter((m) => models[m]);
+  if (!live.length) return summary;
+  const out: Record<string, unknown>[] = [];
+  for (const g of slate) {
+    const prob = probBy.get(g.game_pk);
+    const sides: Array<[number | null, boolean]> = [
+      [prob?.home_pitcher_id ?? null, true],
+      [prob?.away_pitcher_id ?? null, false],
+    ];
+    for (const [pitcherId, isHome] of sides) {
+      if (pitcherId == null) { summary.no_probable += 1; continue; }
+      summary.starters += 1;
+      const roll = rollBy.get(pitcherId) ?? null;
+      const inputs = {
+        kRate: roll?.k_rate != null ? Number(roll.k_rate) : null,
+        bbRate: roll?.bb_rate != null ? Number(roll.bb_rate) : null,
+        hitRate: roll?.hit_rate != null ? Number(roll.hit_rate) : null,
+        sampleBf: Number(roll?.sample_abs ?? 0),
+      };
+      for (const market of live) {
+        const r = starterProp(market, inputs, models[market]);
+        out.push({
+          game_pk: g.game_pk,
+          player_id: pitcherId,
+          market,
+          official_date: date,
+          team_id: isHome ? g.home_team_id : g.away_team_id,
+          opponent_id: isHome ? g.away_team_id : g.home_team_id,
+          is_home: isHome,
+          role: "pitcher",
+          lineup_slot: null,
+          opposing_pitcher_id: null,
+          probability: r.probability,     // P(over line)
+          line: r.line,
+          expected_value: r.expected_value,
+          expected_pa: null,
+          per_pa_probability: null,
+          model_version: models[market].version ?? BASE_VERSION,
+          book: "model_fair",
+          updated_at: new Date().toISOString(),
+        });
+      }
+    }
+  }
+  if (out.length) {
+    const { error } = await db.from("player_game_projections")
+      .upsert(out, { onConflict: "game_pk,player_id,market" });
+    if (error) throw new Error(`starter props: ${error.message}`);
   }
   summary.rows = out.length;
   return summary;
@@ -425,6 +542,13 @@ Deno.serve(async (req) => {
       );
     } catch (e) {
       errors.push(`batter_projections: ${String(e)}`);
+    }
+    // Its own try for the same reason: starter props failing must not cost
+    // the batters or the game markets.
+    try {
+      detail.starter_props = await projectStarters(db, date, slate, probBy, rollBy, models);
+    } catch (e) {
+      errors.push(`starter_props: ${String(e)}`);
     }
     detail.errors = errors.slice(0, 10);
 

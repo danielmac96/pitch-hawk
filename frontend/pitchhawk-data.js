@@ -328,6 +328,9 @@ window.PITCHHAWK = (function () {
       status: lg.status || null,
       startTs: lg.start_ts || null,
       coverage: lg.coverage || null,
+      // Live base models from /live: projected total vs the pregame line, and
+      // each projected batter's rest-of-game 1+ hit / HR. null unless live.
+      liveModels: lg.live_models || null,
       probables: {
         home: (lg.probable_home_pitcher && lg.probable_home_pitcher.name) || null,
         away: (lg.probable_away_pitcher && lg.probable_away_pitcher.name) || null,

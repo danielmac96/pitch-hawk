@@ -203,6 +203,15 @@ lineup isn't posted. Sanity ceilings are HR ≤ 40 % and hit ≤ 95 %. Implausib
 
 Impact = how much users look for the market × how directly our data supports it today.
 
+> **Update 2026-10-02: base models.** Every market below that was blank now publishes a
+> **`base_v1`** placeholder (league rates × 30-day rolling form; `supabase/functions/_shared/basemodels.ts`):
+> `batter_tb15`, `batter_hrr`, and per probable starter `pitcher_k`, `pitcher_bb`, `pitcher_hits`,
+> `pitcher_outs`, `pitcher_er` (line + P(over), in `player_game_projections` with `role = 'pitcher'`).
+> Live: rest-of-game 1+ Hit / HR per batter and a live game total, served as `live_models` on `/live`.
+> They are registered in `model_params` so a trained model can replace each one. Graded exactly:
+> TB 1.5+, starter K / BB / hits. Voided (not gradable from the hot tables): H+R+RBI, outs, ER.
+> The UI marks every base-model value with a **BASE** tag.
+
 | rank | market | role | value today | supporting data already served | gap |
 |---|---|---|---|---|---|
 | 1 | **1+ Hit** | batter | ✅ `batter_hit.probability` | `per_pa_probability`, `expected_pa`, `lineup_slot`, 30-d `hit_rate`, matchup `h_count/pa_count` | — |

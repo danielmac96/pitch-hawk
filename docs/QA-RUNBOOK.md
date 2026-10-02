@@ -47,7 +47,7 @@ Run these in order. Each has a "good" and a "go look at §" column.
 
 | # | Check | Command | Good looks like | If not |
 |---|---|---|---|---|
-| 1 | **Live serving** | `curl -s <supabase>/functions/v1/api/health` | `data_fresh: true`, `grading_jammed: false`, five active models listed | §3 |
+| 1 | **Live serving** | `curl -s <supabase>/functions/v1/api/health` | `data_fresh: true`, `grading_jammed: false`, 17 active models listed: 7 trained or heuristic (4 in-game micro-markets, `game_moneyline`, `batter_hit`, `batter_hr`) and 10 `base_v1` placeholders (`batter_tb15`, `batter_hrr`, five `pitcher_*` props, `batter_hit_rog`, `batter_hr_rog`, `game_total_live`) | §3 |
 | 2 | **Job health, 48 h** | SQL below | every job with `failed = 0` | §3 |
 | 3 | **Warehouse currency** | `py -m warehouse status` | newest day = yesterday; totals rising | §4 |
 | 4 | **Data quality verdict** | `cd dashboard && streamlit run app.py` | verdict line green, no failing chips | §5 |
