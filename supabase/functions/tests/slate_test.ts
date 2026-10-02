@@ -1,5 +1,5 @@
 // resolveSlate: the board's "which day" answer. The date logic itself is SQL
-// (slate_date(), migration 20261002000002); what lives here is the contract
+// (slate_date(), migration 20261002120002); what lives here is the contract
 // that a failed lookup falls back to today and never hides a day with games.
 import { assertEquals } from "jsr:@std/assert@1";
 import { resolveSlate } from "../_shared/slate.ts";

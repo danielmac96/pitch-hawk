@@ -1,7 +1,7 @@
 // The slate the board shows: today, or the next day with games.
 //
 // A thin wrapper over the `slate_date()` SQL function (migration
-// 20261002000002), which the game-predict cron gate also reads -- one
+// 20261002120002), which the game-predict cron gate also reads -- one
 // definition, so the API and the scorer can never disagree about which slate
 // is "the" slate.
 
