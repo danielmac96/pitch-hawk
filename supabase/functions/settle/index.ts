@@ -6,8 +6,58 @@
 
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
 import { gradeProjection } from "../_shared/batterprojection.ts";
+import { ingestGame, upsertGames } from "../_shared/ingest.ts";
+import { getSchedule, isFinal, mlbToday } from "../_shared/mlb.ts";
+import { isStale, isVoidStatus, walkQueue } from "../_shared/settlequeue.ts";
 
 const BATCH = 400;
+// predictions/picks: pages walked per run. A page the run cannot grade (a game
+// still live, or one waiting on a refresh) is skipped, not re-read forever.
+const MAX_PAGES = 5;
+// Stale games re-read from MLB per run, each a schedule call and possibly a
+// full re-ingest -- bounded so one bad night cannot blow the run's budget.
+const STALE_REFRESH_LIMIT = 4;
+
+// ── games, per run ──────────────────────────────────────────────────────────
+// Every grading path asks "is this game over?" through here. A game whose
+// stored status cannot be true any more (not final, yet its Eastern date has
+// passed -- see settlequeue.ts) is re-read from MLB; if MLB now says Final the
+// row is updated and the game re-ingested, because live-poll stopped following
+// it at the date change and its late pitches and at-bats are missing too.
+type GameState = { status: string; home_score: number | null; away_score: number | null } | null;
+function gameLoader(db: ReturnType<typeof svc>, errors: string[]) {
+  const cache = new Map<number, GameState>();
+  const schedules = new Map<string, Awaited<ReturnType<typeof getSchedule>>>();
+  const today = mlbToday();
+  let refreshes = 0;
+  return async (gamePk: number): Promise<GameState> => {
+    if (cache.has(gamePk)) return cache.get(gamePk)!;
+    const { data: game } = await db.from("games")
+      .select("status,home_score,away_score,official_date").eq("game_pk", gamePk).maybeSingle();
+    let state: GameState = game
+      ? { status: game.status ?? "", home_score: game.home_score, away_score: game.away_score }
+      : null;
+    if (game && isStale(game, today) && refreshes < STALE_REFRESH_LIMIT) {
+      refreshes += 1;
+      try {
+        if (!schedules.has(game.official_date)) {
+          schedules.set(game.official_date, await getSchedule(game.official_date));
+        }
+        const fresh = schedules.get(game.official_date)!.find((g) => g.game_pk === gamePk);
+        if (fresh) {
+          await upsertGames([fresh]);
+          if (isFinal(fresh.status)) await ingestGame(gamePk);
+          state = { status: fresh.status ?? "", home_score: fresh.home_score, away_score: fresh.away_score };
+        }
+      } catch (e) {
+        // Stays stale; the next run tries again.
+        errors.push(`refresh ${gamePk}: ${String(e).slice(0, 120)}`);
+      }
+    }
+    cache.set(gamePk, state);
+    return state;
+  };
+}
 
 function winProfit(price: number | null | undefined, units = 1): number {
   if (price == null) return units;
@@ -103,39 +153,62 @@ function gradeRow(
   return null;
 }
 
-async function settleTable(table: "predictions" | "picks"): Promise<{ graded: number; errors: string[] }> {
+async function settleTable(
+  table: "predictions" | "picks", loadGame: ReturnType<typeof gameLoader>,
+): Promise<{ graded: number; errors: string[] }> {
   const db = svc();
   const errors: string[] = [];
   const statusCol = table === "picks" ? "status" : "result";
   const sel = table === "picks"
     ? "id,game_pk,at_bat_index,market,recommendation,line,price,units,status"
     : "id,game_pk,at_bat_index,pitch_number,market,recommendation,line,price,units,result";
-  let q = db.from(table).select(sel).order("id").limit(BATCH);
-  q = table === "picks" ? q.eq("status", "pending") : q.is("result", "null");
-  const { data: pending, error } = await q;
-  if (error) return { graded: 0, errors: [error.message] };
-  if (!pending?.length) return { graded: 0, errors: [] };
 
+  // Oldest first, but a page that cannot grade is passed over rather than
+  // re-read every run -- see settlequeue.ts for the stall this prevents.
+  const fetchPage = async (after: number, limit: number) => {
+    let q = db.from(table).select(sel).gt("id", after).order("id").limit(limit);
+    q = table === "picks" ? q.eq("status", "pending") : q.is("result", "null");
+    const { data, error } = await q;
+    if (error) { errors.push(error.message); return []; }
+    return (data ?? []) as any[];
+  };
+  const { graded } = await walkQueue(
+    fetchPage,
+    (rows) => gradeRows(table, statusCol, rows, loadGame, errors),
+    { pageSize: BATCH, target: BATCH, maxPages: MAX_PAGES },
+  );
+  return { graded, errors };
+}
+
+async function gradeRows(
+  table: "predictions" | "picks", statusCol: string, pending: any[],
+  loadGame: ReturnType<typeof gameLoader>, errors: string[],
+): Promise<number> {
+  const db = svc();
   let graded = 0;
   const gamePks = [...new Set(pending.map((r: any) => r.game_pk).filter(Boolean))];
   for (const gamePk of gamePks) {
     const rows = pending.filter((r: any) => r.game_pk === gamePk);
-    const [{ data: pitches }, { data: abRows }, { data: game }] = await Promise.all([
+    const game = await loadGame(gamePk);
+    const [{ data: pitches }, { data: abRows }] = await Promise.all([
       db.from("pitches").select("at_bat_index,pitch_number,start_speed,result_category")
         .eq("game_pk", gamePk).order("at_bat_index").order("pitch_number").limit(5000),
       db.from("at_bats").select("at_bat_index,result,pitch_count").eq("game_pk", gamePk).limit(500),
-      db.from("games").select("status,home_score,away_score").eq("game_pk", gamePk).maybeSingle(),
     ]);
     const absByIdx = new Map<number, any>();
     for (const a of abRows ?? []) if (a.at_bat_index != null) absByIdx.set(a.at_bat_index, a);
     const status = game?.status ?? "";
-    const isFinal = status.startsWith("Final") || status === "Game Over" || status === "Completed Early";
-    const gameLive = !isFinal;
-    const finalScores = isFinal ? { home: game?.home_score ?? null, away: game?.away_score ?? null } : null;
+    const final = isFinal(status);
+    const gameLive = !final;
+    const finalScores = final ? { home: game?.home_score ?? null, away: game?.away_score ?? null } : null;
+    // A game that never happened voids its calls instead of leaving them
+    // pending for good.
+    const voided = isVoidStatus(status);
 
     for (const r of rows as any[]) {
       const pnRow = table === "picks" ? { ...r, pitch_number: null } : r;
-      const grade = gradeRow(pnRow, pitches ?? [], absByIdx, gameLive, finalScores);
+      const grade: Grade | null = voided ? { result: "void", profit: 0 }
+        : gradeRow(pnRow, pitches ?? [], absByIdx, gameLive, finalScores);
       if (!grade) continue;
       const patch: Record<string, unknown> = {
         [statusCol]: grade.result,
@@ -152,7 +225,7 @@ async function settleTable(table: "predictions" | "picks"): Promise<{ graded: nu
       else graded += 1;
     }
   }
-  return { graded, errors };
+  return graded;
 }
 
 // ── game-level grading ─────────────────────────────────────────────────────
@@ -244,7 +317,9 @@ function gradeGameRow(
   }
 }
 
-async function settleGamePredictions(): Promise<{ graded: number; errors: string[] }> {
+async function settleGamePredictions(
+  loadGame: ReturnType<typeof gameLoader>,
+): Promise<{ graded: number; errors: string[] }> {
   const db = svc();
   const errors: string[] = [];
   const { data: pending, error } = await db.from("game_predictions")
@@ -258,11 +333,19 @@ async function settleGamePredictions(): Promise<{ graded: number; errors: string
   let graded = 0;
   const gamePks = [...new Set(pending.map((r: any) => r.game_pk).filter(Boolean))];
   for (const gamePk of gamePks) {
-    const { data: game } = await db.from("games")
-      .select("status,home_score,away_score").eq("game_pk", gamePk).maybeSingle();
+    const game = await loadGame(gamePk);
     const status = game?.status ?? "";
-    const isFinal = status.startsWith("Final") || status === "Game Over" || status === "Completed Early";
-    if (!isFinal) continue; // still in progress; try again next run
+    if (isVoidStatus(status)) {
+      for (const r of pending.filter((x: any) => x.game_pk === gamePk) as any[]) {
+        const { error: uerr } = await db.from("game_predictions").update({
+          result: "void", profit_units: 0, graded_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        }).eq("game_pk", r.game_pk).eq("market", r.market).eq("phase", r.phase);
+        if (uerr) errors.push(uerr.message); else graded += 1;
+      }
+      continue;
+    }
+    if (!isFinal(status)) continue; // still in progress; try again next run
 
     const [{ data: pitches }, { data: abRows }] = await Promise.all([
       db.from("pitches").select("start_speed,result_category").eq("game_pk", gamePk).limit(5000),
@@ -309,7 +392,9 @@ async function settleGamePredictions(): Promise<{ graded: number; errors: string
  * counting it as one would drag every measured rate down by however often
  * clubs change their minds.
  */
-async function settleProjections(): Promise<{ graded: number; errors: string[] }> {
+async function settleProjections(
+  loadGame: ReturnType<typeof gameLoader>,
+): Promise<{ graded: number; errors: string[] }> {
   const db = svc();
   const errors: string[] = [];
   const { data: pending, error } = await db.from("player_game_projections")
@@ -323,12 +408,11 @@ async function settleProjections(): Promise<{ graded: number; errors: string[] }
   let graded = 0;
   const gamePks = [...new Set(pending.map((r: any) => r.game_pk).filter(Boolean))];
   for (const gamePk of gamePks) {
-    const { data: game } = await db.from("games")
-      .select("status").eq("game_pk", gamePk).maybeSingle();
+    const game = await loadGame(gamePk);
     const status = game?.status ?? "";
-    const isFinal = status.startsWith("Final") || status === "Game Over" ||
-      status === "Completed Early";
-    if (!isFinal) continue; // still in progress; try again next run
+    // A postponed or cancelled game: nobody batted, so every projection is a
+    // DNP -- gradeProjection with no plate appearances grades exactly that.
+    if (!isFinal(status) && !isVoidStatus(status)) continue; // still in progress; try again next run
 
     // Every plate appearance in the game, by batter. `at_bats` is the 35-day
     // hot window and these rows are pruned at 35 days too, so a projection
@@ -374,14 +458,16 @@ Deno.serve(async (req) => {
   const denied = await requireCronSecret(req);
   if (denied) return denied;
   const startedAt = new Date().toISOString();
-  const preds = await settleTable("predictions");
-  const picks = await settleTable("picks");
-  const gamePreds = await settleGamePredictions();
+  const refreshErrors: string[] = [];
+  const loadGame = gameLoader(svc(), refreshErrors);
+  const preds = await settleTable("predictions", loadGame);
+  const picks = await settleTable("picks", loadGame);
+  const gamePreds = await settleGamePredictions(loadGame);
   // Isolated: a failure here must not stop predictions and picks being graded,
   // which is what the record and the board depend on.
   let projections = { graded: 0, errors: [] as string[] };
   try {
-    projections = await settleProjections();
+    projections = await settleProjections(loadGame);
   } catch (e) {
     projections.errors = [`projections: ${String(e)}`];
   }
@@ -391,7 +477,7 @@ Deno.serve(async (req) => {
     game_predictions_graded: gamePreds.graded,
     projections_graded: projections.graded,
     errors: [...preds.errors, ...picks.errors, ...gamePreds.errors,
-             ...projections.errors].slice(0, 10),
+             ...projections.errors, ...refreshErrors].slice(0, 10),
   };
   await logRun("settle", startedAt, detail.errors.length === 0, detail);
   return json(detail);

@@ -13,9 +13,10 @@ import {
 import { ensurePlayers, upsertGames } from "../_shared/ingest.ts";
 import { pendingAtBats, posKey } from "../_shared/livepitch.ts";
 import {
-  currentPaPitches, deriveLiveState, getPlayByPlay, getSchedule, isLive,
+  currentPaPitches, deriveLiveState, getPlayByPlay, getSchedule, isFinal, isLive,
   liveHomeWinProb, mlbToday,
 } from "../_shared/mlb.ts";
+import { isVoidStatus } from "../_shared/settlequeue.ts";
 import {
   loadActiveModels, pitchesOverProb, predictAbPitches,
   predictAbResult, predictPitchResult, predictPitchSpeed, ScoreContext,
@@ -51,6 +52,20 @@ Deno.serve(async (req) => {
   try {
     const today = mlbToday();
     const sched = await getSchedule(today);
+    // Past midnight Eastern, a game that started yesterday can still be on
+    // the field (extra innings, rain delays). today's schedule no longer
+    // contains it, so without this it stops being polled mid-game: its last
+    // pitches are never ingested and its status stays "In Progress" -- which
+    // is what jammed settle from 2026-09-11 for 19 days. Only asked when the
+    // table says yesterday has an unfinished game that started recently, so
+    // the normal tick costs one cheap query, not a second MLB call.
+    const { data: lateRows } = await db.from("games")
+      .select("status").eq("official_date", mlbToday(-1))
+      .gte("start_ts", new Date(Date.now() - 12 * 3600_000).toISOString());
+    if ((lateRows ?? []).some((g) => !isFinal(g.status) && !isVoidStatus(g.status))) {
+      sched.push(...await getSchedule(mlbToday(-1)));
+      detail.late_games_checked = true;
+    }
     await upsertGames(sched);
     const liveGames = sched.filter((g) => isLive(g.status));
     detail.live_games = liveGames.length;
