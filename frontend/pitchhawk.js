@@ -2417,6 +2417,19 @@
       const live = this.liveGames();
       if (!live.length) return this.liveEmptyHtml();
       const sel = this.liveSelGame();
+      // Phone: one column, interleaved so what a second-screen reader glances
+      // at most (the call, the batter, this at-bat) comes first.
+      if (this.mob()) {
+        return `${this.showingChipsHtml(live, sel)}
+          <div class="ph-live-grid">
+            ${this.liveHeroHtml(sel.g, sel.top, live.length)}
+            ${this.railPlateHtml(sel.g)}
+            ${this.pitchLogHtml(sel.g)}
+            ${this.railPitchingHtml(sel.g)}
+            ${this.railGameHtml(sel.g)}
+          </div>
+          ${this.otherLiveHtml(live, sel.g)}`;
+      }
       return `${this.showingChipsHtml(live, sel)}
         <div class="ph-live-grid">
           <div class="ph-live-main">
@@ -2575,6 +2588,22 @@
             : r.ok === false ? `<span class="ph-res ph-res--bad">✗ MISSED</span>`
               : `<span class="ph-missing-dash">—</span>`;
         const edge = r.next ? "is-next" : r.ok === true ? "is-good" : r.ok === false ? "is-bad" : "";
+        if (this.mob()) {
+          return `<div class="ph-plog-row ph-plog-row--m ${edge}">
+            <span class="ph-plog-l1">
+              <span class="ph-mono ph-dim">${r.n}</span>
+              <span class="ph-mono">${esc(r.count)}</span>
+              ${r.type ? `<span class="ph-mono ph-ptype" style="color:${this.pitchColor(r.type)}">${esc(r.type)}</span>` : `<span class="ph-missing-dash">—</span>`}
+              <span class="ph-mono ph-nowrap"><span class="ph-dim">${v(r.call)}</span> → <b>${r.next ? "—" : v(r.speed)}</b></span>
+              ${r.d == null ? "" : `<span class="ph-mono ph-vd ph-vd--${band}">${r.d >= 0 ? "+" : "−"}${Math.abs(r.d).toFixed(1)}</span>`}
+              <span class="ph-plog-grade">${grade}</span>
+            </span>
+            <span class="ph-plog-l2">
+              <span>call <b>${esc(this.outLabel(r.callCat) || "—")}</b> <span class="ph-mono ph-dim">${this.pct(r.callP)}</span></span>
+              <span class="ph-dim">${r.next ? "next pitch" : esc(this.outLabel(r.result) || "—")}</span>
+            </span>
+          </div>`;
+        }
         return `<div class="ph-plog-row ${edge}">
           <span class="ph-mono ph-dim">${r.n}</span>
           <span class="ph-mono">${esc(r.count)}</span>
@@ -2592,7 +2621,7 @@
           <span class="ph-kicker">Pitch-by-pitch · this at-bat</span>
           <span class="ph-mono ph-panel-note">${esc(sum)}</span>
         </div>
-        <div class="ph-plog-row ph-btable-head"><span>#</span><span>COUNT</span><span>TYPE</span><span>VELO CALLED → ACTUAL</span><span>Δ</span><span>CALL</span><span>RESULT</span><span>GRADE</span></div>
+        ${this.mob() ? "" : `<div class="ph-plog-row ph-btable-head"><span>#</span><span>COUNT</span><span>TYPE</span><span>VELO CALLED → ACTUAL</span><span>Δ</span><span>CALL</span><span>RESULT</span><span>GRADE</span></div>`}
         ${body}
       </div>`;
     }
