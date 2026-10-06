@@ -553,6 +553,21 @@ body { margin: 0; }
 .ph-mcard .ph-missing { flex-wrap: wrap; }
 .ph-mcard .ph-pc-top { flex-wrap: wrap; row-gap: 2px; }
 .ph-mcard .ph-pc-base { margin-left: 0; }
+.ph-mcard .ph-gpill-line { flex-wrap: wrap; row-gap: 2px; }
+.ph-mcard .ph-cap { white-space: normal; }
+
+/* Phone filter bar: one scrolling chip row, the rest behind "Filters". */
+.ph-fscroll { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -14px; padding: 0 14px; }
+.ph-fscroll > * { flex: none; }
+.ph-fbar-more { border-top: 1px solid var(--row-border); padding-top: 10px; }
+.ph-msort { display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-bottom: 8px; }
+.ph-msort .ph-sorth {
+  font-size: 11.5px; letter-spacing: 0; padding: 7px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--track); color: var(--text-2);
+}
+.ph-msort .ph-sorth.is-on { border-color: var(--accent); background: var(--grn-sel-bg); color: var(--grn); }
+.ph-mcard-wide { grid-column: 1 / -1; }
+.ph-mcard-wide .ph-card-why > span { white-space: normal; }
 
 /* Phone Home pill: three stacked lines. */
 .ph-gpill-m { display: flex; flex-direction: column; gap: 7px; padding: 10px 11px; }
@@ -976,3 +991,13 @@ body { margin: 0; }
 .ph-base-top > b { font-size: 13px; font-weight: 700; }
 .ph-base-sub { font-size: 10px; color: var(--muted); white-space: nowrap; }
 .ph-nm--solid { border-style: solid; border-color: var(--border); }
+
+/* Phone overrides for rules defined after the Home section (filter bars,
+   KPI tiles) — here at the end so they win the cascade. */
+@media (max-width: 1023.98px) {
+  .ph-fbar { padding: 10px 14px; flex-direction: column; align-items: stretch; gap: 10px; }
+  .ph-fbar-line { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
+  .ph-fbar .ph-fgroup { flex-wrap: wrap; }
+  .ph-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ph-strip-head .ph-table-title { white-space: normal; }
+}
