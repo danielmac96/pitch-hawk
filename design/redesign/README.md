@@ -215,7 +215,7 @@ Layout, top to bottom:
 4. **"Due up" derivation.** Uses the current slot plus the next 1–3 slots. `/live` doesn't serve the upcoming order.
 5. **Sparklines need a route.** There's no per-pitch win-prob history endpoint. Keep the NEEDS ROUTE tag.
 6. **Data Feed history.** `batter_hit`/`batter_hr` went live 2026-09-24, so real history is thin. The per-read attributes the splits need (hand, side, slot, venue) need a route; see `DATA_CONTRACT.md`.
-7. **Mobile (390px)** isn't designed yet. Planned: a single column, a one-line "why" on cards, the same tab bar, and a horizontally scrolling Predictions table.
+7. **Mobile (390px)** is built (2026-10) without a separate design pass: a single column, the same tab bar, and every wide table as an expandable card rather than a sideways-scrolling one. See `docs/design-tokens.md` §Responsive system.
 
 ## Assets
 There are no images. The logo is a ◆ glyph plus text, and icons are text glyphs (★ ☆ ▸ ▾ ● ▲ ▼ ✗). Fonts are Google Fonts: Hanken Grotesk (400–800) and IBM Plex Mono (400–700).

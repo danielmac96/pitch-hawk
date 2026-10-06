@@ -65,10 +65,29 @@ board is alive." Disabled under `prefers-reduced-motion`.
 
 ## Responsive system (mobile-first)
 
-Base rules are the phone layout; `min-width` queries add desktop back.
-Breakpoints: **768px** (bottom tab bar → header pill nav; hero/panels
-split) and **900px** (promo splits). Verified at 360 / 390 / 768 / 1024 /
-1440.
+Two lines matter. **1024px** is the phone/desktop layout switch: below it
+`Board.mob()` is true and `pitchhawk.js` renders the phone variants, while
+`@media (max-width: 1023.98px)` blocks in `pitchhawk.css` reflow the rest.
+The four-tab redesign's desktop grids need about 1,000px, so tablets in
+portrait get the phone layout too. **768px** moves the tab bar from a
+fixed bottom bar into the header. Verified at 360 / 390 / 768 / 1024 / 1440
+with `scripts/dev_mock_api.py` (see `FRONTEND.md`).
+
+- **Tables become cards on a phone.** Every wide table row (Home pill
+  batters and starters, the three Predictions tables, the Data Feed's
+  by-market table) renders through `mCardHtml()`: a head line, the two
+  numbers a reader compares, and the rest behind a ▸ chevron. Expansion
+  lives in `state.mOpen`, never the DOM, because `render()` replaces the
+  tree on every poll. Starter values come from `starterStatPairs()`, so the
+  desktop row and the phone card cannot disagree.
+- **Filters collapse.** On a phone the Predictions and Data Feed filter bars
+  keep the primary chips in one sideways-scrolling row and put the rest
+  behind a `Filters` toggle that counts the active filters.
+- **No hover on touch.** Chart tooltips (calibration bands, daily gap) are
+  tap-to-select on a phone, with the reading printed under the chart.
+- **No `backdrop-filter` on the header below 768px.** It makes the header
+  the containing block for its fixed children, which pinned the phone tab
+  bar to the top of the screen. The header is opaque there instead.
 
 - `.ph-nav`: fixed bottom tab bar under 768px (48px targets,
   `safe-area-inset-bottom`); header pill row above.
