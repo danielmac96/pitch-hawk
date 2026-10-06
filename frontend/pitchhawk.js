@@ -166,6 +166,10 @@
         // Home pill expansion and side tab, keyed by game_pk. Written by
         // openPill() from anywhere on the board; read by the Home pills.
         open: {}, tab: {}, psort: {},
+        // Phone layout (mob()): which cards are expanded, plus the collapsed
+        // filter panels, keyed by mCardHtml's key. Held here, not in the DOM,
+        // because render() replaces the tree on every poll.
+        mOpen: {},
         // Head-to-head per "pitcherId:batterId" from GET /matchup. Absent =
         // not asked yet; { pending } in flight; otherwise the route's body.
         h2h: {},
@@ -326,6 +330,9 @@
           if (o[arg]) this.loadGameContext(arg);
           return;
         }
+        // Phone card / filter panel: expand or collapse.
+        case "mToggle":
+          return this.setState({ mOpen: Object.assign({}, this.state.mOpen, { [arg]: !this.state.mOpen[arg] }) });
         // arg "pk|away" / "pk|home" / "pk|sp"
         case "pillTab": {
           const [pk, t] = String(arg).split("|");
@@ -352,7 +359,7 @@
           .replace("{s}", liveCount === 1 ? "" : "s")
         : esc(COPY.noLive);
       return `
-      <header style="position:sticky;top:0;z-index:50;background:var(--header-bg);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);">
+      <header class="ph-header">
         <div class="ph-header-inner ph-shell">
           <div data-act="goHome" class="ph-brand">
             <span class="ph-brand-mark">◆</span>
@@ -1521,6 +1528,32 @@
       const pending = bs.length && bs.some((b) => !b.slot);
       const srCap = `STRONGEST READ${bs.length ? ` · ${pending ? "LINEUP PENDING" : "LINEUP ✓"}` : ""}${live ? " · FROZEN" : ""}`;
       const toggle = `data-act="pillToggle" data-arg="${esc(pk)}"`;
+      // Phone: the same pill as three stacked lines (handoff "Pill (phone)").
+      if (this.mob()) {
+        const sit = live ? `${g.count || "—"} · ${g.outs != null ? `${g.outs} out` : "—"}` : scoreSub;
+        return `<div class="ph-gpill${live ? " is-live" : ""}" data-ph-pill="${esc(pk)}">
+          <div class="ph-gpill-m">
+            <div class="ph-gpill-m1">
+              ${this.pinBtnHtml("g:" + pk, "Watch this game")}
+              ${this.slateChipHtml(g, true)}
+              <button class="ph-gpill-match" ${toggle}><b>${esc(g.away)} @ ${esc(g.home)}</b></button>
+              <b class="ph-mono ph-gpill-mscore ${live ? "is-live" : final ? "is-final" : "is-pre"}">${esc(score)}</b>
+              <button class="ph-chev" ${toggle} aria-expanded="${open}">${open ? "▾" : "▸"}</button>
+            </div>
+            <div class="ph-gpill-m2">
+              ${this.basesHtml(true)}
+              <span class="ph-mono">${esc(sit)}</span>
+              <span class="ph-mono ph-ellip ph-gpill-mvenue">${esc(sub)}</span>
+            </div>
+            <div class="ph-gpill-m3">
+              <span class="ph-gpill-mcell"><span class="ph-cap ${w.capCls}">ML</span><b>${esc(w.team)}</b><span class="ph-mono ph-gpill-num">${esc(w.val)}</span>${this.deltaHtml(w.delta)}</span>
+              <span class="ph-gpill-mcell"><span class="ph-cap">TOT</span><b>${this.numHtml(t.pick)}</b><span class="ph-mono ph-gpill-num is-dim">${this.pct(t.prob)}</span></span>
+              ${sr ? `<span class="ph-gpill-mcell ph-gpill-msr"><span class="ph-cap">READ</span><b class="ph-ellip">${esc(this.lastName(sr.b.name))}</b><span class="ph-gpill-mkt">${sr.m === "hit" ? "1+ H" : "1+ HR"}</span><span class="ph-mono ph-gpill-num ph-band-${sr.c.band}">${this.pct(sr.c.p)}</span></span>` : ""}
+            </div>
+          </div>
+          ${open ? this.homePillBodyHtml(g) : ""}
+        </div>`;
+      }
       return `<div class="ph-gpill${live ? " is-live" : ""}" data-ph-pill="${esc(pk)}">
         <div class="ph-gpill-row">
           ${this.pinBtnHtml("g:" + pk, "Watch this game")}
@@ -1671,12 +1704,36 @@
         ? `PREGAME · updated ${this.clockOf(upd) || "—"} · re-scores until ${pending ? "the lineup locks" : "first pitch"}`
         : g.phase === "live" ? `PREGAME · frozen at first pitch ${this.clockOf(g.startTs) || ""} · rest-of-game not modeled`
           : "FINAL · graded";
+      const h2hTxt = (b) => {
+        const h = this.h2hOf(b);
+        return !h || h.pending ? "—" : h.found ? `${h.h_count}-${h.pa_count}` : "— (&lt;3)";
+      };
+      const resHtml = (b) => `<span class="ph-res2"><span><span class="ph-res-k">H</span>${res(b, "hit")}</span><span><span class="ph-res-k">HR</span>${res(b, "hr")}</span></span>`;
+      if (this.mob()) {
+        const cards = rows.map((b) => this.mCardHtml({
+          key: `pb:${g.gamePk}:${b.id}`,
+          head: `${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
+            <span class="ph-mono ph-dim ph-mcard-slot">${b.slot || "—"}</span>
+            <span class="ph-bname"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-ellip">vs ${esc(b.spName || "TBD")}</span></span>
+            ${g.phase === "pregame" ? "" : resHtml(b)}`,
+          stats: `${this.mPairHtml("1+ HIT", this.probCellHtml(b, "hit"))}${this.mPairHtml("1+ HR", this.probCellHtml(b, "hr"))}`,
+          more: [
+            this.mPairHtml("H+R+RBI 1+", this.baseBatterCellHtml(b.hrr, "hrr")),
+            this.mPairHtml("TB 1.5+", this.baseBatterCellHtml(b.tb15, "tb")),
+            this.mPairHtml("30D H · HR /PA", this.missingHtml("notserved")),
+            this.mPairHtml("H2H", `<span class="ph-mono ph-dim">${h2hTxt(b)}</span>`),
+            this.mPairHtml("TODAY", this.missingHtml("notserved")),
+          ].join(""),
+        })).join("");
+        return `${pendNote}<div class="ph-mlist">${cards}
+          <div class="ph-btable-foot"><span>${this.numHtml(fresh)}</span><span>${esc(COPY.tickLegend)}</span></div>
+        </div>`;
+      }
       const hd = ["", "#", "BATTER · VS STARTER", "1+ HIT", "1+ HR", "H+R+RBI 1+", "TB 1.5+", "30D H · HR /PA", "H2H", "TODAY", "RESULT"];
       return `${pendNote}<div class="ph-btable">
         <div class="ph-btable-row ph-btable-head">${hd.map((h) => `<span>${h}</span>`).join("")}</div>
         ${rows.map((b) => {
-          const h = this.h2hOf(b);
-          const h2h = !h || h.pending ? "—" : h.found ? `${h.h_count}-${h.pa_count}` : "— (&lt;3)";
+          const h2h = h2hTxt(b);
           return `<div class="ph-btable-row">
             ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
             <span class="ph-mono ph-dim">${b.slot || "—"}</span>
@@ -1687,7 +1744,7 @@
             ${this.missingHtml("notserved")}
             <span class="ph-mono ph-dim">${h2h}</span>
             ${this.missingHtml("notserved")}
-            <span class="ph-res2"><span><span class="ph-res-k">H</span>${res(b, "hit")}</span><span><span class="ph-res-k">HR</span>${res(b, "hr")}</span></span>
+            ${resHtml(b)}
           </div>`;
         }).join("")}
         <div class="ph-btable-foot"><span>${this.numHtml(fresh)}</span><span>${esc(COPY.tickLegend)}</span></div>
@@ -1708,16 +1765,34 @@
         fat: num(b75 && b75.velo_delta_vs_bucket0),
       };
     }
-    // The ten cells after a starter's name: five base-model props, then form.
-    starterCellsHtml(id, pk) {
+    // The ten values after a starter's name, as [label, cell HTML]: five
+    // base-model props, then form. The desktop row and the phone card both
+    // read this, so they cannot drift apart.
+    starterStatPairs(id, pk) {
       const s = this.starterStats(id);
       const props = this.starterProps(pk, id) || {};
-      return `${this.STARTER_MARKETS.map(([m]) => this.propCellHtml(props[m])).join("")}
-          <span class="ph-mono">${this.pct(s.k)}</span>
-          <span class="ph-mono">${this.pct(s.whiff)}</span>
-          ${this.missingHtml("notserved")}
-          <span class="ph-mono">${s.velo == null ? "—" : s.velo.toFixed(1)}</span>
-          <span class="ph-mono ph-dim">${s.fat == null ? "—" : `${this.signed(s.fat)} mph`}</span>`;
+      const PROP_LABEL = { pitcher_k: "STRIKEOUTS", pitcher_outs: "OUTS REC.", pitcher_hits: "HITS ALLOWED", pitcher_er: "EARNED RUNS", pitcher_bb: "WALKS" };
+      return this.STARTER_MARKETS.map(([m]) => [PROP_LABEL[m], this.propCellHtml(props[m])]).concat([
+        ["30D K%", `<span class="ph-mono">${this.pct(s.k)}</span>`],
+        ["WHIFF", `<span class="ph-mono">${this.pct(s.whiff)}</span>`],
+        ["HR/PA", this.missingHtml("notserved")],
+        ["FB VELO", `<span class="ph-mono">${s.velo == null ? "—" : s.velo.toFixed(1)}</span>`],
+        ["FATIGUE", `<span class="ph-mono ph-dim">${s.fat == null ? "—" : `${this.signed(s.fat)} mph`}</span>`],
+      ]);
+    }
+    starterCellsHtml(id, pk) {
+      return this.starterStatPairs(id, pk).map(([, v]) => v).join("");
+    }
+    // Phone: a starter as a card — strikeouts and outs up front, the rest of
+    // the props and form behind the chevron.
+    starterCardHtml(key, nameHtml, id, pk, extra) {
+      const pairs = this.starterStatPairs(id, pk);
+      return this.mCardHtml({
+        key,
+        head: `${nameHtml}${extra || ""}`,
+        stats: pairs.slice(0, 2).map(([k, v]) => this.mPairHtml(k, v)).join(""),
+        more: pairs.slice(2).map(([k, v]) => this.mPairHtml(k, v)).join(""),
+      });
     }
     pillStartersTableHtml(g) {
       const start = this.clockOf(g.startTs) || "TBD";
@@ -1725,6 +1800,16 @@
           <span class="ph-bname"><span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(name || "TBD")}</b></span><span>${this.numHtml(`${team} vs ${opp} · ${start}`)}</span></span>
           ${this.starterCellsHtml(id, g.gamePk)}
         </div>`;
+      if (this.mob()) {
+        const card = (side, name, id, team, opp) => this.starterCardHtml(`ps:${g.gamePk}:${side}`,
+          `<span class="ph-bname"><span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(name || "TBD")}</b></span><span>${this.numHtml(`${team} vs ${opp} · ${start}`)}</span></span>`,
+          id, g.gamePk);
+        return `<div class="ph-mlist">
+          ${card("away", g.probables.away, g.probables.awayId, g.away, g.home)}
+          ${card("home", g.probables.home, g.probables.homeId, g.home, g.away)}
+          <div class="ph-btable-foot"><span>${this.numHtml(COPY.startersNote)}</span></div>
+        </div>`;
+      }
       const hd = ["STARTER", "STRIKEOUTS", "OUTS REC.", "HITS ALLOWED", "EARNED RUNS", "WALKS", "30D K%", "WHIFF", "HR/PA", "FB VELO", "FATIGUE"];
       return `<div class="ph-stable">
         <div class="ph-stable-row ph-btable-head">${hd.map((h) => `<span>${h}</span>`).join("")}</div>
@@ -1767,6 +1852,23 @@
         if (m !== this._wasMob || n !== this._wasNarrow) { this._wasMob = m; this._wasNarrow = n; this.render(); }
       });
     }
+
+    // ── phone cards ──────────────────────────────────────────────────────
+    // Under mob() a wide table row becomes a card: a head line, the few
+    // numbers a reader compares, and everything else behind a chevron. One
+    // shape for every table, so the tabs read alike on a phone.
+    mCardHtml({ key, head, stats, more, cls }) {
+      const open = !!this.state.mOpen[key];
+      const chev = more ? `<button class="ph-chev ph-mcard-chev" data-act="mToggle" data-arg="${esc(key)}" aria-expanded="${open}" aria-label="${open ? "Show less" : "Show more"}">${open ? "▾" : "▸"}</button>` : "";
+      return `<div class="ph-mcard${cls ? ` ${cls}` : ""}">
+        <div class="ph-mcard-head">${head}${chev}</div>
+        ${stats ? `<div class="ph-mcard-stats">${stats}</div>` : ""}
+        ${more && open ? `<div class="ph-mcard-more">${more}</div>` : ""}
+      </div>`;
+    }
+    // A label over a value (HTML) — the cells of a card's stat row and of
+    // its expanded grid.
+    mPairHtml(k, v) { return `<span class="ph-meta"><span class="ph-meta-k">${k}</span>${v}</span>`; }
 
     // ── small shared pieces ──────────────────────────────────────────────
     shortName(n) {
