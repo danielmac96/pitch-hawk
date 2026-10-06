@@ -166,6 +166,10 @@
         // Home pill expansion and side tab, keyed by game_pk. Written by
         // openPill() from anywhere on the board; read by the Home pills.
         open: {}, tab: {}, psort: {},
+        // Phone layout (mob()): which cards are expanded, plus the collapsed
+        // filter panels, keyed by mCardHtml's key. Held here, not in the DOM,
+        // because render() replaces the tree on every poll.
+        mOpen: {},
         // Head-to-head per "pitcherId:batterId" from GET /matchup. Absent =
         // not asked yet; { pending } in flight; otherwise the route's body.
         h2h: {},
@@ -326,6 +330,16 @@
           if (o[arg]) this.loadGameContext(arg);
           return;
         }
+        // Phone: pick one item of a set (a chart bar, a view) — arg "key|value";
+        // picking the selected value again clears it.
+        case "mSel": {
+          const i = String(arg).indexOf("|");
+          const k = arg.slice(0, i), v = arg.slice(i + 1);
+          return this.setState({ mOpen: Object.assign({}, this.state.mOpen, { [k]: this.state.mOpen[k] === v ? null : v }) });
+        }
+        // Phone card / filter panel: expand or collapse.
+        case "mToggle":
+          return this.setState({ mOpen: Object.assign({}, this.state.mOpen, { [arg]: !this.state.mOpen[arg] }) });
         // arg "pk|away" / "pk|home" / "pk|sp"
         case "pillTab": {
           const [pk, t] = String(arg).split("|");
@@ -352,7 +366,7 @@
           .replace("{s}", liveCount === 1 ? "" : "s")
         : esc(COPY.noLive);
       return `
-      <header style="position:sticky;top:0;z-index:50;background:var(--header-bg);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);">
+      <header class="ph-header">
         <div class="ph-header-inner ph-shell">
           <div data-act="goHome" class="ph-brand">
             <span class="ph-brand-mark">◆</span>
@@ -604,23 +618,42 @@
         `<button class="ph-chip${on ? " is-on" : ""}" data-act="${act}" data-arg="${esc(k)}">${esc(label)}</button>`;
       const minLabel = s.pMin <= -10 ? "any" : `${s.pMin >= 0 ? "+" : "−"}${Math.abs(s.pMin)} pts`;
       const batter = s.pMarket === "hit" || s.pMarket === "hr";
+      const teamSel = `<select class="ph-select" data-pfilter="pTeam" aria-label="Team">
+          <option value="">All teams</option>
+          ${teams.map((t) => `<option value="${esc(t)}"${s.pTeam === t ? " selected" : ""}>${esc(t)}</option>`).join("")}
+        </select>`;
+      const statusChips = `<span class="ph-fgroup">${[["all", "All"], ["live", "Live"], ["upcoming", "Upcoming"], ["final", "Final"]].map(([k, l]) => chip("pStatus", k, l, s.pStatus === k)).join("")}</span>`;
+      const batterCtl = batter ? `${chip("pConfOnly", "1", `${s.pConfOnly ? "✓ " : ""}Lineup confirmed only`, s.pConfOnly)}
+        <label class="ph-range">MIN LIFT
+          <input type="range" min="-10" max="15" step="1" value="${s.pMin}" data-pfilter="pMin" aria-label="Minimum lift in points">
+          <span class="ph-mono ph-range-val">${esc(minLabel)}</span>
+        </label>` : "";
+      const countHtml = `<span class="ph-mono ph-fbar-count"><b>${count}</b> result${count === 1 ? "" : "s"}</span>`;
+      // Phone: mode and market always in view; the rest behind "Filters".
+      if (this.mob()) {
+        const open = !!s.mOpen["f:pred"];
+        const n = (s.pTeam ? 1 : 0) + (s.pStatus !== "all" ? 1 : 0)
+          + (batter && s.pConfOnly ? 1 : 0) + (batter && s.pMin > -10 ? 1 : 0);
+        return `<div class="ph-fbar">
+          <div class="ph-fbar-line">
+            ${this.segHtml("mode", this.effectiveMode(), [["pregame", "Pregame"], ["live", "Live"]], anyLive)}
+            <button class="ph-chip${n ? " is-on" : ""}" data-act="mToggle" data-arg="f:pred" aria-expanded="${open}">Filters${n ? ` <span class="ph-mono">${n}</span>` : ""} ${open ? "▴" : "▾"}</button>
+            ${countHtml}
+          </div>
+          <div class="ph-fscroll">${this.PRED_MARKETS.map(([k, l]) => chip("pMarket", k, l, s.pMarket === k)).join("")}</div>
+          ${open ? `<div class="ph-fbar-line ph-fbar-more">${teamSel}${statusChips}${batterCtl}<button class="ph-link" data-act="pClear">Clear</button></div>` : ""}
+        </div>`;
+      }
       return `<div class="ph-fbar">
         ${this.segHtml("mode", this.effectiveMode(), [["pregame", "Pregame"], ["live", "Live"]], anyLive)}
         <span class="ph-vrule"></span>
         <span class="ph-fgroup">${this.PRED_MARKETS.map(([k, l]) => chip("pMarket", k, l, s.pMarket === k)).join("")}</span>
         <span class="ph-vrule"></span>
-        <select class="ph-select" data-pfilter="pTeam" aria-label="Team">
-          <option value="">All teams</option>
-          ${teams.map((t) => `<option value="${esc(t)}"${s.pTeam === t ? " selected" : ""}>${esc(t)}</option>`).join("")}
-        </select>
-        <span class="ph-fgroup">${[["all", "All"], ["live", "Live"], ["upcoming", "Upcoming"], ["final", "Final"]].map(([k, l]) => chip("pStatus", k, l, s.pStatus === k)).join("")}</span>
-        ${batter ? `${chip("pConfOnly", "1", `${s.pConfOnly ? "✓ " : ""}Lineup confirmed only`, s.pConfOnly)}
-        <label class="ph-range">MIN LIFT
-          <input type="range" min="-10" max="15" step="1" value="${s.pMin}" data-pfilter="pMin" aria-label="Minimum lift in points">
-          <span class="ph-mono ph-range-val">${esc(minLabel)}</span>
-        </label>` : ""}
+        ${teamSel}
+        ${statusChips}
+        ${batterCtl}
         <button class="ph-link" data-act="pClear">Clear</button>
-        <span class="ph-mono ph-fbar-count"><b>${count}</b> result${count === 1 ? "" : "s"}</span>
+        ${countHtml}
       </div>`;
     }
 
@@ -708,6 +741,39 @@
       const ph = (g) => g.phase === "live" ? ["pre", "PREGAME · GAME LIVE"] : g.phase === "final" ? ["final", "FINAL"] : ["pre", "PREGAME"];
       const when = (g) => g.phase === "pregame" ? this.clockOf(g.startTs) || "TBD"
         : g.phase === "live" ? `${g.half}${g.inning == null ? "" : g.inning}` : "F";
+      const more = all.length > this.PRED_PAGE
+        ? `<button class="ph-more" data-act="pAll">${s.pAll ? "Show top 25" : `Show all <span class="ph-mono">${all.length}</span> ▾`}</button>` : "";
+      if (this.mob()) {
+        const cards = rows.map((r, i) => {
+          const { b, g, c } = r;
+          const w = this.whyLines(b, m);
+          const [pk, pt] = ph(g);
+          const live = g.phase === "live" ? this.rogOf(g, b.id) : null;
+          const rogP = live ? live[m] : null;
+          const rec = b[m];
+          return this.mCardHtml({
+            key: `pr:${m}:${b.key}`,
+            head: `<span class="ph-mono ph-dim ph-mcard-slot">${i + 1}</span>
+              ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
+              <button class="ph-rowlink" data-act="predRow" data-arg="${esc(b.pk)}|${b.side}">
+                <span class="ph-rowlink-top"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-mono">${esc(this.teamOf(b))} · #${b.slot || "—"}</span></span>
+                <span class="ph-ellip">${this.numHtml(`vs ${b.spName || "TBD"} · ${g.away} @ ${g.home} ${when(g)}`)}</span>
+              </button>
+              ${this.resultChipHtml(rec ? rec.result : null, g)}`,
+            stats: `${this.mPairHtml(m === "hit" ? "P(1+ HIT)" : "P(1+ HR)", this.probCellHtml(b, m, true))}
+              ${this.mPairHtml("LIFT", `<span class="ph-stack"><span class="ph-mono ph-lift ph-lift--${c.band || "avg"}">${esc(c.lift || "—")}</span><span class="ph-mono ph-small ph-mut">${c.rel == null ? "" : `${c.rel.toFixed(2)}× league`}</span></span>`)}`,
+            more: `${this.mPairHtml("PHASE", this.phaseChip(pk, pt))}
+              ${this.mPairHtml("LINEUP", `<span class="ph-status ph-status--${b.slot ? "solid" : "dashed"} ph-status--left">${b.slot ? "LINEUP ✓" : "LINEUP PENDING"}</span>`)}
+              ${this.mPairHtml("REST OF GAME", rogP != null ? this.baseCellHtml(this.pct(rogP), `${Number(live.remaining_pa).toFixed(1)} PA left`) : `<span class="ph-missing-dash">—</span>`)}
+              ${this.mPairHtml("FRESH", `<span class="ph-mono ph-small">${esc(g.phase === "final" ? "graded" : `updated ${this.clockOf(b.updatedAt) || "—"}`)}</span>`)}
+              <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WHY</span><span class="ph-card-why ph-mono"><span>${w[0]}</span><span class="ph-card-why2">${w[1]}</span></span></span>`,
+          });
+        }).join("");
+        const sorts = [["lift", "Lift"], ["prob", "Prob"], ["time", "Time"], ["name", "Name"]]
+          .map(([k, l]) => this.sortHeadHtml(k, l)).join("");
+        return `<div class="ph-msort"><span class="ph-kicker ph-kicker--mut">Sort</span>${sorts}</div>
+          <div class="ph-mlist">${cards}${more}</div>`;
+      }
       const body = rows.map((r, i) => {
         const { b, g, c } = r;
         const w = this.whyLines(b, m);
@@ -741,8 +807,6 @@
           ${this.resultChipHtml(rec ? rec.result : null, g)}
         </div>`;
       }).join("");
-      const more = all.length > this.PRED_PAGE
-        ? `<button class="ph-more" data-act="pAll">${s.pAll ? "Show top 25" : `Show all <span class="ph-mono">${all.length}</span> ▾`}</button>` : "";
       return `<div class="ph-ptable">
         <div class="ph-ptable-row ph-ptable-bat ph-ptable-head">
           <span>#</span><span></span>
@@ -757,6 +821,36 @@
       </div>`;
     }
     predGameTableHtml(rows) {
+      if (this.mob()) {
+        return `<div class="ph-mlist">${rows.map(({ g, w, pw, t }) => {
+          const pk = String(g.gamePk);
+          const score = g.phase === "pregame" ? "" : `${g.score.away}–${g.score.home}`;
+          const now = g.phase === "pregame" ? "—" : `${w.team} ${w.val}`;
+          const cap = g.phase === "pregame" ? ["is-pre", "PREGAME · log5_v1"]
+            : g.phase === "live" ? ["is-live", "● LIVE · mlb_winprob_v1"] : ["", "AT FINAL"];
+          return this.mCardHtml({
+            key: `pg:${pk}`,
+            head: `${this.pinBtnHtml("g:" + pk, "Watch this game")}
+              ${this.slateChipHtml(g, true)}
+              <button class="ph-rowlink" data-act="predRow" data-arg="${esc(pk)}">
+                <span class="ph-rowlink-top"><b>${esc(g.away)} @ ${esc(g.home)}</b><span class="ph-mono ph-rowlink-score">${esc(score)}</span></span>
+              </button>`,
+            stats: `${this.mPairHtml("WIN PROB · PREGAME → NOW", `<span class="ph-stack"><span class="ph-gpill-line ph-mono">
+                  <span class="ph-dim">${pw.prob == null ? "—" : esc(`${pw.team} ${pw.val}`)}</span><span class="ph-mut">→</span>
+                  <b class="ph-gpill-num">${esc(now)}</b>${this.deltaHtml(w.delta)}</span><span class="ph-cap ${cap[0]}">${cap[1]}</span></span>`)}
+              ${this.mPairHtml("TOTAL · PREGAME", `<span class="ph-gpill-line"><b>${this.numHtml(t.pick)}</b><span class="ph-mono ph-gpill-num is-dim">${this.pct(t.prob)}</span></span>`)}`,
+            more: `${this.mPairHtml("STARTERS", `<span class="ph-meta-v">${esc(this.startersLine(g))}</span>`)}
+              ${this.mPairHtml("PROJ RUNS", `<span class="ph-mono">${t.proj == null ? "—" : t.proj.toFixed(1)}</span>`)}
+              ${this.mPairHtml("LIVE TOTAL", g.liveModels && g.liveModels.total
+                ? this.baseCellHtml(Number(g.liveModels.total.projected).toFixed(1), `O ${g.liveModels.total.line} · ${this.pct(g.liveModels.total.p_over)}`)
+                : `<span class="ph-missing-dash">—</span>`)}
+              ${this.mPairHtml("RESULT", `<span class="ph-res2">
+                <span><span class="ph-res-k ph-res-k--w">WP</span>${this.gameResultChipHtml(this.gameResult(g, "wp"))}</span>
+                <span><span class="ph-res-k ph-res-k--w">TOT</span>${this.gameResultChipHtml(this.gameResult(g, "tot"))}</span></span>`)}
+              ${this.mPairHtml("WIN-PROB SPARKLINE", this.tagHtml("needsroute"))}`,
+          });
+        }).join("")}</div>`;
+      }
       const body = rows.map(({ g, w, pw, t }) => {
         const pk = String(g.gamePk);
         const score = g.phase === "pregame" ? "" : `${g.score.away}–${g.score.home}`;
@@ -799,6 +893,15 @@
       </div>`;
     }
     predStarterTableHtml(rows) {
+      if (this.mob()) {
+        return `<div class="ph-mlist">${rows.map((r) => this.starterCardHtml(`pp:${r.g.gamePk}:${r.side}`,
+          `<button class="ph-rowlink" data-act="predRow" data-arg="${esc(String(r.g.gamePk))}|sp">
+            <span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(r.name)}</b></span>
+            <span class="ph-ellip">${this.numHtml(`${r.team} vs ${r.opp} · ${this.clockOf(r.g.startTs) || "TBD"}`)}</span>
+          </button>`, r.id, r.g.gamePk, this.slateChipHtml(r.g, true))).join("")}
+          <div class="ph-btable-foot"><span>${this.numHtml(COPY.startersNote)}</span></div>
+        </div>`;
+      }
       const body = rows.map((r) => `<div class="ph-ptable-row ph-ptable-sp">
           <button class="ph-rowlink" data-act="predRow" data-arg="${esc(String(r.g.gamePk))}|sp">
             <span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(r.name)}</b></span>
@@ -1521,6 +1624,32 @@
       const pending = bs.length && bs.some((b) => !b.slot);
       const srCap = `STRONGEST READ${bs.length ? ` · ${pending ? "LINEUP PENDING" : "LINEUP ✓"}` : ""}${live ? " · FROZEN" : ""}`;
       const toggle = `data-act="pillToggle" data-arg="${esc(pk)}"`;
+      // Phone: the same pill as three stacked lines (handoff "Pill (phone)").
+      if (this.mob()) {
+        const sit = live ? `${g.count || "—"} · ${g.outs != null ? `${g.outs} out` : "—"}` : scoreSub;
+        return `<div class="ph-gpill${live ? " is-live" : ""}" data-ph-pill="${esc(pk)}">
+          <div class="ph-gpill-m">
+            <div class="ph-gpill-m1">
+              ${this.pinBtnHtml("g:" + pk, "Watch this game")}
+              ${this.slateChipHtml(g, true)}
+              <button class="ph-gpill-match" ${toggle}><b>${esc(g.away)} @ ${esc(g.home)}</b></button>
+              <b class="ph-mono ph-gpill-mscore ${live ? "is-live" : final ? "is-final" : "is-pre"}">${esc(score)}</b>
+              <button class="ph-chev" ${toggle} aria-expanded="${open}">${open ? "▾" : "▸"}</button>
+            </div>
+            <div class="ph-gpill-m2">
+              ${this.basesHtml(true)}
+              <span class="ph-mono">${esc(sit)}</span>
+              <span class="ph-mono ph-ellip ph-gpill-mvenue">${esc(sub)}</span>
+            </div>
+            <div class="ph-gpill-m3">
+              <span class="ph-gpill-mcell"><span class="ph-cap ${w.capCls}">ML</span><b>${esc(w.team)}</b><span class="ph-mono ph-gpill-num">${esc(w.val)}</span>${this.deltaHtml(w.delta)}</span>
+              <span class="ph-gpill-mcell"><span class="ph-cap">TOT</span><b>${this.numHtml(t.pick)}</b><span class="ph-mono ph-gpill-num is-dim">${this.pct(t.prob)}</span></span>
+              ${sr ? `<span class="ph-gpill-mcell ph-gpill-msr"><span class="ph-cap">READ</span><b class="ph-ellip">${esc(this.lastName(sr.b.name))}</b><span class="ph-gpill-mkt">${sr.m === "hit" ? "1+ H" : "1+ HR"}</span><span class="ph-mono ph-gpill-num ph-band-${sr.c.band}">${this.pct(sr.c.p)}</span></span>` : ""}
+            </div>
+          </div>
+          ${open ? this.homePillBodyHtml(g) : ""}
+        </div>`;
+      }
       return `<div class="ph-gpill${live ? " is-live" : ""}" data-ph-pill="${esc(pk)}">
         <div class="ph-gpill-row">
           ${this.pinBtnHtml("g:" + pk, "Watch this game")}
@@ -1671,12 +1800,36 @@
         ? `PREGAME · updated ${this.clockOf(upd) || "—"} · re-scores until ${pending ? "the lineup locks" : "first pitch"}`
         : g.phase === "live" ? `PREGAME · frozen at first pitch ${this.clockOf(g.startTs) || ""} · rest-of-game not modeled`
           : "FINAL · graded";
+      const h2hTxt = (b) => {
+        const h = this.h2hOf(b);
+        return !h || h.pending ? "—" : h.found ? `${h.h_count}-${h.pa_count}` : "— (&lt;3)";
+      };
+      const resHtml = (b) => `<span class="ph-res2"><span><span class="ph-res-k">H</span>${res(b, "hit")}</span><span><span class="ph-res-k">HR</span>${res(b, "hr")}</span></span>`;
+      if (this.mob()) {
+        const cards = rows.map((b) => this.mCardHtml({
+          key: `pb:${g.gamePk}:${b.id}`,
+          head: `${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
+            <span class="ph-mono ph-dim ph-mcard-slot">${b.slot || "—"}</span>
+            <span class="ph-bname"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-ellip">vs ${esc(b.spName || "TBD")}</span></span>
+            ${g.phase === "pregame" ? "" : resHtml(b)}`,
+          stats: `${this.mPairHtml("1+ HIT", this.probCellHtml(b, "hit"))}${this.mPairHtml("1+ HR", this.probCellHtml(b, "hr"))}`,
+          more: [
+            this.mPairHtml("H+R+RBI 1+", this.baseBatterCellHtml(b.hrr, "hrr")),
+            this.mPairHtml("TB 1.5+", this.baseBatterCellHtml(b.tb15, "tb")),
+            this.mPairHtml("30D H · HR /PA", this.missingHtml("notserved")),
+            this.mPairHtml("H2H", `<span class="ph-mono ph-dim">${h2hTxt(b)}</span>`),
+            this.mPairHtml("TODAY", this.missingHtml("notserved")),
+          ].join(""),
+        })).join("");
+        return `${pendNote}<div class="ph-mlist">${cards}
+          <div class="ph-btable-foot"><span>${this.numHtml(fresh)}</span><span>${esc(COPY.tickLegend)}</span></div>
+        </div>`;
+      }
       const hd = ["", "#", "BATTER · VS STARTER", "1+ HIT", "1+ HR", "H+R+RBI 1+", "TB 1.5+", "30D H · HR /PA", "H2H", "TODAY", "RESULT"];
       return `${pendNote}<div class="ph-btable">
         <div class="ph-btable-row ph-btable-head">${hd.map((h) => `<span>${h}</span>`).join("")}</div>
         ${rows.map((b) => {
-          const h = this.h2hOf(b);
-          const h2h = !h || h.pending ? "—" : h.found ? `${h.h_count}-${h.pa_count}` : "— (&lt;3)";
+          const h2h = h2hTxt(b);
           return `<div class="ph-btable-row">
             ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
             <span class="ph-mono ph-dim">${b.slot || "—"}</span>
@@ -1687,7 +1840,7 @@
             ${this.missingHtml("notserved")}
             <span class="ph-mono ph-dim">${h2h}</span>
             ${this.missingHtml("notserved")}
-            <span class="ph-res2"><span><span class="ph-res-k">H</span>${res(b, "hit")}</span><span><span class="ph-res-k">HR</span>${res(b, "hr")}</span></span>
+            ${resHtml(b)}
           </div>`;
         }).join("")}
         <div class="ph-btable-foot"><span>${this.numHtml(fresh)}</span><span>${esc(COPY.tickLegend)}</span></div>
@@ -1708,16 +1861,34 @@
         fat: num(b75 && b75.velo_delta_vs_bucket0),
       };
     }
-    // The ten cells after a starter's name: five base-model props, then form.
-    starterCellsHtml(id, pk) {
+    // The ten values after a starter's name, as [label, cell HTML]: five
+    // base-model props, then form. The desktop row and the phone card both
+    // read this, so they cannot drift apart.
+    starterStatPairs(id, pk) {
       const s = this.starterStats(id);
       const props = this.starterProps(pk, id) || {};
-      return `${this.STARTER_MARKETS.map(([m]) => this.propCellHtml(props[m])).join("")}
-          <span class="ph-mono">${this.pct(s.k)}</span>
-          <span class="ph-mono">${this.pct(s.whiff)}</span>
-          ${this.missingHtml("notserved")}
-          <span class="ph-mono">${s.velo == null ? "—" : s.velo.toFixed(1)}</span>
-          <span class="ph-mono ph-dim">${s.fat == null ? "—" : `${this.signed(s.fat)} mph`}</span>`;
+      const PROP_LABEL = { pitcher_k: "STRIKEOUTS", pitcher_outs: "OUTS REC.", pitcher_hits: "HITS ALLOWED", pitcher_er: "EARNED RUNS", pitcher_bb: "WALKS" };
+      return this.STARTER_MARKETS.map(([m]) => [PROP_LABEL[m], this.propCellHtml(props[m])]).concat([
+        ["30D K%", `<span class="ph-mono">${this.pct(s.k)}</span>`],
+        ["WHIFF", `<span class="ph-mono">${this.pct(s.whiff)}</span>`],
+        ["HR/PA", this.missingHtml("notserved")],
+        ["FB VELO", `<span class="ph-mono">${s.velo == null ? "—" : s.velo.toFixed(1)}</span>`],
+        ["FATIGUE", `<span class="ph-mono ph-dim">${s.fat == null ? "—" : `${this.signed(s.fat)} mph`}</span>`],
+      ]);
+    }
+    starterCellsHtml(id, pk) {
+      return this.starterStatPairs(id, pk).map(([, v]) => v).join("");
+    }
+    // Phone: a starter as a card — strikeouts and outs up front, the rest of
+    // the props and form behind the chevron.
+    starterCardHtml(key, nameHtml, id, pk, extra) {
+      const pairs = this.starterStatPairs(id, pk);
+      return this.mCardHtml({
+        key,
+        head: `${nameHtml}${extra || ""}`,
+        stats: pairs.slice(0, 2).map(([k, v]) => this.mPairHtml(k, v)).join(""),
+        more: pairs.slice(2).map(([k, v]) => this.mPairHtml(k, v)).join(""),
+      });
     }
     pillStartersTableHtml(g) {
       const start = this.clockOf(g.startTs) || "TBD";
@@ -1725,6 +1896,16 @@
           <span class="ph-bname"><span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(name || "TBD")}</b></span><span>${this.numHtml(`${team} vs ${opp} · ${start}`)}</span></span>
           ${this.starterCellsHtml(id, g.gamePk)}
         </div>`;
+      if (this.mob()) {
+        const card = (side, name, id, team, opp) => this.starterCardHtml(`ps:${g.gamePk}:${side}`,
+          `<span class="ph-bname"><span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(name || "TBD")}</b></span><span>${this.numHtml(`${team} vs ${opp} · ${start}`)}</span></span>`,
+          id, g.gamePk);
+        return `<div class="ph-mlist">
+          ${card("away", g.probables.away, g.probables.awayId, g.away, g.home)}
+          ${card("home", g.probables.home, g.probables.homeId, g.home, g.away)}
+          <div class="ph-btable-foot"><span>${this.numHtml(COPY.startersNote)}</span></div>
+        </div>`;
+      }
       const hd = ["STARTER", "STRIKEOUTS", "OUTS REC.", "HITS ALLOWED", "EARNED RUNS", "WALKS", "30D K%", "WHIFF", "HR/PA", "FB VELO", "FATIGUE"];
       return `<div class="ph-stable">
         <div class="ph-stable-row ph-btable-head">${hd.map((h) => `<span>${h}</span>`).join("")}</div>
@@ -1767,6 +1948,23 @@
         if (m !== this._wasMob || n !== this._wasNarrow) { this._wasMob = m; this._wasNarrow = n; this.render(); }
       });
     }
+
+    // ── phone cards ──────────────────────────────────────────────────────
+    // Under mob() a wide table row becomes a card: a head line, the few
+    // numbers a reader compares, and everything else behind a chevron. One
+    // shape for every table, so the tabs read alike on a phone.
+    mCardHtml({ key, head, stats, more, cls }) {
+      const open = !!this.state.mOpen[key];
+      const chev = more ? `<button class="ph-chev ph-mcard-chev" data-act="mToggle" data-arg="${esc(key)}" aria-expanded="${open}" aria-label="${open ? "Show less" : "Show more"}">${open ? "▾" : "▸"}</button>` : "";
+      return `<div class="ph-mcard${cls ? ` ${cls}` : ""}">
+        <div class="ph-mcard-head">${head}${chev}</div>
+        ${stats ? `<div class="ph-mcard-stats">${stats}</div>` : ""}
+        ${more && open ? `<div class="ph-mcard-more">${more}</div>` : ""}
+      </div>`;
+    }
+    // A label over a value (HTML) — the cells of a card's stat row and of
+    // its expanded grid.
+    mPairHtml(k, v) { return `<span class="ph-meta"><span class="ph-meta-k">${k}</span>${v}</span>`; }
 
     // ── small shared pieces ──────────────────────────────────────────────
     shortName(n) {
@@ -2315,6 +2513,19 @@
       const live = this.liveGames();
       if (!live.length) return this.liveEmptyHtml();
       const sel = this.liveSelGame();
+      // Phone: one column, interleaved so what a second-screen reader glances
+      // at most (the call, the batter, this at-bat) comes first.
+      if (this.mob()) {
+        return `${this.showingChipsHtml(live, sel)}
+          <div class="ph-live-grid">
+            ${this.liveHeroHtml(sel.g, sel.top, live.length)}
+            ${this.railPlateHtml(sel.g)}
+            ${this.pitchLogHtml(sel.g)}
+            ${this.railPitchingHtml(sel.g)}
+            ${this.railGameHtml(sel.g)}
+          </div>
+          ${this.otherLiveHtml(live, sel.g)}`;
+      }
       return `${this.showingChipsHtml(live, sel)}
         <div class="ph-live-grid">
           <div class="ph-live-main">
@@ -2473,6 +2684,22 @@
             : r.ok === false ? `<span class="ph-res ph-res--bad">✗ MISSED</span>`
               : `<span class="ph-missing-dash">—</span>`;
         const edge = r.next ? "is-next" : r.ok === true ? "is-good" : r.ok === false ? "is-bad" : "";
+        if (this.mob()) {
+          return `<div class="ph-plog-row ph-plog-row--m ${edge}">
+            <span class="ph-plog-l1">
+              <span class="ph-mono ph-dim">${r.n}</span>
+              <span class="ph-mono">${esc(r.count)}</span>
+              ${r.type ? `<span class="ph-mono ph-ptype" style="color:${this.pitchColor(r.type)}">${esc(r.type)}</span>` : `<span class="ph-missing-dash">—</span>`}
+              <span class="ph-mono ph-nowrap"><span class="ph-dim">${v(r.call)}</span> → <b>${r.next ? "—" : v(r.speed)}</b></span>
+              ${r.d == null ? "" : `<span class="ph-mono ph-vd ph-vd--${band}">${r.d >= 0 ? "+" : "−"}${Math.abs(r.d).toFixed(1)}</span>`}
+              <span class="ph-plog-grade">${grade}</span>
+            </span>
+            <span class="ph-plog-l2">
+              <span>call <b>${esc(this.outLabel(r.callCat) || "—")}</b> <span class="ph-mono ph-dim">${this.pct(r.callP)}</span></span>
+              <span class="ph-dim">${r.next ? "next pitch" : esc(this.outLabel(r.result) || "—")}</span>
+            </span>
+          </div>`;
+        }
         return `<div class="ph-plog-row ${edge}">
           <span class="ph-mono ph-dim">${r.n}</span>
           <span class="ph-mono">${esc(r.count)}</span>
@@ -2490,7 +2717,7 @@
           <span class="ph-kicker">Pitch-by-pitch · this at-bat</span>
           <span class="ph-mono ph-panel-note">${esc(sum)}</span>
         </div>
-        <div class="ph-plog-row ph-btable-head"><span>#</span><span>COUNT</span><span>TYPE</span><span>VELO CALLED → ACTUAL</span><span>Δ</span><span>CALL</span><span>RESULT</span><span>GRADE</span></div>
+        ${this.mob() ? "" : `<div class="ph-plog-row ph-btable-head"><span>#</span><span>COUNT</span><span>TYPE</span><span>VELO CALLED → ACTUAL</span><span>Δ</span><span>CALL</span><span>RESULT</span><span>GRADE</span></div>`}
         ${body}
       </div>`;
     }
@@ -2699,6 +2926,12 @@
            ${this.byTeamGridHtml(sum)}
            ${this.splitsHtml(sum)}`
         : this.dEmptyHtml();
+      if (this.mob()) {
+        const feed = s.mOpen["d:view"] === "feed";
+        return `${head}
+          <div class="ph-dview">${this.segHtml("mSel", feed ? "d:view|feed" : "d:view|", [["d:view|", "Analytics"], ["d:view|feed", "Resolved markets"]])}</div>
+          <div class="ph-dgrid">${feed ? `<div class="ph-dgrid-feed">${this.resolvedFeedHtml()}</div>` : `<div class="ph-dgrid-main">${analysis}</div>`}</div>`;
+      }
       return `${head}
         <div class="ph-dgrid">
           <div class="ph-dgrid-main">${analysis}</div>
@@ -2900,6 +3133,31 @@
         this.dTfName(),
       ].filter(Boolean).join(" · ");
       const n = s.gsum.data && s.gsum.data.overall ? s.gsum.data.overall.n : null;
+      if (this.mob()) {
+        const open = !!s.mOpen["f:data"];
+        const k = (s.dTeam ? 1 : 0) + (s.dPark ? 1 : 0) + (s.dHand !== "any" ? 1 : 0) + (s.dSide !== "any" ? 1 : 0);
+        return `<div class="ph-fbar ph-fbar--d">
+          <div class="ph-fbar-line">
+            ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"]])}
+            <button class="ph-chip${k ? " is-on" : ""}" data-act="mToggle" data-arg="f:data" aria-expanded="${open}">Filters${k ? ` <span class="ph-mono">${k}</span>` : ""} ${open ? "▴" : "▾"}</button>
+          </div>
+          <div class="ph-fscroll">${chip("all", "All")}${this.D_MARKETS.map((m) => chip(m[0], m[1])).join("")}</div>
+          ${open ? `<div class="ph-fbar-line ph-fbar-more">
+            <select class="ph-select" data-pfilter="dTeam" aria-label="Team">
+              <option value="">All teams</option>
+              ${teams.map((t) => `<option value="${t}"${s.dTeam === t ? " selected" : ""}>${t}</option>`).join("")}
+            </select>
+            <select class="ph-select ph-select--wide" data-pfilter="dPark" aria-label="Stadium">
+              <option value="">All stadiums</option>
+              ${venues.map((v) => `<option value="${esc(v.venue_id)}"${String(s.dPark) === String(v.venue_id) ? " selected" : ""}>${esc(this.parkLabel(v))}</option>`).join("")}
+            </select>
+            ${this.segHtml("dHand", s.dHand, [["any", "Any SP"], ["L", "vs LHP"], ["R", "vs RHP"]])}
+            ${this.segHtml("dSide", s.dSide, [["any", "Home + away"], ["home", "Home"], ["away", "Away"]])}
+            <button class="ph-link" data-act="dClear">Clear</button>
+          </div>` : ""}
+          <span class="ph-mono ph-fbar-count">${esc(scenario)} · <b>${n == null ? "—" : n.toLocaleString()}</b> graded</span>
+        </div>`;
+      }
       return `<div class="ph-fbar ph-fbar--d">
         <div class="ph-fbar-line">
           ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"]])}
@@ -2949,11 +3207,17 @@
     calibrationChartHtml(sum) {
       const bins = {};
       (sum.bins || []).forEach((b) => { bins[Number(b.bin)] = this.derive(b); });
+      // Touch has no hover, so on a phone a tap selects a band and its tip
+      // is printed under the chart instead.
+      const mob = this.mob(), sel = this.state.mOpen["d:cal"];
+      let selTip = "";
       const cols = Array.from({ length: 10 }, (_, i) => {
         const t = bins[i];
         const has = t && t.n;
         const tip = has ? `${t.n} reads · predicted ${this.pct1(t.exp)} · landed ${this.pct1(t.act)}` : "no reads in this band";
-        return `<div class="ph-cal-col" title="${esc(tip)}">
+        const on = mob && sel === String(i);
+        if (on) selTip = `${i * 10}–${i * 10 + 10}%: ${tip}`;
+        return `<div class="ph-cal-col${on ? " is-sel" : ""}" title="${esc(tip)}"${mob ? ` data-act="mSel" data-arg="d:cal|${i}"` : ""}>
           <span class="ph-mono ph-cal-val">${has ? this.pct(t.act) : ""}</span>
           <div class="ph-cal-plot">
             ${has ? `<span class="ph-cal-bar ph-gb--${this.gapBand(t.gap)}" style="height:${(t.act * 100).toFixed(1)}%"></span>
@@ -2967,7 +3231,8 @@
           <span><i class="ph-gb--ok"></i>within <span class="ph-mono">3</span> pts</span><span><i class="ph-gb--more"></i>landed more than predicted</span>
           <span><i class="ph-gb--less"></i>landed less</span><span><i class="ph-legend-line"></i>mean predicted</span>
         </div>`;
-      return this.dCard("Calibration", "landed rate per 10-pt probability band", `<div class="ph-cal">${cols}</div>${legend}`);
+      const note = mob ? `<div class="ph-mono ph-chart-sel">${esc(selTip || "tap a band for its counts")}</div>` : "";
+      return this.dCard("Calibration", "landed rate per 10-pt probability band", `<div class="ph-cal">${cols}</div>${note}${legend}`);
     }
     dailyGapChartHtml(sum) {
       const s = this.state, w = this.dWindow();
@@ -2975,24 +3240,45 @@
       const by = {};
       (sum.daily || []).forEach((d) => { by[d.date] = this.derive(d); });
       const bars = [];
+      const mob = this.mob(), sel = this.state.mOpen["d:gap"];
+      let selTip = "";
       for (let i = days - 1; i >= 0; i -= 1) {
         const date = PH.mlbDate(-i);
         const t = by[date];
         const v = t && t.n ? Math.max(-10, Math.min(10, t.gap * 100)) : 0;
         const tip = `${i === 0 ? "Today" : date} · ${t && t.n ? `${t.n} reads · ${this.gapTxt(t.gap)}` : "no reads"}`;
-        bars.push(`<div class="ph-gap-col${date < w.from ? " is-out" : ""}" title="${esc(tip)}">
+        const on = mob && sel === date;
+        if (on) selTip = tip;
+        bars.push(`<div class="ph-gap-col${date < w.from ? " is-out" : ""}${on ? " is-sel" : ""}" title="${esc(tip)}"${mob ? ` data-act="mSel" data-arg="d:gap|${date}"` : ""}>
           <span class="ph-gap-up">${v > 0 ? `<span class="ph-gb--${this.gapBand(t.gap)}" style="height:${(v * 10).toFixed(1)}%"></span>` : ""}</span>
           <span class="ph-gap-dn">${v < 0 ? `<span class="ph-gb--${this.gapBand(t.gap)}" style="height:${(-v * 10).toFixed(1)}%"></span>` : ""}</span>
         </div>`);
       }
-      const sub = s.dTf === "today" ? "last 7 days for context · today highlighted" : "each bar is one day · hover for counts";
+      const sub = s.dTf === "today" ? "last 7 days for context · today highlighted"
+        : `each bar is one day · ${mob ? "tap" : "hover"} for counts`;
       return this.dCard("Daily gap · landed − predicted", sub, `
         <div class="ph-gap">${bars.join("")}</div>
-        <div class="ph-gap-axis ph-mono"><span>${days > 1 ? esc(PH.mlbDate(-(days - 1))) : ""}</span><span>±10 pts</span><span>TODAY</span></div>`);
+        <div class="ph-gap-axis ph-mono"><span>${days > 1 ? esc(PH.mlbDate(-(days - 1))) : ""}</span><span>±10 pts</span><span>TODAY</span></div>
+        ${mob ? `<div class="ph-mono ph-chart-sel">${esc(selTip || "tap a day for its counts")}</div>` : ""}`);
     }
     byMarketTableHtml(sum) {
       const by = {};
       (sum.by_market || []).forEach((m) => { by[m.market] = this.derive(m); });
+      if (this.mob()) {
+        const cards = this.D_MARKETS.map(([k, , label]) => {
+          const t = by[k] || this.derive(null);
+          const on = this.state.dMk === k;
+          return this.mCardHtml({
+            key: `dm:${k}`, cls: on ? "is-on" : "",
+            head: `<button class="ph-rowlink" data-act="dMkRow" data-arg="${k}"><span class="ph-rowlink-top"><b>${esc(label)}</b><span class="ph-mono">${t.n ? t.n.toLocaleString() : "0"} graded</span></span></button>`,
+            stats: `${this.mPairHtml("LANDED · MODEL", `<span class="ph-mono">${this.pct1(t.act)} · <span class="ph-mut">${this.pct1(t.exp)}</span></span>`)}
+              ${this.mPairHtml("GAP", `<span class="ph-mono ${t.n ? `ph-tone-${this.gapTone(t.gap)}` : "ph-mut"}">${this.gapTxt(t.gap)}</span>`)}`,
+            more: `${this.mPairHtml("SKILL", `<span class="ph-mono">${t.skill == null ? "—" : `${(t.skill * 100).toFixed(1)}%`}</span>`)}
+              ${this.mPairHtml("LANDED VS MODEL", t.n ? this.barHtml(t.act * 100, t.exp * 100, "ph-band-bg-good") : `<span class="ph-bar"></span>`)}`,
+          });
+        }).join("");
+        return this.dCard("By market", "ignores the market filter · tap a name to filter", `<div class="ph-mlist">${cards}</div>`);
+      }
       const rows = this.D_MARKETS.map(([k, , label]) => {
         const t = by[k] || this.derive(null);
         const on = this.state.dMk === k;

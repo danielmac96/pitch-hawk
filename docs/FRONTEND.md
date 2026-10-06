@@ -15,6 +15,26 @@ placeholders into `config.js`. That is the whole build.
 
 Design system and responsive rules: [`design-tokens.md`](design-tokens.md).
 
+## Phone layout
+
+Below 1024px (`Board.mob()`) every tab renders a phone layout: one column,
+wide tables as expandable cards, filters behind a toggle. The rules are in
+[`design-tokens.md`](design-tokens.md#responsive-system-mobile-first).
+
+## Checking layouts without the live API
+
+`scripts/dev_mock_api.py` serves `dist/` and a canned slate (live, final and
+scheduled games, batter and starter projections) on one localhost port. On
+localhost the Data Feed falls back to its own labelled dev fixture.
+
+```bash
+bash scripts/build_frontend.sh
+python3 scripts/dev_mock_api.py        # http://localhost:8787/
+```
+
+Every value it serves is invented, and it never ships (`dist/` gets no
+`dev/`, and the script lives outside `frontend/`).
+
 ## Live data only
 
 The board reads the live API and has **no offline fallback**. With no reachable

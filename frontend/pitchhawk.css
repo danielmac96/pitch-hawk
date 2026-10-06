@@ -91,6 +91,18 @@ body { margin: 0; }
   align-self: stretch;
 }
 
+.ph-header {
+  position: sticky; top: 0; z-index: 50;
+  background: var(--bg); border-bottom: 1px solid var(--border);
+}
+/* backdrop-filter makes an element the containing block for its fixed
+   descendants, which pinned the phone tab bar (.ph-nav, inside the header)
+   to the header instead of the viewport bottom. Blur only where the nav
+   sits in the header row. */
+@media (min-width: 768px) {
+  .ph-header { background: var(--header-bg); -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); }
+}
+
 .ph-header-inner {
   width: min(1220px, 95vw);
   margin: 0 auto;
@@ -180,8 +192,7 @@ body { margin: 0; }
 
 /* ============================================================
    Four-tab redesign — shell (design/redesign/README.md "Global
-   shell"). Desktop only for now; the 390px layout is not designed,
-   so the mobile rules above are left as they are.
+   shell"). Phone overrides live in the max-width: 1023.98px blocks.
    ============================================================ */
 .ph-mono { font-family: 'IBM Plex Mono', monospace; }
 
@@ -277,7 +288,7 @@ body { margin: 0; }
 
 /* ============================================================
    Four-tab redesign — Home (design/redesign/README.md "Screen:
-   Home"). Desktop only.
+   Home").
    ============================================================ */
 .ph-dot-sm { width: 6px; height: 6px; }
 .ph-dim { color: var(--text-2); }
@@ -519,6 +530,97 @@ body { margin: 0; }
 .ph-stable-row .ph-missing, .ph-btable-row .ph-missing { flex-direction: column; align-items: flex-start; gap: 3px; }
 
 /* ============================================================
+   Phone layout (< 1024px, the same line as Board.mob()). Wide
+   tables render as .ph-mcard cards from pitchhawk.js; the rules
+   here reflow everything that works stacked.
+   ============================================================ */
+.ph-mlist { display: flex; flex-direction: column; gap: 6px; }
+.ph-mcard {
+  border: 1px solid var(--border); background: var(--surface); border-radius: 10px;
+  padding: 9px 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0;
+}
+.ph-mcard-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ph-mcard-head > .ph-bname, .ph-mcard-head > .ph-rowlink { flex: 1; }
+.ph-mcard-chev { margin-left: auto; min-width: 32px; min-height: 32px; }
+.ph-mcard-slot { width: 14px; text-align: center; flex: none; }
+.ph-mcard-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.ph-mcard-stats > .ph-meta { align-items: stretch; }
+.ph-mcard-more {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px;
+  border-top: 1px solid var(--row-border); padding-top: 9px;
+}
+.ph-mcard .ph-missing { flex-wrap: wrap; }
+.ph-mcard .ph-pc-top { flex-wrap: wrap; row-gap: 2px; }
+.ph-mcard .ph-pc-base { margin-left: 0; }
+.ph-mcard .ph-gpill-line { flex-wrap: wrap; row-gap: 2px; }
+.ph-mcard .ph-cap { white-space: normal; }
+
+/* Phone filter bar: one scrolling chip row, the rest behind "Filters". */
+.ph-fscroll { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; margin: 0 -14px; padding: 0 14px; }
+.ph-fscroll > * { flex: none; }
+.ph-fbar-more { border-top: 1px solid var(--row-border); padding-top: 10px; }
+.ph-msort { display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; margin-bottom: 8px; }
+.ph-msort .ph-sorth {
+  font-size: 11.5px; letter-spacing: 0; padding: 7px 12px; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--track); color: var(--text-2);
+}
+.ph-msort .ph-sorth.is-on { border-color: var(--accent); background: var(--grn-sel-bg); color: var(--grn); }
+.ph-mcard-wide { grid-column: 1 / -1; }
+.ph-mcard-wide .ph-card-why > span { white-space: normal; }
+
+/* Phone Home pill: three stacked lines. */
+.ph-gpill-m { display: flex; flex-direction: column; gap: 7px; padding: 10px 11px; }
+.ph-gpill-m1, .ph-gpill-m2, .ph-gpill-m3 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ph-gpill-m1 .ph-gpill-match { flex: 1; min-width: 0; }
+.ph-gpill-mscore { font-size: 17px; font-weight: 700; white-space: nowrap; }
+.ph-gpill-mscore.is-final { color: var(--text-2); }
+.ph-gpill-mscore.is-pre { color: var(--muted); }
+.ph-gpill-m2 { font-size: 11.5px; color: var(--text-2); }
+.ph-gpill-mvenue { margin-left: auto; font-size: 10.5px; color: var(--muted); }
+.ph-gpill-m3 { border-top: 1px solid var(--row-border); padding-top: 7px; gap: 12px; flex-wrap: wrap; row-gap: 5px; }
+.ph-gpill-mcell { display: flex; align-items: baseline; gap: 5px; white-space: nowrap; min-width: 0; font-size: 12px; }
+.ph-gpill-msr { flex: 1 1 140px; }
+
+@media (max-width: 1023.98px) {
+  .ph-main.ph-shell, .ph-header-inner.ph-shell, .ph-footer-inner { padding-left: 16px; padding-right: 16px; }
+  .ph-main.ph-shell { overflow-x: hidden; }
+  .ph-h1 { font-size: 22px; }
+  .ph-pin { min-width: 28px; min-height: 32px; font-size: 16px; }
+  .ph-chev { min-width: 32px; min-height: 32px; font-size: 16px; }
+  .ph-chip { padding: 7px 12px; }
+  .ph-seg-btn { padding: 8px 14px; }
+
+  /* Title row: the mode switch drops under the title. */
+  .ph-titlerow-right { margin-left: 0; width: 100%; justify-content: space-between; }
+
+  /* Status bar: items wrap; "updated" takes its own line. */
+  .ph-statusbar { gap: 6px 16px; padding: 9px 12px; }
+  .ph-statusbar-upd { margin-left: 0; flex-basis: 100%; }
+
+  /* Watching pins and decision cards scroll sideways instead of squeezing. */
+  .ph-watch { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-right: -16px; padding-right: 16px; }
+  .ph-strip-head { flex-wrap: wrap; row-gap: 2px; }
+  .ph-cards {
+    grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: 84%;
+    overflow-x: auto; scroll-snap-type: x mandatory; scrollbar-width: none;
+    margin-right: -16px; padding-right: 16px;
+  }
+  .ph-cards > .ph-card { scroll-snap-align: start; }
+
+  .ph-group-hint { display: none; }
+
+  /* Expanded pill */
+  .ph-gpill-body { padding: 10px 11px 12px; }
+  .ph-meta-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 14px; }
+  .ph-gpill-ctrl { gap: 8px; }
+  .ph-gpill-ctrl .ph-seg { width: 100%; }
+  .ph-gpill-ctrl .ph-seg-btn { flex: 1; justify-content: center; padding: 8px 6px; }
+  .ph-gpill-note { margin-left: 0; flex-basis: 100%; }
+  .ph-pending { flex-wrap: wrap; }
+  .ph-mcard .ph-btable-foot, .ph-mlist .ph-btable-foot { border-top: 0; padding: 4px 2px 0; }
+}
+
+/* ============================================================
    Four-tab redesign — Predictions (README "Screen: Predictions").
    ============================================================ */
 .ph-small { font-size: 10px; }
@@ -735,6 +837,43 @@ body { margin: 0; }
 .ph-tone-bg-bad { background: var(--res-bad-fg); }
 .ph-tone-bg-none { background: transparent; }
 
+/* Phone pitch log: two lines per pitch. */
+.ph-plog-row--m { display: flex; flex-direction: column; gap: 3px; align-items: stretch; }
+.ph-plog-l1, .ph-plog-l2 { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ph-plog-l2 { font-size: 11.5px; justify-content: space-between; padding-left: 22px; }
+.ph-plog-grade { margin-left: auto; }
+
+@media (max-width: 1023.98px) {
+  .ph-showing { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-right: -16px; padding-right: 16px; }
+  .ph-showing > * { flex: none; }
+  .ph-live-grid { display: flex; flex-direction: column; gap: 12px; }
+
+  .ph-hero { padding: 14px; border-radius: 14px; }
+  .ph-hero-upd, .ph-hero-note { margin-left: 0; }
+  .ph-hero-sit { flex-wrap: wrap; }
+  .ph-hero-bat { font-size: 18px; }
+  .ph-hero-who { margin-bottom: 12px; }
+  .ph-hero-dists { grid-template-columns: minmax(0, 1fr); gap: 16px; margin-bottom: 12px; }
+  .ph-dist-call b { font-size: 24px; }
+  .ph-dist-call .ph-mono { font-size: 19px; }
+  .ph-dist-row { grid-template-columns: 82px minmax(0, 1fr) 40px 50px; gap: 8px; font-size: 12px; }
+  .ph-hero-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 14px; }
+  .ph-hero-tile-v { font-size: 17px; }
+
+  .ph-panel { padding: 12px; }
+  .ph-panel-head { flex-wrap: wrap; row-gap: 2px; }
+  .ph-panel-note { margin-left: 0; }
+
+  .ph-rail { padding: 12px; }
+  .ph-rail-head { flex-wrap: wrap; row-gap: 2px; }
+  .ph-rail-5 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .ph-rail-3 { gap: 8px; }
+  .ph-rail-3 b { font-size: 12.5px; }
+  .ph-rail-tot { flex-wrap: wrap; }
+
+  .ph-olive-grid { grid-template-columns: minmax(0, 1fr); }
+}
+
 .ph-live-empty { display: flex; flex-direction: column; gap: 6px; padding: 18px 20px; border-radius: 14px; }
 .ph-live-empty b { font-size: 15px; }
 .ph-live-empty > span:not(.ph-kicker) { font-size: 12.5px; color: var(--text-2); }
@@ -851,3 +990,37 @@ body { margin: 0; }
 .ph-base-top > b { font-size: 13px; font-weight: 700; }
 .ph-base-sub { font-size: 10px; color: var(--muted); white-space: nowrap; }
 .ph-nm--solid { border-style: solid; border-color: var(--border); }
+
+/* Phone overrides for rules defined after the Home section (filter bars,
+   KPI tiles) — here at the end so they win the cascade. */
+@media (max-width: 1023.98px) {
+  .ph-fbar { padding: 10px 14px; flex-direction: column; align-items: stretch; gap: 10px; }
+  .ph-fbar-line { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
+  .ph-fbar .ph-fgroup { flex-wrap: wrap; }
+  .ph-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .ph-strip-head .ph-table-title { white-space: normal; }
+
+  /* Data Feed */
+  .ph-dview { margin-bottom: 12px; }
+  .ph-dview .ph-seg { width: 100%; }
+  .ph-dview .ph-seg-btn { flex: 1; justify-content: center; }
+  .ph-dgrid-feed { position: static; flex-basis: 100%; }
+  .ph-dgrid-main { flex-basis: 100%; }
+  .ph-fbar--d .ph-fbar-count { margin-left: 0; white-space: normal; }
+  .ph-select--wide { max-width: 100%; }
+  .ph-cal { gap: 3px; }
+  .ph-cal-plot { height: 130px; }
+  .ph-cal-col { cursor: pointer; }
+  .ph-cal-col:nth-child(even) .ph-cal-lbl { visibility: hidden; }
+  .ph-cal-lbl, .ph-cal-val, .ph-cal-n { font-size: 8.5px; }
+  .ph-cal-col.is-sel .ph-cal-plot { outline: 1px solid var(--accent); }
+  .ph-gap-col { cursor: pointer; }
+  .ph-gap-col.is-sel { background: var(--grn-sel-bg); border-radius: 2px; }
+  .ph-split { grid-template-columns: minmax(0, 1fr) 40px 48px 68px; row-gap: 4px; }
+  .ph-split > .ph-mono { white-space: nowrap; }
+  .ph-split > .ph-meta-k { grid-column: 1 / -1; }
+  .ph-split > .ph-meta-k:empty { display: none; }
+  .ph-split > .ph-bar { grid-column: 1 / -1; grid-row: 3; }
+  .ph-mcard.is-on { border-color: var(--accent); }
+}
+.ph-chart-sel { margin-top: 8px; font-size: 11px; color: var(--text-2); }
