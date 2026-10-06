@@ -192,8 +192,7 @@ body { margin: 0; }
 
 /* ============================================================
    Four-tab redesign — shell (design/redesign/README.md "Global
-   shell"). Desktop only for now; the 390px layout is not designed,
-   so the mobile rules above are left as they are.
+   shell"). Phone overrides live in the max-width: 1023.98px blocks.
    ============================================================ */
 .ph-mono { font-family: 'IBM Plex Mono', monospace; }
 
@@ -289,7 +288,7 @@ body { margin: 0; }
 
 /* ============================================================
    Four-tab redesign — Home (design/redesign/README.md "Screen:
-   Home"). Desktop only.
+   Home").
    ============================================================ */
 .ph-dot-sm { width: 6px; height: 6px; }
 .ph-dim { color: var(--text-2); }
@@ -1000,4 +999,28 @@ body { margin: 0; }
   .ph-fbar .ph-fgroup { flex-wrap: wrap; }
   .ph-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ph-strip-head .ph-table-title { white-space: normal; }
+
+  /* Data Feed */
+  .ph-dview { margin-bottom: 12px; }
+  .ph-dview .ph-seg { width: 100%; }
+  .ph-dview .ph-seg-btn { flex: 1; justify-content: center; }
+  .ph-dgrid-feed { position: static; flex-basis: 100%; }
+  .ph-dgrid-main { flex-basis: 100%; }
+  .ph-fbar--d .ph-fbar-count { margin-left: 0; white-space: normal; }
+  .ph-select--wide { max-width: 100%; }
+  .ph-cal { gap: 3px; }
+  .ph-cal-plot { height: 130px; }
+  .ph-cal-col { cursor: pointer; }
+  .ph-cal-col:nth-child(even) .ph-cal-lbl { visibility: hidden; }
+  .ph-cal-lbl, .ph-cal-val, .ph-cal-n { font-size: 8.5px; }
+  .ph-cal-col.is-sel .ph-cal-plot { outline: 1px solid var(--accent); }
+  .ph-gap-col { cursor: pointer; }
+  .ph-gap-col.is-sel { background: var(--grn-sel-bg); border-radius: 2px; }
+  .ph-split { grid-template-columns: minmax(0, 1fr) 40px 48px 68px; row-gap: 4px; }
+  .ph-split > .ph-mono { white-space: nowrap; }
+  .ph-split > .ph-meta-k { grid-column: 1 / -1; }
+  .ph-split > .ph-meta-k:empty { display: none; }
+  .ph-split > .ph-bar { grid-column: 1 / -1; grid-row: 3; }
+  .ph-mcard.is-on { border-color: var(--accent); }
 }
+.ph-chart-sel { margin-top: 8px; font-size: 11px; color: var(--text-2); }

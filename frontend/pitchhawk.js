@@ -330,6 +330,13 @@
           if (o[arg]) this.loadGameContext(arg);
           return;
         }
+        // Phone: pick one item of a set (a chart bar, a view) — arg "key|value";
+        // picking the selected value again clears it.
+        case "mSel": {
+          const i = String(arg).indexOf("|");
+          const k = arg.slice(0, i), v = arg.slice(i + 1);
+          return this.setState({ mOpen: Object.assign({}, this.state.mOpen, { [k]: this.state.mOpen[k] === v ? null : v }) });
+        }
         // Phone card / filter panel: expand or collapse.
         case "mToggle":
           return this.setState({ mOpen: Object.assign({}, this.state.mOpen, { [arg]: !this.state.mOpen[arg] }) });
@@ -2919,6 +2926,12 @@
            ${this.byTeamGridHtml(sum)}
            ${this.splitsHtml(sum)}`
         : this.dEmptyHtml();
+      if (this.mob()) {
+        const feed = s.mOpen["d:view"] === "feed";
+        return `${head}
+          <div class="ph-dview">${this.segHtml("mSel", feed ? "d:view|feed" : "d:view|", [["d:view|", "Analytics"], ["d:view|feed", "Resolved markets"]])}</div>
+          <div class="ph-dgrid">${feed ? `<div class="ph-dgrid-feed">${this.resolvedFeedHtml()}</div>` : `<div class="ph-dgrid-main">${analysis}</div>`}</div>`;
+      }
       return `${head}
         <div class="ph-dgrid">
           <div class="ph-dgrid-main">${analysis}</div>
@@ -3120,6 +3133,31 @@
         this.dTfName(),
       ].filter(Boolean).join(" · ");
       const n = s.gsum.data && s.gsum.data.overall ? s.gsum.data.overall.n : null;
+      if (this.mob()) {
+        const open = !!s.mOpen["f:data"];
+        const k = (s.dTeam ? 1 : 0) + (s.dPark ? 1 : 0) + (s.dHand !== "any" ? 1 : 0) + (s.dSide !== "any" ? 1 : 0);
+        return `<div class="ph-fbar ph-fbar--d">
+          <div class="ph-fbar-line">
+            ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"]])}
+            <button class="ph-chip${k ? " is-on" : ""}" data-act="mToggle" data-arg="f:data" aria-expanded="${open}">Filters${k ? ` <span class="ph-mono">${k}</span>` : ""} ${open ? "▴" : "▾"}</button>
+          </div>
+          <div class="ph-fscroll">${chip("all", "All")}${this.D_MARKETS.map((m) => chip(m[0], m[1])).join("")}</div>
+          ${open ? `<div class="ph-fbar-line ph-fbar-more">
+            <select class="ph-select" data-pfilter="dTeam" aria-label="Team">
+              <option value="">All teams</option>
+              ${teams.map((t) => `<option value="${t}"${s.dTeam === t ? " selected" : ""}>${t}</option>`).join("")}
+            </select>
+            <select class="ph-select ph-select--wide" data-pfilter="dPark" aria-label="Stadium">
+              <option value="">All stadiums</option>
+              ${venues.map((v) => `<option value="${esc(v.venue_id)}"${String(s.dPark) === String(v.venue_id) ? " selected" : ""}>${esc(this.parkLabel(v))}</option>`).join("")}
+            </select>
+            ${this.segHtml("dHand", s.dHand, [["any", "Any SP"], ["L", "vs LHP"], ["R", "vs RHP"]])}
+            ${this.segHtml("dSide", s.dSide, [["any", "Home + away"], ["home", "Home"], ["away", "Away"]])}
+            <button class="ph-link" data-act="dClear">Clear</button>
+          </div>` : ""}
+          <span class="ph-mono ph-fbar-count">${esc(scenario)} · <b>${n == null ? "—" : n.toLocaleString()}</b> graded</span>
+        </div>`;
+      }
       return `<div class="ph-fbar ph-fbar--d">
         <div class="ph-fbar-line">
           ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"]])}
@@ -3169,11 +3207,17 @@
     calibrationChartHtml(sum) {
       const bins = {};
       (sum.bins || []).forEach((b) => { bins[Number(b.bin)] = this.derive(b); });
+      // Touch has no hover, so on a phone a tap selects a band and its tip
+      // is printed under the chart instead.
+      const mob = this.mob(), sel = this.state.mOpen["d:cal"];
+      let selTip = "";
       const cols = Array.from({ length: 10 }, (_, i) => {
         const t = bins[i];
         const has = t && t.n;
         const tip = has ? `${t.n} reads · predicted ${this.pct1(t.exp)} · landed ${this.pct1(t.act)}` : "no reads in this band";
-        return `<div class="ph-cal-col" title="${esc(tip)}">
+        const on = mob && sel === String(i);
+        if (on) selTip = `${i * 10}–${i * 10 + 10}%: ${tip}`;
+        return `<div class="ph-cal-col${on ? " is-sel" : ""}" title="${esc(tip)}"${mob ? ` data-act="mSel" data-arg="d:cal|${i}"` : ""}>
           <span class="ph-mono ph-cal-val">${has ? this.pct(t.act) : ""}</span>
           <div class="ph-cal-plot">
             ${has ? `<span class="ph-cal-bar ph-gb--${this.gapBand(t.gap)}" style="height:${(t.act * 100).toFixed(1)}%"></span>
@@ -3187,7 +3231,8 @@
           <span><i class="ph-gb--ok"></i>within <span class="ph-mono">3</span> pts</span><span><i class="ph-gb--more"></i>landed more than predicted</span>
           <span><i class="ph-gb--less"></i>landed less</span><span><i class="ph-legend-line"></i>mean predicted</span>
         </div>`;
-      return this.dCard("Calibration", "landed rate per 10-pt probability band", `<div class="ph-cal">${cols}</div>${legend}`);
+      const note = mob ? `<div class="ph-mono ph-chart-sel">${esc(selTip || "tap a band for its counts")}</div>` : "";
+      return this.dCard("Calibration", "landed rate per 10-pt probability band", `<div class="ph-cal">${cols}</div>${note}${legend}`);
     }
     dailyGapChartHtml(sum) {
       const s = this.state, w = this.dWindow();
@@ -3195,24 +3240,45 @@
       const by = {};
       (sum.daily || []).forEach((d) => { by[d.date] = this.derive(d); });
       const bars = [];
+      const mob = this.mob(), sel = this.state.mOpen["d:gap"];
+      let selTip = "";
       for (let i = days - 1; i >= 0; i -= 1) {
         const date = PH.mlbDate(-i);
         const t = by[date];
         const v = t && t.n ? Math.max(-10, Math.min(10, t.gap * 100)) : 0;
         const tip = `${i === 0 ? "Today" : date} · ${t && t.n ? `${t.n} reads · ${this.gapTxt(t.gap)}` : "no reads"}`;
-        bars.push(`<div class="ph-gap-col${date < w.from ? " is-out" : ""}" title="${esc(tip)}">
+        const on = mob && sel === date;
+        if (on) selTip = tip;
+        bars.push(`<div class="ph-gap-col${date < w.from ? " is-out" : ""}${on ? " is-sel" : ""}" title="${esc(tip)}"${mob ? ` data-act="mSel" data-arg="d:gap|${date}"` : ""}>
           <span class="ph-gap-up">${v > 0 ? `<span class="ph-gb--${this.gapBand(t.gap)}" style="height:${(v * 10).toFixed(1)}%"></span>` : ""}</span>
           <span class="ph-gap-dn">${v < 0 ? `<span class="ph-gb--${this.gapBand(t.gap)}" style="height:${(-v * 10).toFixed(1)}%"></span>` : ""}</span>
         </div>`);
       }
-      const sub = s.dTf === "today" ? "last 7 days for context · today highlighted" : "each bar is one day · hover for counts";
+      const sub = s.dTf === "today" ? "last 7 days for context · today highlighted"
+        : `each bar is one day · ${mob ? "tap" : "hover"} for counts`;
       return this.dCard("Daily gap · landed − predicted", sub, `
         <div class="ph-gap">${bars.join("")}</div>
-        <div class="ph-gap-axis ph-mono"><span>${days > 1 ? esc(PH.mlbDate(-(days - 1))) : ""}</span><span>±10 pts</span><span>TODAY</span></div>`);
+        <div class="ph-gap-axis ph-mono"><span>${days > 1 ? esc(PH.mlbDate(-(days - 1))) : ""}</span><span>±10 pts</span><span>TODAY</span></div>
+        ${mob ? `<div class="ph-mono ph-chart-sel">${esc(selTip || "tap a day for its counts")}</div>` : ""}`);
     }
     byMarketTableHtml(sum) {
       const by = {};
       (sum.by_market || []).forEach((m) => { by[m.market] = this.derive(m); });
+      if (this.mob()) {
+        const cards = this.D_MARKETS.map(([k, , label]) => {
+          const t = by[k] || this.derive(null);
+          const on = this.state.dMk === k;
+          return this.mCardHtml({
+            key: `dm:${k}`, cls: on ? "is-on" : "",
+            head: `<button class="ph-rowlink" data-act="dMkRow" data-arg="${k}"><span class="ph-rowlink-top"><b>${esc(label)}</b><span class="ph-mono">${t.n ? t.n.toLocaleString() : "0"} graded</span></span></button>`,
+            stats: `${this.mPairHtml("LANDED · MODEL", `<span class="ph-mono">${this.pct1(t.act)} · <span class="ph-mut">${this.pct1(t.exp)}</span></span>`)}
+              ${this.mPairHtml("GAP", `<span class="ph-mono ${t.n ? `ph-tone-${this.gapTone(t.gap)}` : "ph-mut"}">${this.gapTxt(t.gap)}</span>`)}`,
+            more: `${this.mPairHtml("SKILL", `<span class="ph-mono">${t.skill == null ? "—" : `${(t.skill * 100).toFixed(1)}%`}</span>`)}
+              ${this.mPairHtml("LANDED VS MODEL", t.n ? this.barHtml(t.act * 100, t.exp * 100, "ph-band-bg-good") : `<span class="ph-bar"></span>`)}`,
+          });
+        }).join("");
+        return this.dCard("By market", "ignores the market filter · tap a name to filter", `<div class="ph-mlist">${cards}</div>`);
+      }
       const rows = this.D_MARKETS.map(([k, , label]) => {
         const t = by[k] || this.derive(null);
         const on = this.state.dMk === k;
