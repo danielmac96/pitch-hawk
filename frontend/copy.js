@@ -136,6 +136,11 @@ window.PH_COPY = (function () {
       ["Pending · DNP", "Pending is not graded yet and never counts as a miss. DNP: the batter didn't bat, so the read is voided."],
     ],
 
+    postseasonNote:
+      "Postseason: batter reads come from a model fitted on regular-season games, " +
+      "and playoff hitting runs well below it — this year's Division Series hit " +
+      "reads landed about 46% against 64% predicted. Treat hit and HR reads as optimistic.",
+
     // live
     // The selected game has no scored call on the current at-bat yet.
     heroNoCallInGame:

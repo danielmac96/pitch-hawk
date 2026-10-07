@@ -334,6 +334,7 @@ window.PITCHHAWK = (function () {
       // panel is empty.
       phase: lg.phase || (sit.inning != null ? "live" : "pregame"),
       status: lg.status || null,
+      gameType: lg.game_type || null,
       startTs: lg.start_ts || null,
       coverage: lg.coverage || null,
       // Live base models from /live: projected total vs the pregame line, and

@@ -867,6 +867,15 @@
       if (p.rows === null) return p.err ? "error" : "loading";
       return "ok";
     }
+    // Postseason caveat: the batter models are fitted on regular-season games,
+    // and playoff hitting runs well below them (2026 Division Series: 16% of
+    // PAs ended in a hit vs 22% in the regular season; 1+ hit reads landed
+    // 46% against 64% predicted). Said wherever the reads are, until a
+    // postseason-aware model exists.
+    postseasonNoteHtml() {
+      const post = this.todayGames().some((g) => /^[FDLW]$/.test(g.gameType || ""));
+      return post ? `<div class="ph-note ph-note--warn" role="note">${esc(COPY.postseasonNote)}</div>` : "";
+    }
     predHtml() {
       this.loadTrust();
       const mk = this.state.pMarket;
@@ -906,6 +915,7 @@
           <span class="ph-strip-sub">${esc(SLATE_IS_TODAY ? COPY.predSub : COPY.predSubNext)}</span>
         </div>
         ${this.predFilterBarHtml(count)}
+        ${this.postseasonNoteHtml()}
         ${this.trustTilesHtml()}
         <div class="ph-strip-head">
           <span class="ph-table-title">${esc(COPY.predTableTitle[mk])}</span>
@@ -1510,7 +1520,7 @@
           <span class="ph-hint-act"><button class="ph-chip is-on" data-act="ovOpen" data-arg="help">How to read the board</button><button class="ph-link" data-act="hintDone">Got it</button></span>
         </div>`;
       if (!games.length) return head + hint + this.homeEmptyHtml();
-      return head + hint + this.decisionStripHtml() + this.scorecardHtml() + this.homeGroupsHtml() + this.nextSlateHtml();
+      return head + hint + this.postseasonNoteHtml() + this.decisionStripHtml() + this.scorecardHtml() + this.homeGroupsHtml() + this.nextSlateHtml();
     }
 
     // ── league baselines ─────────────────────────────────────────────────
@@ -1520,6 +1530,11 @@
     LEAGUE_PA = { hit: 0.239, hr: 0.032 };
     LEAGUE_PITCH = { strike_foul: 0.455, ball: 0.352, in_play: 0.193 };
     LEAGUE_AB = { strikeout: 0.221, walk: 0.087, hit: 0.239, out: 0.453 };
+    // The velo call's typical miss (LEAGUE.speed_sigma in model.ts). The
+    // model predicts a speed without knowing which pitch is coming, and a
+    // fastball and a breaking ball sit ~10 mph apart, so a single call is
+    // shown with its spread rather than as a point that red-grades most rows.
+    SPEED_SIGMA = 5.4;
 
     // The league chance of 1+ hit (or HR) for a batter getting `xpa` plate
     // appearances. Per batter rather than one constant, so a leadoff hitter
@@ -3321,7 +3336,7 @@
           ${this.distHtml("HOW THIS AT-BAT ENDS", this.distRows(g.m && g.m.ab_result && g.m.ab_result.probs, this.LEAGUE_AB))}
         </div>
         <div class="ph-hero-tiles">
-          ${tile(spd && spd.predictedValue != null ? `${Number(spd.predictedValue).toFixed(1)} mph` : "—", esc(this.ouLine(spd)), "VELO CALL · NEXT PITCH")}
+          ${tile(spd && spd.predictedValue != null ? `${Number(spd.predictedValue).toFixed(1)} mph` : "—", esc(`${this.ouLine(spd)} · typical miss ±${this.SPEED_SIGMA}`), "VELO CALL · NEXT PITCH")}
           ${tile(abp && abp.predictedValue != null ? Number(abp.predictedValue).toFixed(1) : "—", esc(this.ouLine(abp)), "PITCHES IN THIS AT-BAT")}
           ${tile(st ? esc(this.ratioPct(st.abC, st.abN)) : "—", `graded at-bats · naive ${this.pct(Math.max(...Object.values(this.LEAGUE_AB)))}`, "AT-BAT CALLS THIS GAME", st && tone(st.abC, st.abN, Math.max(...Object.values(this.LEAGUE_AB))))}
           ${tile(st ? esc(this.ratioPct(st.pC, st.pN)) : "—", `naive ${this.pct(Math.max(...Object.values(this.LEAGUE_PITCH)))} · velo miss ${st && st.mae != null ? `${st.mae.toFixed(1)} mph` : "—"}`, "PITCH CALLS THIS GAME", st && tone(st.pC, st.pN, Math.max(...Object.values(this.LEAGUE_PITCH))))}
@@ -3391,7 +3406,7 @@
           ${grade}
         </div>`;
       }).join("");
-      const sum = `pitch ${this.ratioPct(log.called, log.graded)} · MAE ${log.mae == null ? "—" : log.mae.toFixed(1)} · pending calls never count as misses`;
+      const sum = `pitch ${this.ratioPct(log.called, log.graded)} · velo miss ${log.mae == null ? "—" : log.mae.toFixed(1)} mph · pending calls never count as misses`;
       return `<div class="ph-panel">
         <div class="ph-panel-head">
           <span class="ph-kicker">Pitch-by-pitch · this at-bat</span>

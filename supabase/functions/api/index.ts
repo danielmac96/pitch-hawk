@@ -284,7 +284,7 @@ async function slatePayloads(date: string): Promise<any[]> {
   const db = svc();
   const { data: gameRows } = await db.from("games")
     .select("game_pk,status,start_ts,home_team,away_team,home_abbr,away_abbr," +
-      "home_team_id,away_team_id,home_score,away_score,venue_name")
+      "home_team_id,away_team_id,home_score,away_score,venue_name,game_type")
     .eq("official_date", date).order("start_ts");
   const slate = gameRows ?? [];
   if (!slate.length) return [];
@@ -535,6 +535,9 @@ async function slatePayloads(date: string): Promise<any[]> {
       // to wait for the nightly game_context publish to learn where a game
       // being played right now was being played.
       venue: g.venue_name ?? null,
+      // R regular season; F/D/L/W the postseason rounds. The batter models
+      // are fitted on regular-season games, so the board says so on these.
+      game_type: g.game_type ?? null,
       home_team_id: g.home_team_id ?? null,
       away_team_id: g.away_team_id ?? null,
       // Ids are additive (Phase 5) and exist so the Data Feed can look the

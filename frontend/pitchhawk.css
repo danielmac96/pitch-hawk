@@ -1226,3 +1226,4 @@ body { margin: 0; }
   .ph-score-row { grid-template-columns: minmax(0, 1fr) auto; }
   .ph-score-row .ph-mut { grid-column: 1 / -1; text-align: left; margin-top: -4px; }
 }
+.ph-note--warn { border: 1px solid var(--amb-edge); background: var(--amber-bg); color: var(--amber); border-radius: 10px; padding: 9px 12px; margin-bottom: 14px; font-size: 12.5px; }
