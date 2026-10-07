@@ -107,7 +107,9 @@
   // even fired. Afterwards it refreshes only every 5 minutes, because a
   // completed slate does not change.
   async function fetchRecap(force) {
-    if (!force && RECAP !== null && Date.now() - RECAP_AT < 300000) return false;
+    // Gated on the last fetch, not on RECAP: an empty recap is a real answer,
+    // and gating on `RECAP !== null` re-asked /board on every 8s poll.
+    if (!force && RECAP_AT && Date.now() - RECAP_AT < 300000) return false;
     try {
       const b = await PH.loadBoard(API_BASE);
       RECAP_AT = Date.now();
@@ -160,6 +162,8 @@
         // `lastGood` is when /live last answered; `updatedAt` feeds the
         // "updated hh:mm:ss" clocks.
         api: { down: false, lastGood: null, updatedAt: null },
+        // /health says the live poller is behind while games are on: { age }.
+        stale: null,
         // Home / Predictions ranking mode. null = automatic: Live whenever a
         // game is live, otherwise Pregame (see effectiveMode()).
         mode: null,
@@ -173,6 +177,20 @@
         // Head-to-head per "pitcherId:batterId" from GET /matchup. Absent =
         // not asked yet; { pending } in flight; otherwise the route's body.
         h2h: {},
+        // Per-at-bat win-probability history per game_pk (GET /game/{pk}/winprob).
+        wp: {},
+        // Search / player / team / guide panel over the page; null when closed.
+        overlay: null, searchQ: "", teamNext: {},
+        // Yesterday's graded slate for the Home scorecard, and tomorrow's
+        // slate once tonight's games are over.
+        yday: null, tmrw: null,
+        // Opt-in alerts for pinned batters and games; the toast fallback.
+        alerts: (() => { try { return window.localStorage.getItem("ph-alerts") === "1"; } catch (_e) { return false; } })(),
+        toast: null,
+        // Clocks in the reader's own time zone instead of Eastern.
+        tzLocal: (() => { try { return window.localStorage.getItem("ph-tz") === "local"; } catch (_e) { return false; } })(),
+        // First-visit "how to read this" card on Home, until dismissed.
+        hintSeen: (() => { try { return window.localStorage.getItem("ph-hint-seen") === "1"; } catch (_e) { return true; } })(),
         // Predictions filters (see PRED_DEFAULTS) and the trust tiles.
         ...this.PRED_DEFAULTS,
         trust: null,
@@ -195,11 +213,34 @@
       this._dayRowsSig = {};
       this._dayRowsSeq = {};
       this._models = {};
+      // The URL wins over the defaults on first paint (see routePatch).
+      this.applyRoute();
+      window.addEventListener("popstate", () => {
+        if (!this.applyRoute()) { this.state.view = "home"; this._lastHash = this.routeOf(); }
+        this.render();
+        if (this.state.view === "live") this.syncDay(false, "live");
+        if (this.state.view === "home") Object.keys(this.state.open).forEach((pk) => this.loadGameContext(pk));
+      });
       this.root.addEventListener("click", (e) => this._onClick(e));
       // `change` rather than `input`: it fires on blur/Enter, so a re-render
       // never lands mid-keystroke. Combined with the focus guard in render(),
       // typing in a filter box survives the 8s poll.
       this.root.addEventListener("change", (e) => this._onFilterChange(e));
+      // Search filters as you type, but repaints only its own results list:
+      // a full render would rebuild the input under the cursor.
+      this.root.addEventListener("input", (e) => {
+        if (!e.target || !e.target.hasAttribute || !e.target.hasAttribute("data-search")) return;
+        this.state.searchQ = e.target.value;
+        const out = document.getElementById("ph-search-results");
+        if (out) out.innerHTML = this.searchResultsHtml(e.target.value);
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && this.state.overlay) { e.preventDefault(); this.closeOverlay(); }
+        // "/" opens search, as on most data sites — unless the reader is typing.
+        if (e.key === "/" && !this.state.overlay && !/^(INPUT|SELECT|TEXTAREA)$/.test((document.activeElement || {}).tagName || "")) {
+          e.preventDefault(); this.openOverlay({ kind: "search" });
+        }
+      });
     }
 
     _onFilterChange(e) {
@@ -218,6 +259,113 @@
       }
     }
     setState(patch) { Object.assign(this.state, patch); this.render(); }
+
+    // ── URL state ────────────────────────────────────────────────────────
+    // The tab, the game in view and the filters live in the hash, so a reload
+    // keeps the reader's place, a link can be shared, and Back steps between
+    // tabs instead of leaving the site.
+    //   #/home?open=<pk,..>   #/pred?m=hr&team=NYY,BOS&status=live&lineup=1&min=3
+    //   #/live/<pk>           #/data?tf=14&mk=batter_hit&team=NYY&park=..&hand=L&side=home
+    VIEWS = ["home", "pred", "live", "data"];
+    routeOf() {
+      const s = this.state, q = new URLSearchParams();
+      let path = s.view;
+      if (s.view === "live" && s.liveSel && s.liveSel !== "top") path += `/${s.liveSel}`;
+      if (s.view === "home") {
+        const open = Object.keys(s.open).filter((k) => s.open[k]);
+        if (open.length) q.set("open", open.join(","));
+      }
+      if ((s.view === "home" || s.view === "pred") && s.mode) q.set("mode", s.mode);
+      if (s.view === "pred") {
+        const d = this.PRED_DEFAULTS;
+        if (s.pMarket !== d.pMarket) q.set("m", s.pMarket);
+        if (s.pTeams.length) q.set("team", s.pTeams.join(","));
+        if (s.pStatus !== d.pStatus) q.set("status", s.pStatus);
+        if (s.pConfOnly) q.set("lineup", "1");
+        if (s.pMin > -10) q.set("min", String(s.pMin));
+        if (s.pSort !== d.pSort || s.pDir !== d.pDir) q.set("sort", `${s.pSort}${s.pDir > 0 ? "+" : "-"}`);
+      }
+      if (s.view === "data") {
+        const d = this.D_DEFAULTS;
+        if (s.dTf !== d.dTf) q.set("tf", String(s.dTf));
+        if (s.dMk !== d.dMk) q.set("mk", s.dMk);
+        if (s.dTeam) q.set("team", s.dTeam);
+        if (s.dPark) q.set("park", String(s.dPark));
+        if (s.dHand !== d.dHand) q.set("hand", s.dHand);
+        if (s.dSide !== d.dSide) q.set("side", s.dSide);
+      }
+      const qs = q.toString();
+      return `#/${path}${qs ? `?${qs}` : ""}`;
+    }
+    // The state a hash describes, as a patch. Unknown values fall back to the
+    // defaults rather than throwing: a hand-edited or stale link still opens.
+    routePatch(hash) {
+      const raw = String(hash || "").replace(/^#\/?/, "");
+      if (!raw) return null;
+      const [pathPart, qs] = raw.split("?");
+      const [view, seg] = pathPart.split("/");
+      if (!this.VIEWS.includes(view)) return null;
+      const q = new URLSearchParams(qs || "");
+      const patch = { view };
+      const mode = q.get("mode");
+      patch.mode = mode === "live" || mode === "pregame" ? mode : null;
+      if (view === "live") patch.liveSel = seg && /^\d+$/.test(seg) ? seg : "top";
+      if (view === "home") {
+        const open = {};
+        (q.get("open") || "").split(",").filter((k) => /^\d+$/.test(k)).forEach((k) => { open[k] = true; });
+        patch.open = open;
+      }
+      if (view === "pred") {
+        const d = this.PRED_DEFAULTS;
+        const m = q.get("m");
+        patch.pMarket = this.PRED_MARKETS.some(([k]) => k === m) ? m : d.pMarket;
+        patch.pTeams = (q.get("team") || "").split(",").map((t) => t.trim().toUpperCase()).filter((t) => /^[A-Z]{2,3}$/.test(t));
+        const st = q.get("status");
+        patch.pStatus = ["all", "live", "upcoming", "final"].includes(st) ? st : d.pStatus;
+        patch.pConfOnly = q.get("lineup") === "1";
+        const min = Number(q.get("min"));
+        patch.pMin = q.has("min") && isFinite(min) ? Math.max(-10, Math.min(15, min)) : d.pMin;
+        const sort = /^(lift|prob|time|name)([+-])$/.exec(q.get("sort") || "");
+        patch.pSort = sort ? sort[1] : d.pSort;
+        patch.pDir = sort ? (sort[2] === "+" ? 1 : -1) : d.pDir;
+      }
+      if (view === "data") {
+        const d = this.D_DEFAULTS;
+        const tf = q.get("tf");
+        patch.dTf = tf === "today" ? "today" : [7, 14, 30, this.D_SEASON].includes(Number(tf)) ? Number(tf) : d.dTf;
+        const mk = q.get("mk");
+        patch.dMk = this.D_MARKETS.some((x) => x[0] === mk) ? mk : d.dMk;
+        const team = (q.get("team") || "").toUpperCase();
+        patch.dTeam = this.PARKS[team] ? team : "";
+        patch.dPark = /^\d+$/.test(q.get("park") || "") ? q.get("park") : "";
+        patch.dHand = ["L", "R"].includes(q.get("hand")) ? q.get("hand") : d.dHand;
+        patch.dSide = ["home", "away"].includes(q.get("side")) ? q.get("side") : d.dSide;
+        patch.dFeedN = this.D_PAGE;
+        patch.graded = { rows: [], total: 0, next: null, loaded: false, err: false };
+      }
+      return patch;
+    }
+    // Push a history entry when the reader moves somewhere (another tab,
+    // another game); replace it when they only adjust a filter, so Back does
+    // not step through every chip they touched.
+    syncUrl() {
+      const h = this.routeOf();
+      if (h === this._lastHash) return;
+      const prev = this._lastHash;
+      this._lastHash = h;
+      const url = `${window.location.pathname}${window.location.search}${h}`;
+      try {
+        if (prev && prev.split("?")[0] !== h.split("?")[0]) window.history.pushState(null, "", url);
+        else window.history.replaceState(null, "", url);
+      } catch (_e) { /* sandboxed frames can refuse history writes */ }
+    }
+    applyRoute() {
+      const patch = this.routePatch(window.location.hash);
+      if (!patch) return false;
+      Object.assign(this.state, patch);
+      this._lastHash = this.routeOf();
+      return true;
+    }
 
     // ── formatters ───────────────────────────────────────────────────────
     dk() { return this.state.dark; }
@@ -305,10 +453,37 @@
           return this.setState({ pSort: arg, pDir: dir });
         }
         case "pAll": return this.setState({ pAll: !this.state.pAll });
+        case "pTeamT": {
+          if (!arg) return this.setState({ pTeams: [], pAll: false });
+          const t = this.state.pTeams.slice(), i = t.indexOf(arg);
+          if (i >= 0) t.splice(i, 1); else t.push(arg);
+          return this.setState({ pTeams: t.sort(), pAll: false });
+        }
+        case "pExport": return this.predExport();
+        case "alerts": return this.toggleAlerts();
+        case "toastX": return this.setState({ toast: null });
+        case "ovOpen": return this.openOverlay({ kind: arg });
+        case "ovClose": return this.closeOverlay();
+        case "ovPlayer": { const [id, pk] = String(arg).split("|"); return this.openOverlay({ kind: "player", id, pk, back: true }); }
+        case "ovStarter": { const [pk, side] = String(arg).split("|"); return this.openOverlay({ kind: "starter", pk, side, back: true }); }
+        case "ovTeam": return this.openOverlay({ kind: "team", abbr: arg, back: true });
+        case "tz": {
+          const v = !this.state.tzLocal;
+          try { window.localStorage.setItem("ph-tz", v ? "local" : "et"); } catch (_e) { /* session only */ }
+          return this.setState({ tzLocal: v });
+        }
+        case "hintDone": {
+          try { window.localStorage.setItem("ph-hint-seen", "1"); } catch (_e) { /* session only */ }
+          return this.setState({ hintSeen: true });
+        }
         case "pClear": { this.predClear(); return this.render(); }
-        // A Predictions row: its Home pill, on the right side tab.
-        case "predRow": {
+        // A Predictions row opens in place (see predBatterDetailHtml).
+        case "pOpen":
+          return this.setState({ pOpen: Object.assign({}, this.state.pOpen, { [arg]: !this.state.pOpen[arg] }) });
+        // Explicitly leave for a game's Home pill. arg "pk" or "pk|side".
+        case "openGame": {
           const [pk, side] = String(arg).split("|");
+          this.state.overlay = null;
           return this.openPill(pk, side || null);
         }
         case "mode": return this.setState({ mode: arg === "live" || arg === "pregame" ? arg : null });
@@ -317,7 +492,7 @@
         case "liveSel": return this.setState({ liveSel: arg });
         // A decision card or pin about a live game: the Live tab on that game.
         case "liveGo": {
-          this.setState({ view: "live", liveSel: String(arg) });
+          this.setState({ view: "live", liveSel: String(arg), overlay: null });
           this.syncDay(false, "live");
           return;
         }
@@ -358,7 +533,7 @@
       const view = this.state.view;
       const tabs = COPY.tabs.map(([k, label]) => {
         const on = view === k;
-        return `<button data-act="view" data-arg="${k}" class="ph-tab${on ? " ph-tab-on" : ""}">${label}</button>`;
+        return `<button data-act="view" data-arg="${k}" class="ph-tab${on ? " ph-tab-on" : ""}" role="tab" aria-selected="${on}">${label}</button>`;
       }).join("");
       const liveCount = liveNowCount();
       const liveText = liveCount
@@ -376,7 +551,11 @@
             <span class="ph-dot${liveCount ? " is-live" : ""}"></span>
             <span>${liveText}</span>
           </div>
-          <nav class="ph-nav">${tabs}</nav>
+          <div class="ph-hdr-tools">
+            <button class="ph-iconbtn" data-act="ovOpen" data-arg="search" aria-label="Search players and teams" title="Search players and teams"><svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="2"/><line x1="11" y1="11" x2="15" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="ph-iconbtn-lbl">Search</span></button>
+            <button class="ph-iconbtn" data-act="ovOpen" data-arg="help" aria-label="How to read the board" title="How to read the board"><span aria-hidden="true">?</span><span class="ph-iconbtn-lbl">Guide</span></button>
+          </div>
+          <nav class="ph-nav" role="tablist" aria-label="Sections">${tabs}</nav>
         </div>
       </header>`;
     }
@@ -394,7 +573,16 @@
     // ── clocks ───────────────────────────────────────────────────────────
     clockSec(ts) {
       return ts == null ? null
-        : new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: ET });
+        : new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: this.tz() });
+    }
+    // Clocks are Eastern by default (the slate is an Eastern date); a reader
+    // can switch them to their own time zone. The slate DATE stays Eastern.
+    tz() { return this.state.tzLocal ? undefined : ET; }
+    tzLabel() {
+      if (!this.state.tzLocal) return "ET";
+      try {
+        return new Date().toLocaleTimeString([], { timeZoneName: "short" }).split(" ").pop() || "local";
+      } catch (_e) { return "local"; }
     }
 
     // Escaped text with every run of digits set in the data face, for mixed
@@ -420,14 +608,19 @@
     // beside it — never 0, never a guess. One primitive so every tab says it
     // the same way.
     MISSING = {
-      notserved: "Not served", notmodeled: "Not modeled", needsroute: "Needs route",
+      notserved: "Not available yet", notmodeled: "Not modeled", needsroute: "Not available yet",
+      fewpa: "Too few plate appearances in the last 30 days",
     };
     tagHtml(kind) {
       const label = this.MISSING[kind];
       return label ? `<span class="ph-tag ph-tag--${kind}">${esc(label)}</span>` : "";
     }
+    // The reason rides in a tooltip rather than a badge. Badging every gap
+    // ("NOT SERVED", "NEEDS ROUTE") put build-status vocabulary in front of
+    // readers, at ten badges a screen on Predictions.
     missingHtml(kind) {
-      return `<span class="ph-missing"><span class="ph-missing-dash">—</span>${this.tagHtml(kind)}</span>`;
+      const label = this.MISSING[kind] || "Not available";
+      return `<span class="ph-missing-dash" title="${esc(label)}" aria-label="${esc(label)}">—</span>`;
     }
 
     // ── freshness flash ──────────────────────────────────────────────────
@@ -459,11 +652,117 @@
       try { window.localStorage.setItem(PINS_KEY, JSON.stringify(pins)); } catch (_e) { /* session only */ }
       this.setState({ pins });
     }
+    // The last slate date each pin was seen on the board, under its own key
+    // so the pin list keeps the shape the redesign handoff specified.
+    pinDates() {
+      if (this._pinDates) return this._pinDates;
+      try { this._pinDates = JSON.parse(window.localStorage.getItem(`${PINS_KEY}-seen`) || "{}") || {}; } catch (_e) { this._pinDates = {}; }
+      return this._pinDates;
+    }
+    savePinDates() {
+      try { window.localStorage.setItem(`${PINS_KEY}-seen`, JSON.stringify(this._pinDates || {})); } catch (_e) { /* session only */ }
+    }
+    // A pin that resolves today is stamped with today; one that has not
+    // resolved since an earlier slate is dropped. Runs only once the slate
+    // and the projections have both loaded, so a pin is never expired just
+    // because the data it points at is still on its way.
+    expirePins() {
+      if (!(PH.games || []).length || this.state.proj.rows === null) return;
+      const today = slateDate(), dates = this.pinDates();
+      let dirty = false;
+      const keep = this.state.pins.filter((k) => {
+        const w = this.resolvePin(k);
+        const known = k.startsWith("g:") ? !!w.game : !!(w.rows && w.rows.length);
+        if (known) { if (dates[k] !== today) { dates[k] = today; dirty = true; } return true; }
+        // Undated means pinned before dates were kept: an earlier slate.
+        return !!dates[k] && dates[k] >= today;
+      });
+      if (dirty) this.savePinDates();
+      if (keep.length !== this.state.pins.length) {
+        try { window.localStorage.setItem(PINS_KEY, JSON.stringify(keep)); } catch (_e) { /* session only */ }
+        this.state.pins = keep;
+      }
+    }
+
+    // ── alerts for what a reader is watching ─────────────────────────────
+    // Opt-in. A pinned batter coming to the plate or on deck, a pinned game
+    // swinging 15+ points of win probability, or going final. A browser
+    // notification when permitted, an in-page toast otherwise. Each event
+    // fires once.
+    toggleAlerts() {
+      const on = !this.state.alerts;
+      try { window.localStorage.setItem("ph-alerts", on ? "1" : "0"); } catch (_e) { /* session only */ }
+      if (on && "Notification" in window && Notification.permission === "default") {
+        try { Notification.requestPermission().then(() => this.render()); } catch (_e) { /* old Safari */ }
+      }
+      this.setState({ alerts: on });
+      if (on) this.notify(COPY.alertsOnTitle, COPY.alertsOnBody);
+    }
+    notify(title, body) {
+      const n = window.Notification;
+      if (n && n.permission === "granted" && document.hidden) {
+        try { new n(title, { body, tag: `ph-${title}` }); return; } catch (_e) { /* fall through to the toast */ }
+      }
+      this.setState({ toast: { title, body, at: Date.now() } });
+      clearTimeout(this._toastTo);
+      this._toastTo = setTimeout(() => this.setState({ toast: null }), 7000);
+    }
+    checkAlerts() {
+      if (!this.state.alerts || !this.state.pins.length) return;
+      const seen = this._alerted || (this._alerted = new Set());
+      const fire = (key, title, body) => { if (seen.has(key)) return; seen.add(key); this.notify(title, body); };
+      const live = this.liveGames();
+      this.state.pins.forEach((pin) => {
+        const id = pin.slice(2);
+        if (pin.startsWith("b:")) {
+          live.forEach((g) => {
+            const where = `${g.away} @ ${g.home} · ${this.halfWord(g.half).toLowerCase()} ${g.inning || ""}`;
+            if (g.batter && String(g.batter.id) === id) {
+              fire(`up:${g.gamePk}:${id}:${g.inning}${g.half}`, `${g.batter.name} is up`, where);
+              return;
+            }
+            const side = g.half === "▲" ? "away" : "home";
+            const bs = this.battersOf(g.gamePk).filter((b) => b.side === side);
+            const cur = g.batter && bs.find((b) => b.id === String(g.batter.id));
+            const me = bs.find((b) => b.id === id);
+            if (cur && cur.slot && me && me.slot === (cur.slot % 9) + 1) {
+              fire(`deck:${g.gamePk}:${id}:${g.inning}${g.half}`, `${me.name} is on deck`, where);
+            }
+          });
+        } else {
+          const g = (PH.games || []).find((x) => String(x.gamePk) === id);
+          if (!g) return;
+          if (g.phase === "final") { fire(`final:${id}`, `Final: ${g.away} ${g.score.away}, ${g.home} ${g.score.home}`, COPY.alertsFinalBody); return; }
+          if (g.phase !== "live") return;
+          const w = this.gameWp(g);
+          const last = (this._wpSeen || (this._wpSeen = {}))[id];
+          if (w.prob == null) return;
+          const homeP = w.team === g.home ? w.prob : 1 - w.prob;
+          if (last == null) { this._wpSeen[id] = homeP; return; }
+          if (Math.abs(homeP - last) >= 0.15) {
+            this._wpSeen[id] = homeP;
+            fire(`swing:${id}:${Math.round(homeP * 100)}`, `Big swing: ${g.away} @ ${g.home}`, `${w.team} now ${w.val} to win · ${this.halfWord(g.half).toLowerCase()} ${g.inning || ""}`);
+          }
+        }
+      });
+    }
+    toastHtml() {
+      const t = this.state.toast;
+      if (!t) return "";
+      return `<div class="ph-toast" role="status"><b>${esc(t.title)}</b><span>${esc(t.body)}</span><button class="ph-link" data-act="toastX" aria-label="Dismiss">✕</button></div>`;
+    }
     togglePin(key) {
       if (!key || !/^[gb]:\S+$/.test(key)) return;
       const pins = this.state.pins.slice();
       const i = pins.indexOf(key);
-      if (i >= 0) pins.splice(i, 1); else pins.push(key);
+      if (i >= 0) pins.splice(i, 1);
+      else {
+        pins.push(key);
+        // Stamped when pinned, so a pin for a batter whose read has not
+        // posted yet survives until his slate has passed.
+        this.pinDates()[key] = slateDate();
+        this.savePinDates();
+      }
       this.savePins(pins);
     }
     isPinned(key) { return this.state.pins.indexOf(key) >= 0; }
@@ -486,6 +785,7 @@
 
     // ── ★ WATCHING row ───────────────────────────────────────────────────
     watchRowHtml() {
+      this.expirePins();
       const pins = this.state.pins;
       if (!pins.length) return "";
       const pills = pins.map((key) => {
@@ -524,7 +824,10 @@
           <button class="ph-watch-unpin" data-act="pin" data-arg="${esc(key)}" title="${esc(COPY.watchUnpin)}" aria-label="${esc(COPY.watchUnpin)}">★</button>
         </span>`;
       }).join("");
-      return `<div class="ph-watch"><span class="ph-kicker">${esc(COPY.watchingLabel)}</span>${pills}</div>`;
+      const a = this.state.alerts;
+      const denied = a && window.Notification && Notification.permission === "denied";
+      const bell = `<button class="ph-chip${a ? " is-on" : ""}" data-act="alerts" aria-pressed="${!!a}" title="${esc(a ? COPY.alertsOffTip : COPY.alertsOnTip)}">${a ? "🔔 Alerts on" : "🔕 Alerts off"}</button>${denied ? `<span class="ph-mut ph-small">${esc(COPY.alertsDenied)}</span>` : ""}`;
+      return `<div class="ph-watch"><span class="ph-kicker">${esc(COPY.watchingLabel)}</span>${pills}${bell}</div>`;
     }
 
     // ── API unreachable ──────────────────────────────────────────────────
@@ -559,13 +862,44 @@
     // Every probability on today's slate in one table, switchable by market.
     // Filters live in state (p*), never in the DOM, so they survive the poll.
     PRED_MARKETS = [["hit", "1+ Hit"], ["hr", "1+ HR"], ["wp", "Win prob"], ["tot", "Totals"], ["sp", "Starters"]];
-    PRED_DEFAULTS = { pMarket: "hit", pTeam: "", pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false };
+    PRED_DEFAULTS = { pMarket: "hit", pTeams: [], pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false, pOpen: {} };
     PRED_PAGE = 25;
 
+    // What the batter and starter tables are waiting on, if anything. These
+    // read /projections, and until it has answered there is nothing to filter:
+    // drawing "no predictions match these filters" over a pending or failed
+    // fetch told a reader their filters were the problem.
+    projStatus() {
+      const p = this.state.proj;
+      if (p.rows === null) return p.err ? "error" : "loading";
+      return "ok";
+    }
+    // Postseason caveat: the batter models are fitted on regular-season games,
+    // and playoff hitting runs well below them (2026 Division Series: 16% of
+    // PAs ended in a hit vs 22% in the regular season; 1+ hit reads landed
+    // 46% against 64% predicted). Said wherever the reads are, until a
+    // postseason-aware model exists.
+    postseasonNoteHtml() {
+      const post = this.todayGames().some((g) => /^[FDLW]$/.test(g.gameType || ""));
+      return post ? `<div class="ph-note ph-note--warn" role="note">${esc(COPY.postseasonNote)}</div>` : "";
+    }
     predHtml() {
       this.loadTrust();
       const mk = this.state.pMarket;
       let table, count;
+      const projMk = mk === "hit" || mk === "hr" || mk === "sp";
+      const ps = projMk ? this.projStatus() : "ok";
+      const gamesPending = !projMk && !this.todayGames().length && this.state.api.lastGood == null;
+      if (ps !== "ok" || gamesPending) {
+        const err = ps === "error" || (gamesPending && this.state.api.down);
+        return `<div class="ph-titlerow">
+            <h1 class="ph-h1">${esc(COPY.predTitle)}</h1>
+            <span class="ph-strip-sub">${esc(SLATE_IS_TODAY ? COPY.predSub : COPY.predSubNext)}</span>
+          </div>
+          ${this.predFilterBarHtml(null)}
+          ${this.trustTilesHtml()}
+          <div class="ph-empty${err ? " ph-empty--err" : ""}" role="status">${esc(err ? COPY.predLoadError : COPY.predLoading)}</div>`;
+      }
       if (mk === "hit" || mk === "hr") {
         const rows = this.predBatterRows();
         count = rows.length;
@@ -588,6 +922,7 @@
           <span class="ph-strip-sub">${esc(SLATE_IS_TODAY ? COPY.predSub : COPY.predSubNext)}</span>
         </div>
         ${this.predFilterBarHtml(count)}
+        ${this.postseasonNoteHtml()}
         ${this.trustTilesHtml()}
         <div class="ph-strip-head">
           <span class="ph-table-title">${esc(COPY.predTableTitle[mk])}</span>
@@ -602,14 +937,18 @@
       // page is about. Everything else goes back to its default.
       const d = this.PRED_DEFAULTS;
       Object.assign(this.state, {
-        pTeam: d.pTeam, pStatus: d.pStatus, pConfOnly: d.pConfOnly, pMin: d.pMin, pAll: false,
+        pTeams: [], pStatus: d.pStatus, pConfOnly: d.pConfOnly, pMin: d.pMin, pAll: false,
       });
     }
     predStatusOk(g) {
       const s = this.state.pStatus;
       return s === "all" || (s === "upcoming" ? g.phase === "pregame" : g.phase === s);
     }
-    predTeamOk(...teams) { return !this.state.pTeam || teams.includes(this.state.pTeam); }
+    // Several teams at once (a DFS stack is two or three clubs); none = all.
+    predTeamOk(...teams) {
+      const want = this.state.pTeams;
+      return !want.length || teams.some((t) => want.includes(t));
+    }
     predFilterBarHtml(count) {
       const s = this.state;
       const anyLive = this.todayGames().some((g) => g.phase === "live");
@@ -618,21 +957,31 @@
         `<button class="ph-chip${on ? " is-on" : ""}" data-act="${act}" data-arg="${esc(k)}">${esc(label)}</button>`;
       const minLabel = s.pMin <= -10 ? "any" : `${s.pMin >= 0 ? "+" : "−"}${Math.abs(s.pMin)} pts`;
       const batter = s.pMarket === "hit" || s.pMarket === "hr";
-      const teamSel = `<select class="ph-select" data-pfilter="pTeam" aria-label="Team">
-          <option value="">All teams</option>
-          ${teams.map((t) => `<option value="${esc(t)}"${s.pTeam === t ? " selected" : ""}>${esc(t)}</option>`).join("")}
-        </select>`;
+      const tOpen = !!s.mOpen["f:teams"];
+      const teamLbl = !s.pTeams.length ? "All teams" : s.pTeams.length <= 3 ? s.pTeams.join(", ") : `${s.pTeams.length} teams`;
+      const teamSel = `<span class="ph-teampick">
+          <button class="ph-select ph-teampick-btn" data-act="mToggle" data-arg="f:teams" aria-expanded="${tOpen}" aria-label="Teams">${esc(teamLbl)} ${tOpen ? "▴" : "▾"}</button>
+          ${tOpen ? `<span class="ph-teampick-panel" role="group" aria-label="Pick teams">
+            ${chip("pTeamT", "", "All", !s.pTeams.length)}
+            ${teams.map((t) => `<button class="ph-chip${s.pTeams.includes(t) ? " is-on" : ""}" data-act="pTeamT" data-arg="${esc(t)}" aria-pressed="${s.pTeams.includes(t)}">${esc(t)}</button>`).join("")}
+          </span>` : ""}
+        </span>`;
+      const exportBtn = count ? `<button class="ph-link" data-act="pExport" title="Download every row that matches these filters as CSV">Export CSV</button>` : "";
       const statusChips = `<span class="ph-fgroup">${[["all", "All"], ["live", "Live"], ["upcoming", "Upcoming"], ["final", "Final"]].map(([k, l]) => chip("pStatus", k, l, s.pStatus === k)).join("")}</span>`;
       const batterCtl = batter ? `${chip("pConfOnly", "1", `${s.pConfOnly ? "✓ " : ""}Lineup confirmed only`, s.pConfOnly)}
         <label class="ph-range">MIN LIFT
           <input type="range" min="-10" max="15" step="1" value="${s.pMin}" data-pfilter="pMin" aria-label="Minimum lift in points">
           <span class="ph-mono ph-range-val">${esc(minLabel)}</span>
         </label>` : "";
-      const countHtml = `<span class="ph-mono ph-fbar-count"><b>${count}</b> result${count === 1 ? "" : "s"}</span>`;
+      // null while the rows are still on their way: a count of 0 there is a
+      // claim about the data, and the data has not arrived.
+      const countHtml = count == null
+        ? `<span class="ph-mono ph-fbar-count"><b>—</b> results</span>`
+        : `<span class="ph-mono ph-fbar-count"><b>${count}</b> result${count === 1 ? "" : "s"}</span>`;
       // Phone: mode and market always in view; the rest behind "Filters".
       if (this.mob()) {
         const open = !!s.mOpen["f:pred"];
-        const n = (s.pTeam ? 1 : 0) + (s.pStatus !== "all" ? 1 : 0)
+        const n = (s.pTeams.length ? 1 : 0) + (s.pStatus !== "all" ? 1 : 0)
           + (batter && s.pConfOnly ? 1 : 0) + (batter && s.pMin > -10 ? 1 : 0);
         return `<div class="ph-fbar">
           <div class="ph-fbar-line">
@@ -641,7 +990,7 @@
             ${countHtml}
           </div>
           <div class="ph-fscroll">${this.PRED_MARKETS.map(([k, l]) => chip("pMarket", k, l, s.pMarket === k)).join("")}</div>
-          ${open ? `<div class="ph-fbar-line ph-fbar-more">${teamSel}${statusChips}${batterCtl}<button class="ph-link" data-act="pClear">Clear</button></div>` : ""}
+          ${open ? `<div class="ph-fbar-line ph-fbar-more">${teamSel}${statusChips}${batterCtl}<button class="ph-link" data-act="pClear">Clear</button>${exportBtn}</div>` : ""}
         </div>`;
       }
       return `<div class="ph-fbar">
@@ -653,8 +1002,50 @@
         ${statusChips}
         ${batterCtl}
         <button class="ph-link" data-act="pClear">Clear</button>
+        ${exportBtn}
         ${countHtml}
       </div>`;
+    }
+
+    // Every row the current filters match — not just the page on screen — as
+    // a CSV download, in the order shown.
+    predCsv() {
+      const m = this.state.pMarket;
+      const q = (v) => { const t = v == null ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+      let head, rows;
+      if (m === "hit" || m === "hr") {
+        head = ["rank", "player", "team", "slot", "opposing_starter", "game", "status", "probability", "league_rate", "lift_pts", "xpa", "form_30d_rate", "result"];
+        rows = this.predBatterRows().map((r, i) => {
+          const f = r.b.form ? r.b.form[m === "hit" ? "hit_rate" : "hr_rate"] : null;
+          const rec = r.b[m];
+          return [i + 1, r.b.name, this.teamOf(r.b), r.b.slot || "", r.b.spName || "", `${r.g.away} @ ${r.g.home}`, r.g.phase,
+            r.c.p == null ? "" : r.c.p.toFixed(4), r.c.base == null ? "" : r.c.base.toFixed(4), r.c.pts == null ? "" : r.c.pts.toFixed(1),
+            r.b.xpa == null ? "" : r.b.xpa.toFixed(2), f == null ? "" : f, rec && rec.result ? rec.result : ""];
+        });
+      } else if (m === "sp") {
+        head = ["starter", "team", "opponent", "game_time", ...this.STARTER_MARKETS.map(([k]) => `${k}_line`), ...this.STARTER_MARKETS.map(([k]) => `${k}_p_over`)];
+        rows = this.predStarterRows().map((r) => {
+          const props = this.starterProps(r.g.gamePk, r.id) || {};
+          return [r.name, r.team, r.opp, this.clockOf(r.g.startTs) || "",
+            ...this.STARTER_MARKETS.map(([k]) => (props[k] ? props[k].line : "")),
+            ...this.STARTER_MARKETS.map(([k]) => (props[k] ? props[k].probability : ""))];
+        });
+      } else {
+        head = ["game", "status", "pregame_favourite", "pregame_win_prob", "now_favourite", "now_win_prob", "projected_runs", "total_pick", "total_prob"];
+        rows = this.predGameRows().map(({ g, w, pw, t }) => [`${g.away} @ ${g.home}`, g.phase, pw.team, pw.prob == null ? "" : pw.prob.toFixed(4),
+          g.phase === "pregame" ? "" : w.team, w.prob == null ? "" : w.prob.toFixed(4), t.proj == null ? "" : t.proj.toFixed(1), t.pick, t.prob == null ? "" : t.prob]);
+      }
+      return [head, ...rows].map((r) => r.map(q).join(",")).join("\n");
+    }
+    predExport() {
+      try {
+        const blob = new Blob([this.predCsv()], { type: "text/csv" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `pitchhawk-${this.state.pMarket}-${slateDate()}.csv`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      } catch (_e) { /* a browser without Blob downloads: nothing to do */ }
     }
 
     // ── rows ─────────────────────────────────────────────────────────────
@@ -755,18 +1146,20 @@
             key: `pr:${m}:${b.key}`,
             head: `<span class="ph-mono ph-dim ph-mcard-slot">${i + 1}</span>
               ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
-              <button class="ph-rowlink" data-act="predRow" data-arg="${esc(b.pk)}|${b.side}">
+              <button class="ph-rowlink" data-act="mToggle" data-arg="pr:${m}:${esc(b.key)}" aria-expanded="${!!s.mOpen[`pr:${m}:${b.key}`]}">
                 <span class="ph-rowlink-top"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-mono">${esc(this.teamOf(b))} · #${b.slot || "—"}</span></span>
                 <span class="ph-ellip">${this.numHtml(`vs ${b.spName || "TBD"} · ${g.away} @ ${g.home} ${when(g)}`)}</span>
               </button>
               ${this.resultChipHtml(rec ? rec.result : null, g)}`,
             stats: `${this.mPairHtml(m === "hit" ? "P(1+ HIT)" : "P(1+ HR)", this.probCellHtml(b, m, true))}
-              ${this.mPairHtml("LIFT", `<span class="ph-stack"><span class="ph-mono ph-lift ph-lift--${c.band || "avg"}">${esc(c.lift || "—")}</span><span class="ph-mono ph-small ph-mut">${c.rel == null ? "" : `${c.rel.toFixed(2)}× league`}</span></span>`)}`,
+              ${this.mPairHtml("LIFT", `<span class="ph-stack"><span class="ph-mono ph-lift ph-lift--${c.band || "avg"}">${esc(c.lift || "—")}</span><span class="ph-mono ph-small ph-mut">${c.rel == null ? "" : `${c.rel.toFixed(2)}× league`}</span></span>`)}
+              <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WHY</span><span class="ph-card-why ph-mono"><span>${w[0]}</span></span></span>`,
             more: `${this.mPairHtml("PHASE", this.phaseChip(pk, pt))}
               ${this.mPairHtml("LINEUP", `<span class="ph-status ph-status--${b.slot ? "solid" : "dashed"} ph-status--left">${b.slot ? "LINEUP ✓" : "LINEUP PENDING"}</span>`)}
               ${this.mPairHtml("REST OF GAME", rogP != null ? this.baseCellHtml(this.pct(rogP), `${Number(live.remaining_pa).toFixed(1)} PA left`) : `<span class="ph-missing-dash">—</span>`)}
               ${this.mPairHtml("FRESH", `<span class="ph-mono ph-small">${esc(g.phase === "final" ? "graded" : `updated ${this.clockOf(b.updatedAt) || "—"}`)}</span>`)}
-              <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WHY</span><span class="ph-card-why ph-mono"><span>${w[0]}</span><span class="ph-card-why2">${w[1]}</span></span></span>`,
+              <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">MATCHUP</span><span class="ph-card-why ph-mono"><span>${w[1]}</span></span></span>
+              ${this.openGameBtnHtml(b.pk, b.side)}`,
           });
         }).join("");
         const sorts = [["lift", "Lift"], ["prob", "Prob"], ["time", "Time"], ["name", "Name"]]
@@ -788,7 +1181,7 @@
         return `<div class="ph-ptable-row ph-ptable-bat">
           <span class="ph-mono ph-dim">${i + 1}</span>
           ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
-          <button class="ph-rowlink" data-act="predRow" data-arg="${esc(b.pk)}|${b.side}">
+          <button class="ph-rowlink" data-act="pOpen" data-arg="b:${esc(b.key)}" aria-expanded="${!!s.pOpen[`b:${b.key}`]}">
             <span class="ph-rowlink-top"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-mono">${esc(this.teamOf(b))} · #${b.slot || "—"}</span></span>
             <span class="ph-ellip">${this.numHtml(`vs ${b.spName || "TBD"} · ${g.away} @ ${g.home} ${when(g)}`)}</span>
           </button>
@@ -805,7 +1198,7 @@
           <span class="ph-card-why ph-mono"><span>${w[0]}</span><span class="ph-card-why2">${w[1]}</span></span>
           ${rog}
           ${this.resultChipHtml(rec ? rec.result : null, g)}
-        </div>`;
+        </div>${s.pOpen[`b:${b.key}`] ? this.predBatterDetailHtml(b, g) : ""}`;
       }).join("");
       return `<div class="ph-ptable">
         <div class="ph-ptable-row ph-ptable-bat ph-ptable-head">
@@ -826,18 +1219,18 @@
           const pk = String(g.gamePk);
           const score = g.phase === "pregame" ? "" : `${g.score.away}–${g.score.home}`;
           const now = g.phase === "pregame" ? "—" : `${w.team} ${w.val}`;
-          const cap = g.phase === "pregame" ? ["is-pre", "PREGAME · log5_v1"]
-            : g.phase === "live" ? ["is-live", "● LIVE · mlb_winprob_v1"] : ["", "AT FINAL"];
+          const cap = g.phase === "pregame" ? ["is-pre", "PREGAME"]
+            : g.phase === "live" ? ["is-live", "● LIVE"] : ["", "AT FINAL"];
           return this.mCardHtml({
             key: `pg:${pk}`,
             head: `${this.pinBtnHtml("g:" + pk, "Watch this game")}
               ${this.slateChipHtml(g, true)}
-              <button class="ph-rowlink" data-act="predRow" data-arg="${esc(pk)}">
+              <button class="ph-rowlink" data-act="mToggle" data-arg="pg:${esc(pk)}" aria-expanded="${!!this.state.mOpen[`pg:${pk}`]}">
                 <span class="ph-rowlink-top"><b>${esc(g.away)} @ ${esc(g.home)}</b><span class="ph-mono ph-rowlink-score">${esc(score)}</span></span>
               </button>`,
             stats: `${this.mPairHtml("WIN PROB · PREGAME → NOW", `<span class="ph-stack"><span class="ph-gpill-line ph-mono">
                   <span class="ph-dim">${pw.prob == null ? "—" : esc(`${pw.team} ${pw.val}`)}</span><span class="ph-mut">→</span>
-                  <b class="ph-gpill-num">${esc(now)}</b>${this.deltaHtml(w.delta)}</span><span class="ph-cap ${cap[0]}">${cap[1]}</span></span>`)}
+                  <b class="ph-gpill-num">${esc(now)}</b>${this.deltaHtml(w.delta)}</span><span class="ph-cap ${cap[0]}" title="${esc(this.wpModelTip(g))}">${cap[1]}</span></span>`)}
               ${this.mPairHtml("TOTAL · PREGAME", `<span class="ph-gpill-line"><b>${this.numHtml(t.pick)}</b><span class="ph-mono ph-gpill-num is-dim">${this.pct(t.prob)}</span></span>`)}`,
             more: `${this.mPairHtml("STARTERS", `<span class="ph-meta-v">${esc(this.startersLine(g))}</span>`)}
               ${this.mPairHtml("PROJ RUNS", `<span class="ph-mono">${t.proj == null ? "—" : t.proj.toFixed(1)}</span>`)}
@@ -847,7 +1240,8 @@
               ${this.mPairHtml("RESULT", `<span class="ph-res2">
                 <span><span class="ph-res-k ph-res-k--w">WP</span>${this.gameResultChipHtml(this.gameResult(g, "wp"))}</span>
                 <span><span class="ph-res-k ph-res-k--w">TOT</span>${this.gameResultChipHtml(this.gameResult(g, "tot"))}</span></span>`)}
-              ${this.mPairHtml("WIN-PROB SPARKLINE", this.tagHtml("needsroute"))}`,
+              ${g.phase === "pregame" ? "" : `<span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WIN PROB BY AT-BAT</span>${this.sparkHtml(g, 32)}</span>`}
+              ${this.openGameBtnHtml(pk)}`,
           });
         }).join("")}</div>`;
       }
@@ -855,12 +1249,12 @@
         const pk = String(g.gamePk);
         const score = g.phase === "pregame" ? "" : `${g.score.away}–${g.score.home}`;
         const now = g.phase === "pregame" ? "—" : g.phase === "final" ? `${w.team} ${w.val}` : `${w.team} ${w.val}`;
-        const cap = g.phase === "pregame" ? ["is-pre", "PREGAME · log5_v1"]
-          : g.phase === "live" ? ["is-live", "● LIVE · mlb_winprob_v1"] : ["", "AT FINAL"];
+        const cap = g.phase === "pregame" ? ["is-pre", "PREGAME"]
+          : g.phase === "live" ? ["is-live", "● LIVE"] : ["", "AT FINAL"];
         return `<div class="ph-ptable-row ph-ptable-game">
           ${this.pinBtnHtml("g:" + pk, "Watch this game")}
           ${this.slateChipHtml(g, false)}
-          <button class="ph-rowlink" data-act="predRow" data-arg="${esc(pk)}">
+          <button class="ph-rowlink" data-act="pOpen" data-arg="g:${esc(pk)}" aria-expanded="${!!this.state.pOpen[`g:${pk}`]}">
             <span class="ph-rowlink-top"><b>${esc(g.away)} @ ${esc(g.home)}</b><span class="ph-mono ph-rowlink-score">${esc(score)}</span></span>
             <span class="ph-ellip">${esc(this.startersLine(g))}</span>
           </button>
@@ -869,7 +1263,8 @@
               <span class="ph-dim">${pw.prob == null ? "—" : esc(`${pw.team} ${pw.val}`)}</span><span class="ph-mut">→</span>
               <b class="ph-gpill-num">${esc(now)}</b>${this.deltaHtml(w.delta)}
             </span>
-            <span class="ph-cap ${cap[0]}">${cap[1]}</span>
+            <span class="ph-cap ${cap[0]}" title="${esc(this.wpModelTip(g))}">${cap[1]}</span>
+            ${g.phase === "pregame" ? "" : this.sparkHtml(g, 22)}
           </span>
           <span class="ph-mono">${t.proj == null ? "—" : t.proj.toFixed(1)}</span>
           <span class="ph-gpill-line"><b>${this.numHtml(t.pick)}</b><span class="ph-mono ph-gpill-num is-dim">${this.pct(t.prob)}</span></span>
@@ -881,12 +1276,12 @@
             <span><span class="ph-res-k ph-res-k--w">WP</span>${this.gameResultChipHtml(this.gameResult(g, "wp"))}</span>
             <span><span class="ph-res-k ph-res-k--w">TOT</span>${this.gameResultChipHtml(this.gameResult(g, "tot"))}</span>
           </span>
-        </div>`;
+        </div>${this.state.pOpen[`g:${pk}`] ? this.predGameDetailHtml(g) : ""}`;
       }).join("");
       return `<div class="ph-ptable">
         <div class="ph-ptable-row ph-ptable-game ph-ptable-head">
           <span></span><span>STATUS</span><span>MATCHUP · STARTERS</span>
-          <span class="ph-headtag">WIN PROB · PREGAME → NOW ${this.tagHtml("needsroute")}<span class="ph-mut">sparkline</span></span>
+          <span>WIN PROB · PREGAME → NOW</span>
           <span>PROJ RUNS</span><span>TOTAL · PREGAME</span><span>LIVE TOTAL</span><span>RESULT</span>
         </div>
         ${body}
@@ -895,21 +1290,21 @@
     predStarterTableHtml(rows) {
       if (this.mob()) {
         return `<div class="ph-mlist">${rows.map((r) => this.starterCardHtml(`pp:${r.g.gamePk}:${r.side}`,
-          `<button class="ph-rowlink" data-act="predRow" data-arg="${esc(String(r.g.gamePk))}|sp">
+          `<button class="ph-rowlink" data-act="mToggle" data-arg="pp:${r.g.gamePk}:${r.side}" aria-expanded="${!!this.state.mOpen[`pp:${r.g.gamePk}:${r.side}`]}">
             <span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(r.name)}</b></span>
             <span class="ph-ellip">${this.numHtml(`${r.team} vs ${r.opp} · ${this.clockOf(r.g.startTs) || "TBD"}`)}</span>
-          </button>`, r.id, r.g.gamePk, this.slateChipHtml(r.g, true))).join("")}
+          </button>`, r.id, r.g.gamePk, this.slateChipHtml(r.g, true), this.openGameBtnHtml(r.g.gamePk, "sp"))).join("")}
           <div class="ph-btable-foot"><span>${this.numHtml(COPY.startersNote)}</span></div>
         </div>`;
       }
       const body = rows.map((r) => `<div class="ph-ptable-row ph-ptable-sp">
-          <button class="ph-rowlink" data-act="predRow" data-arg="${esc(String(r.g.gamePk))}|sp">
+          <button class="ph-rowlink" data-act="pOpen" data-arg="s:${r.g.gamePk}:${r.side}" aria-expanded="${!!this.state.pOpen[`s:${r.g.gamePk}:${r.side}`]}">
             <span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(r.name)}</b></span>
             <span class="ph-ellip">${this.numHtml(`${r.team} vs ${r.opp} · ${this.clockOf(r.g.startTs) || "TBD"}`)}</span>
           </button>
           ${this.slateChipHtml(r.g, false)}
           ${this.starterCellsHtml(r.id, r.g.gamePk)}
-        </div>`).join("");
+        </div>${this.state.pOpen[`s:${r.g.gamePk}:${r.side}`] ? this.predStarterDetailHtml(r) : ""}`).join("");
       const hd = ["STARTER · MATCHUP", "STATUS", "STRIKEOUTS", "OUTS REC.", "HITS ALLOWED", "EARNED RUNS", "WALKS", "30D K%", "WHIFF", "HR/PA", "FB VELO", "FATIGUE"];
       return `<div class="ph-ptable">
         <div class="ph-ptable-row ph-ptable-sp ph-ptable-head">${hd.map((h) => `<span>${h}</span>`).join("")}</div>
@@ -923,6 +1318,41 @@
       const none = g.phase === "pregame" ? "TBD" : "—";
       if (!g.probables.away && !g.probables.home && none === "—") return "starters —";
       return `${g.probables.away || none} vs ${g.probables.home || none}`;
+    }
+    // ── inline row detail ────────────────────────────────────────────────
+    // A Predictions row opens in place. It used to jump to the Home tab's
+    // game pill, which threw away the reader's filters and scroll with no way
+    // back; leaving the tab is now an explicit "Open game" button.
+    openGameBtnHtml(pk, side) {
+      return `<button class="ph-chip ph-opengame" data-act="openGame" data-arg="${esc(String(pk))}${side ? `|${side}` : ""}">Open game ›</button>`;
+    }
+    predDetailWrap(inner) { return `<div class="ph-pdetail">${inner}</div>`; }
+    predBatterDetailHtml(b, g) {
+      const h = this.h2hOf(b);
+      const h2h = !h || h.pending ? "—" : !h.found ? "fewer than 3 PA" : `${h.h_count}-for-${h.pa_count}, ${h.hr_count} HR`;
+      const opp = b.oppForm;
+      return this.predDetailWrap(`
+        ${this.mPairHtml("1+ HIT", this.probCellHtml(b, "hit"))}
+        ${this.mPairHtml("1+ HR", this.probCellHtml(b, "hr"))}
+        ${this.mPairHtml("H+R+RBI 1+", this.baseBatterCellHtml(b.hrr, "hrr"))}
+        ${this.mPairHtml("TB 1.5+", this.baseBatterCellHtml(b.tb15, "tb"))}
+        ${this.mPairHtml("30D H · HR /PA", this.formCellHtml(b.form))}
+        ${this.mPairHtml(`${esc(this.lastName(b.spName)).toUpperCase()} ALLOWS · 30D`, this.formCellHtml(opp))}
+        ${this.mPairHtml("VS THIS STARTER", `<span class="ph-mono">${esc(h2h)}</span>`)}
+        ${this.mPairHtml("GAME", `<span class="ph-meta-v">${this.numHtml(`${g.away} @ ${g.home} · ${g.venue || "—"} · ${this.clockOf(g.startTs) || "TBD"}`)}</span>`)}
+        <span class="ph-pdetail-act">${this.pinBtnHtml("b:" + b.id, "Watch this batter")}${this.openGameBtnHtml(b.pk, b.side)}</span>`);
+    }
+    predGameDetailHtml(g) {
+      if (!this.state.gameCtx[String(g.gamePk)]) this.loadGameContext(g.gamePk);
+      return this.predDetailWrap(`${this.pillMetaGridHtml(g)}
+        ${g.phase === "pregame" ? "" : `<span class="ph-meta ph-pdetail-wide"><span class="ph-meta-k">WIN PROB BY AT-BAT</span>${this.sparkHtml(g, 40)}</span>`}
+        <span class="ph-pdetail-act">${this.openGameBtnHtml(g.gamePk)}</span>`);
+    }
+    predStarterDetailHtml(r) {
+      return this.predDetailWrap(`
+        ${this.mPairHtml("MATCHUP", `<span class="ph-meta-v">${this.numHtml(`${r.team} vs ${r.opp} · ${r.g.venue || "—"} · ${this.clockOf(r.g.startTs) || "TBD"}`)}</span>`)}
+        <span class="ph-note ph-pdetail-wide">${this.numHtml(COPY.startersNote)}</span>
+        <span class="ph-pdetail-act">${this.openGameBtnHtml(r.g.gamePk, "sp")}</span>`);
     }
     predEmptyHtml() {
       const has = this.todayGames().length > 0;
@@ -988,38 +1418,73 @@
       });
       return { w, l, mae: maeN ? mae / maeN : null, maeServed: served, versions: [...versions] };
     }
+    // How a call rate compares with the naive baseline for its market:
+    // always picking the league's most common outcome. A four-way at-bat call
+    // right 43% of the time is ordinary, not a failure — the naive "out" pick
+    // is right ~45% — and the old fixed 50% / 66% bands painted it red. Under
+    // MIN_GRADED graded calls there is no colour at all: a handful of results
+    // is noise, not a verdict.
+    MIN_GRADED = 50;
+    skillBand(c, n, base) {
+      if (!n || n < this.MIN_GRADED || base == null) return null;
+      const d = c / n - base;
+      return d >= 0.02 ? "good" : d >= -0.02 ? "amber" : "bad";
+    }
     trustTilesHtml() {
       const t = this.state.trust;
-      const tile = (label, valHtml, sub, tone) => `<div class="ph-kpi">
+      const tile = (label, valHtml, sub, tone, tip) => `<div class="ph-kpi" title="${esc(tip || "")}">
           <span class="ph-kpi-k">${esc(label)}</span>
           <b class="ph-mono ph-kpi-v ${tone ? `ph-tone-${tone}` : ""}">${valHtml}</b>
           <span class="ph-kpi-sub">${sub}</span>
         </div>`;
-      const acc = (w, l) => this.accBand(w + l ? w / (w + l) : null);
+      const small = (n) => n < this.MIN_GRADED ? ` · small sample` : "";
       const calTile = (label, key) => {
         if (!t) return tile(label, "—", "loading…");
-        if (t.served === false) return tile(label, this.missingHtml("notserved"), "graded result not in /projections yet");
+        if (t.served === false) return tile(label, "—", "grading not available yet");
         const c = t.calib[key];
-        if (!c || !c.n) return tile(label, "—", this.numHtml(`0 graded · ${key}${c && c.version ? " " + c.version : ""}`));
+        const tip = `How often the read landed vs the probability the model gave it, over the last 7 days.${c && c.version ? ` Model ${c.version}.` : ""}`;
+        if (!c || !c.n) return tile(label, "—", "nothing graded yet", null, tip);
         const exp = c.sumP / c.n, act = c.hits / c.n, gap = Math.abs(act - exp) * 100;
         return tile(label, this.numHtml(`${this.pct(act)} / ${this.pct(exp)}`),
-          this.numHtml(`landed / predicted · ${c.n} graded${c.voids ? ` · ${c.voids} DNP` : ""}`),
-          gap < 2 ? "good" : gap < 4 ? "amber" : "bad");
+          this.numHtml(`landed / predicted · ${c.n} graded${c.voids ? ` · ${c.voids} DNP` : ""}${small(c.n)}`),
+          c.n < this.MIN_GRADED ? null : gap < 2 ? "good" : gap < 4 ? "amber" : "bad", tip);
       };
       const wp = t && t.wp;
       const ab = this.trustRollup("ab_result");
       const velo = this.trustRollup("pitch_speed_ou");
-      return `<div class="ph-kpis">
-        ${calTile("1+ HIT CALIBRATION · 7 DAYS", "batter_hit")}
-        ${calTile("1+ HR CALIBRATION · 7 DAYS", "batter_hr")}
-        ${!wp ? tile("WIN PROB · 7 DAYS", "—", t ? "couldn't load" : "loading…")
-          : tile("WIN PROB · 7 DAYS", this.numHtml(this.ratioPct(wp.w, wp.l + wp.w)), wp.w + wp.l ? "pregame favourite won" : "0 graded", acc(wp.w, wp.l))}
-        ${!ab ? tile("AT-BAT CALLS · 7 DAYS", "—", "loading…")
-          : tile("AT-BAT CALLS · 7 DAYS", this.numHtml(this.ratioPct(ab.w, ab.w + ab.l)), this.numHtml(`${ab.w + ab.l ? "" : "0 graded · "}ab_result ${ab.versions.join(", ")}`), acc(ab.w, ab.l))}
-        ${!velo ? tile("VELO MAE · 7 DAYS", "—", "loading…")
-          : !velo.maeServed ? tile("VELO MAE · 7 DAYS", this.missingHtml("notserved"), "mean_abs_error not in /accuracy yet")
-            : tile("VELO MAE · 7 DAYS", velo.mae == null ? "—" : this.numHtml(`${velo.mae.toFixed(1)} mph`), this.numHtml("pitch_speed_ou · σ 5.4"))}
-      </div>`;
+      const abBase = Math.max(...Object.values(this.LEAGUE_AB));
+      const tiles = [
+        calTile("1+ HIT CALIBRATION · 7 DAYS", "batter_hit"),
+        calTile("1+ HR CALIBRATION · 7 DAYS", "batter_hr"),
+        !wp ? tile("WIN PROB · 7 DAYS", "—", t ? "couldn't load" : "loading…")
+          : tile("WIN PROB · 7 DAYS", this.numHtml(this.ratioPct(wp.w, wp.l + wp.w)),
+            wp.w + wp.l ? this.numHtml(`pregame favourite won${small(wp.w + wp.l)}`) : "nothing graded yet",
+            this.skillBand(wp.w, wp.w + wp.l, 0.5), "Games where the model's pregame favourite won. A coin flip is 50%."),
+        !ab ? tile("AT-BAT CALLS · 7 DAYS", "—", "loading…")
+          : tile("AT-BAT CALLS · 7 DAYS", this.numHtml(this.ratioPct(ab.w, ab.w + ab.l)),
+            ab.w + ab.l ? this.numHtml(`vs ${this.pct(abBase)} always calling "out"`) : "nothing graded yet",
+            this.skillBand(ab.w, ab.w + ab.l, abBase),
+            `Calls on how each at-bat ends (out / hit / strikeout / walk). Always calling the most common result, an out, is right about ${this.pct(abBase)} of the time.${ab.versions.length ? ` Model ${ab.versions.join(", ")}.` : ""}`),
+        !velo ? tile("VELO MISS · 7 DAYS", "—", "loading…")
+          : !velo.maeServed || velo.mae == null ? tile("VELO MISS · 7 DAYS", "—", "nothing graded yet")
+            : tile("VELO MISS · 7 DAYS", this.numHtml(`${velo.mae.toFixed(1)} mph`), "average miss on next-pitch speed", null,
+              "Mean absolute error of the next-pitch speed call: how far, on average, the pitch came in from the number called."),
+      ];
+      if (this.mob()) {
+        // Phone: one line, tiles behind a tap. Five tiles stacked ran to more
+        // than a screen before the first batter.
+        const open = !!this.state.mOpen["trust"];
+        const hit = t && t.calib.batter_hit && t.calib.batter_hit.n ? `Hit ${this.pct(t.calib.batter_hit.hits / t.calib.batter_hit.n)}/${this.pct(t.calib.batter_hit.sumP / t.calib.batter_hit.n)}` : null;
+        const wpS = wp && wp.w + wp.l ? `Fav ${this.pct(wp.w / (wp.w + wp.l))}` : null;
+        const abS = ab && ab.w + ab.l ? `AB ${this.pct(ab.w / (ab.w + ab.l))}` : null;
+        const summary = [hit, wpS, abS].filter(Boolean).join(" · ") || (t ? "—" : "loading…");
+        return `<button class="ph-trust-sum" data-act="mToggle" data-arg="trust" aria-expanded="${open}">
+            <span class="ph-kicker ph-kicker--mut">Model record · 7 days</span>
+            <span class="ph-mono ph-ellip">${this.numHtml(summary)}</span>
+            <span class="ph-chev" aria-hidden="true">${open ? "▾" : "▸"}</span>
+          </button>${open ? `<div class="ph-kpis">${tiles.join("")}</div>` : ""}`;
+      }
+      return `<div class="ph-kpis">${tiles.join("")}</div>`;
     }
 
     // ── today's batter projections ───────────────────────────────────────
@@ -1039,8 +1504,11 @@
       // 1+ Hit and 1+ HR are the trained markets; without them the batter
       // surface has nothing to rank, so their failure is the error state.
       if (!res[0] || !res[1]) {
+        const was = this.state.proj.err;
         this.state.proj = Object.assign({}, this.state.proj, { err: true });
-        return false;
+        // Repaint once on the transition, so a first-load failure reads as an
+        // error rather than as a load that never finishes.
+        return !was;
       }
       const rows = [].concat(...res.map((r) => (r && r.rows) || []));
       const changed = JSON.stringify(rows) !== JSON.stringify(this.state.proj.rows);
@@ -1055,8 +1523,12 @@
     homeHtml() {
       const games = this.todayGames();
       const head = this.homeTitleHtml() + this.statusBarHtml();
-      if (!games.length) return head + this.homeEmptyHtml();
-      return head + this.decisionStripHtml() + this.homeGroupsHtml();
+      const hint = this.state.hintSeen ? "" : `<div class="ph-hint" role="note">
+          <span><b>${esc(COPY.hintTitle)}</b> ${esc(COPY.hintBody)}</span>
+          <span class="ph-hint-act"><button class="ph-chip is-on" data-act="ovOpen" data-arg="help">How to read the board</button><button class="ph-link" data-act="hintDone">Got it</button></span>
+        </div>`;
+      if (!games.length) return head + hint + this.homeEmptyHtml();
+      return head + hint + this.postseasonNoteHtml() + this.decisionStripHtml() + this.scorecardHtml() + this.homeGroupsHtml() + this.nextSlateHtml();
     }
 
     // ── league baselines ─────────────────────────────────────────────────
@@ -1066,6 +1538,11 @@
     LEAGUE_PA = { hit: 0.239, hr: 0.032 };
     LEAGUE_PITCH = { strike_foul: 0.455, ball: 0.352, in_play: 0.193 };
     LEAGUE_AB = { strikeout: 0.221, walk: 0.087, hit: 0.239, out: 0.453 };
+    // The velo call's typical miss (LEAGUE.speed_sigma in model.ts). The
+    // model predicts a speed without knowing which pitch is coming, and a
+    // fastball and a breaking ball sit ~10 mph apart, so a single call is
+    // shown with its spread rather than as a point that red-grades most rows.
+    SPEED_SIGMA = 5.4;
 
     // The league chance of 1+ hit (or HR) for a batter getting `xpa` plate
     // appearances. Per batter rather than one constant, so a leadoff hitter
@@ -1080,9 +1557,16 @@
     gameByPk(pk) {
       return this.todayGames().find((g) => String(g.gamePk) === String(pk)) || null;
     }
+    // "Vladimir Guerrero Jr." is Guerrero, not "Jr.". Generational suffixes
+    // are dropped before the last word is taken, in both name helpers.
+    nameParts(n) {
+      const parts = String(n || "").trim().split(/\s+/).filter(Boolean);
+      while (parts.length > 2 && /^(jr|sr|ii|iii|iv|v)\.?$/i.test(parts[parts.length - 1])) parts.pop();
+      return parts;
+    }
     lastName(n) {
-      const parts = String(n || "").trim().split(/\s+/);
-      return parts.length ? parts[parts.length - 1] || "—" : "—";
+      const parts = this.nameParts(n);
+      return parts.length ? parts[parts.length - 1] : "—";
     }
     r3(v) { return v == null ? "—" : Number(v).toFixed(3).replace(/^0/, ""); }
     pct1(v) { return v == null ? "—" : (Number(v) * 100).toFixed(1) + "%"; }
@@ -1118,12 +1602,17 @@
             spId: r.opposing_pitcher_id == null ? null : String(r.opposing_pitcher_id),
             spName: r.opposing_pitcher || null, updatedAt: null,
             hit: null, hr: null, tb15: null, hrr: null,
+            // 30-day per-PA form, the batter's own and the opposing
+            // starter's rates allowed (see /projections form_30d).
+            form: null, oppForm: null,
           };
           by.set(key, b);
         }
         b[mk] = r;
         if (b.slot == null && r.lineup_slot != null) b.slot = Number(r.lineup_slot);
         if (b.xpa == null && r.expected_pa != null) b.xpa = Number(r.expected_pa);
+        if (!b.form && r.form_30d) b.form = r.form_30d;
+        if (!b.oppForm && r.opp_form_30d) b.oppForm = r.opp_form_30d;
         if (r.updated_at && (!b.updatedAt || r.updated_at > b.updatedAt)) b.updatedAt = r.updated_at;
       });
       const list = [...by.values()];
@@ -1196,22 +1685,31 @@
       return `<span class="ph-bar"><span class="ph-bar-fill ${cls || ""}" style="width:${w.toFixed(1)}%"></span>${tick == null ? "" : `<span class="ph-bar-tick" style="left:${tick.toFixed(1)}%"></span>`}</span>`;
     }
 
-    // The two "why" lines under a batter read (port of why()). Rolling 30-day
-    // rates are not routed per slate, so those parts are a dash with a tag;
-    // H2H, slot and xPA are real. Returns HTML.
+    // The two "why" lines under a batter read: the batter's 30-day per-PA
+    // rate and what the opposing starter has allowed over the same window —
+    // the same rolling rows the model reads — then head-to-head, slot and xPA.
+    // Returns HTML.
     whyLines(b, m) {
       const sp = esc(this.lastName(b.spName));
       const h = this.h2hOf(b);
       const slot = b.slot ? `slot ${b.slot}` : "slot pending";
       const xpa = b.xpa == null ? "—" : b.xpa.toFixed(2);
-      const ns = this.tagHtml("notserved");
       let h2h;
       if (!h || h.pending) h2h = "—";
       else if (!h.found) h2h = "— (&lt;3 PA)";
       else h2h = m === "hit" ? `${h.h_count}-${h.pa_count}` : `${h.hr_count} HR in ${h.pa_count} PA`;
+      const key = m === "hit" ? "hit_rate" : "hr_rate";
+      const fmt = (v) => (v == null ? "—" : m === "hit" ? this.r3(v) : this.pct1(v));
+      const own = b.form && b.form[key] != null ? `${fmt(b.form[key])} <span class="ph-dim">(${b.form.pa} PA)</span>` : "— <span class=\"ph-dim\">(few PA)</span>";
+      const opp = b.oppForm && b.oppForm[key] != null ? fmt(b.oppForm[key]) : "—";
       return m === "hit"
-        ? [`30d H/PA — · ${sp} H/PA — ${ns}`, `H2H ${h2h} · ${slot} → ${xpa} xPA`]
-        : [`30d HR/PA — · ${sp} HR/PA — ${ns}`, `H2H ${h2h} · ${slot} → ${xpa} xPA`];
+        ? [`30d H/PA ${own} · ${sp} allows ${opp}`, `H2H ${h2h} · ${slot} → ${xpa} xPA`]
+        : [`30d HR/PA ${own} · ${sp} allows ${opp}`, `H2H ${h2h} · ${slot} → ${xpa} xPA`];
+    }
+    // 30-day H/PA · HR/PA, for the tables' form column.
+    formCellHtml(f) {
+      if (!f || (f.hit_rate == null && f.hr_rate == null)) return this.missingHtml("fewpa");
+      return `<span class="ph-stack"><span class="ph-mono">${this.r3(f.hit_rate)} · ${this.pct1(f.hr_rate)}</span><span class="ph-mono ph-small ph-mut">${f.pa} PA</span></span>`;
     }
 
     // ── head-to-head (lazy) ──────────────────────────────────────────────
@@ -1227,6 +1725,40 @@
       if (!v || stale) (this._wantH2H || (this._wantH2H = new Set())).add(k);
       return v && !v.err ? v : null;
     }
+    // Per-at-bat win-probability history (GET /game/{pk}/winprob), lazily per
+    // game and refreshed while the game is live. null until it lands.
+    wpOf(g) {
+      if (!g || g.phase === "pregame") return null;
+      const pk = String(g.gamePk);
+      const v = this.state.wp[pk];
+      const ttl = g.phase === "live" ? 20000 : 600000;
+      if (!v || (!v.pending && Date.now() - (v.at || 0) > ttl)) (this._wantWP || (this._wantWP = new Set())).add(pk);
+      return v && v.points && v.points.length ? v : null;
+    }
+    // Home win probability across the game, 50% marked. Width follows the
+    // container; the SVG is stretched, the stroke is not.
+    sparkHtml(g, h) {
+      const v = this.wpOf(g);
+      if (!v) {
+        // Answered with nothing (no at-bats yet, or a backend without the
+        // route) reads differently from still on its way.
+        const raw = g ? this.state.wp[String(g.gamePk)] : null;
+        const msg = !g || g.phase === "pregame" ? "" : raw && raw.at ? "no win-prob history yet" : "win-prob history loading…";
+        return `<span class="ph-spark ph-spark--empty" style="height:${h || 28}px">${msg}</span>`;
+      }
+      const pts = (v.pregame_home != null ? [{ home: v.pregame_home }] : []).concat(v.points);
+      const n = pts.length;
+      const xy = pts.map((p, i) => `${n === 1 ? 50 : ((i / (n - 1)) * 100).toFixed(2)},${((1 - p.home) * 40).toFixed(2)}`).join(" ");
+      const last = pts[n - 1].home;
+      const tip = `${g.home} win probability by at-bat · now ${this.pct(last)}${v.pregame_home != null ? ` · opened ${this.pct(v.pregame_home)}` : ""}`;
+      return `<span class="ph-spark" title="${esc(tip)}" role="img" aria-label="${esc(tip)}" style="height:${h || 28}px">
+        <span class="ph-spark-lbl ph-spark-lbl--top">${esc(g.home)}</span><span class="ph-spark-lbl ph-spark-lbl--bot">${esc(g.away)}</span>
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+          <line x1="0" y1="20" x2="100" y2="20" class="ph-spark-mid" vector-effect="non-scaling-stroke"/>
+          <polyline points="${xy}" class="ph-spark-line" vector-effect="non-scaling-stroke"/>
+        </svg>
+      </span>`;
+    }
     // Starter profile + fatigue, through loadEntityProfile's per-player cache.
     starterOf(id) {
       if (!id) return null;
@@ -1237,7 +1769,21 @@
     _flushWants() {
       const pairs = this._wantH2H ? [...this._wantH2H] : [];
       const sps = this._wantSP ? [...this._wantSP] : [];
-      this._wantH2H = null; this._wantSP = null;
+      const wps = this._wantWP ? [...this._wantWP] : [];
+      this._wantH2H = null; this._wantSP = null; this._wantWP = null;
+      if (wps.length) {
+        const pend = {};
+        wps.forEach((pk) => { pend[pk] = Object.assign({}, this.state.wp[pk] || {}, { pending: true }); });
+        this.state.wp = Object.assign({}, this.state.wp, pend);
+        wps.forEach((pk) => fetchJson(`/game/${pk}/winprob`).then((body) => {
+          const prev = this.state.wp[pk] || {};
+          const next = body ? { points: body.points || [], pregame_home: body.pregame_home, at: Date.now() }
+            : Object.assign({}, prev, { pending: false, at: Date.now() });
+          const changed = JSON.stringify(next.points) !== JSON.stringify(prev.points);
+          this.state.wp = Object.assign({}, this.state.wp, { [pk]: next });
+          if (changed) this.render();
+        }));
+      }
       sps.forEach((id) => this.loadEntityProfile(id, "PITCHER"));
       if (!pairs.length) return;
       const pend = {};
@@ -1290,6 +1836,13 @@
         caption, capCls, swing: delta == null ? 0 : Math.abs(delta),
       };
     }
+    // Which model a win probability came from, for a tooltip — model ids are
+    // for the curious, not for the cell.
+    wpModelTip(g) {
+      return g.phase === "pregame" ? "Pregame model (log5_v1): team strength and the probable starters"
+        : g.phase === "live" ? "Live win probability (mlb_winprob_v1), updated every at-bat"
+          : "Final result; the pregame call is shown for comparison";
+    }
     deltaHtml(d) {
       if (d == null) return "";
       const cls = d > 0 ? "is-up" : d < 0 ? "is-down" : "";
@@ -1315,21 +1868,34 @@
       }));
       return best;
     }
-    // Port of topCall(): the more confident of the live next-pitch and
-    // at-bat-result calls, with its league rate.
+    // The strongest live lean: across the next-pitch and at-bat-result
+    // distributions, the outcome furthest ABOVE its league rate.
+    //
+    // This used to take the most probable outcome. That is nearly always the
+    // league's own most common one — strike/foul on the next pitch (~46%), an
+    // out on the at-bat (~45%) — so "top call" was a league average dressed as
+    // a call, often below league (-1 pts) and painted green regardless.
     topCallOf(g) {
       const pick = (mk, lg, label) => {
         const probs = mk && mk.probs;
         if (!probs) return null;
-        const k = Object.keys(probs).reduce((a, b) => (probs[a] >= probs[b] ? a : b), Object.keys(probs)[0]);
-        return k == null || lg[k] == null ? null : { k, p: Number(probs[k]), lg: lg[k], mkt: label };
+        let best = null;
+        Object.keys(probs).forEach((k) => {
+          if (probs[k] == null || lg[k] == null) return;
+          const p = Number(probs[k]), lift = p - lg[k];
+          if (!best || lift > best.lift || (lift === best.lift && p > best.p)) best = { k, p, lg: lg[k], lift, mkt: label };
+        });
+        return best;
       };
       const a = pick(g.m && g.m.pitch_result, this.LEAGUE_PITCH, "Next pitch");
       const b = pick(g.m && g.m.ab_result, this.LEAGUE_AB, "At-bat result");
-      if (!a) return b;
-      if (!b) return a;
-      return a.p >= b.p ? a : b;
+      const c = !a ? b : !b ? a : a.lift >= b.lift ? a : b;
+      if (c) c.band = this.leanBand(c.lift);
+      return c;
     }
+    // A lean of 3+ points over league is a real lean; within 3 is league
+    // average; below is the model leaning against.
+    leanBand(lift) { return lift == null ? "avg" : lift >= 0.03 ? "good" : lift <= -0.03 ? "low" : "avg"; }
     // "game at-bat calls 14/19 · 74%" from today's graded rows, if loaded.
     gameAbRecord(pk) {
       const m = this.models().find((x) => String(x.pk) === String(pk));
@@ -1379,7 +1945,7 @@
       const next = !SLATE_IS_TODAY;
       return `<div class="ph-titlerow">
         <h1 class="ph-h1">${esc(next ? COPY.homeTitleNext : COPY.homeTitle)}</h1>
-        <span class="ph-mono ph-titlerow-date">${esc(date)} · all times ET${next ? ` · ${esc(COPY.homeNextSub)}` : ""}</span>
+        <span class="ph-mono ph-titlerow-date">${esc(date)} · all times ${esc(this.tzLabel())} <button class="ph-link ph-tzbtn" data-act="tz">${this.state.tzLocal ? "use ET" : "use my time"}</button>${next ? ` · ${esc(COPY.homeNextSub)}` : ""}</span>
         <div class="ph-titlerow-right">
           <span class="ph-kicker ph-kicker--mut">Rank reads for</span>
           ${this.segHtml("mode", this.effectiveMode(), [["pregame", "Pregame"], ["live", "Live"]], anyLive)}
@@ -1397,7 +1963,7 @@
         <span class="ph-statusbar-up"><b>${n("pregame")}</b> upcoming</span>
         <span><b>${n("final")}</b> final</span>
         <span>lineups confirmed <b>${lu && lu.n ? `${lu.ok}/${lu.n}` : "—"}</b></span>
-        <span class="ph-statusbar-upd">updated <b class="${this.flashIf("statusbar", upd)}">${esc(upd || "—")}</b> · polls every 8s</span>
+        <span class="ph-statusbar-upd">updated <b class="${this.flashIf("statusbar", upd)}" data-clock>${esc(upd || "—")}</b> · polls every 8s</span>
       </div>`;
     }
     homeEmptyHtml() {
@@ -1408,9 +1974,95 @@
       return `<div class="ph-empty">${esc(msg)}</div>`;
     }
 
+    // ── scorecard ────────────────────────────────────────────────────────
+    // How the reads did: today's finished games, and yesterday's slate. The
+    // board graded every read all along; nothing summed them where a reader
+    // checking in after the games would look.
+    dayScore(projRows, games) {
+      const tally = (mk) => {
+        let n = 0, hits = 0, sumP = 0;
+        (projRows || []).forEach((r) => {
+          if (r.market !== mk || (r.result !== "hit" && r.result !== "miss")) return;
+          n += 1; sumP += Number(r.probability); if (r.result === "hit") hits += 1;
+        });
+        return { n, hits, exp: n ? sumP / n : null };
+      };
+      let fw = 0, fl = 0, th = 0, tn = 0;
+      (games || []).filter((g) => g.phase === "final").forEach((g) => {
+        const w = this.gameResult(g, "wp"), t = this.gameResult(g, "tot");
+        if (w.r === "hit") fw += 1; else if (w.r === "miss") fl += 1;
+        if (t.r) { tn += 1; if (t.r === "hit") th += 1; }
+      });
+      return { hit: tally("batter_hit"), hr: tally("batter_hr"), fav: { w: fw, l: fl }, tot: { h: th, n: tn } };
+    }
+    async loadYesterday() {
+      const date = PH.mlbDate(-1);
+      if (this._ydayAt && this._ydayDate === date && Date.now() - this._ydayAt < 600000) return;
+      this._ydayAt = Date.now(); this._ydayDate = date;
+      const [hit, hr, board] = await Promise.all([
+        fetchJson(`/projections?date=${date}&market=batter_hit`),
+        fetchJson(`/projections?date=${date}&market=batter_hr`),
+        PH.loadBoard(API_BASE, null, date).catch(() => null),
+      ]);
+      const rows = [].concat((hit && hit.rows) || [], (hr && hr.rows) || []);
+      const games = board ? [].concat(board.live || [], board.upcoming || [], board.final || []) : [];
+      this.setState({ yday: { date, score: rows.length || games.length ? this.dayScore(rows, games) : null } });
+    }
+    scorecardHtml() {
+      this.loadYesterday();
+      const todayFinal = this.todayGames().some((g) => g.phase === "final");
+      const today = todayFinal ? this.dayScore(this.state.proj.rows, this.todayGames()) : null;
+      const yday = this.state.yday && this.state.yday.score;
+      if (!today && !yday) return "";
+      const col = (label, sc) => {
+        if (!sc) return "";
+        const line = (k, t) => t.n
+          ? `<span class="ph-score-row"><span class="ph-meta-k">${k}</span><b class="ph-mono">${t.hits}/${t.n} · ${this.pct(t.hits / t.n)}</b><span class="ph-mono ph-mut">model said ${this.pct(t.exp)}</span></span>` : "";
+        return `<div class="ph-score-col">
+          <span class="ph-kicker ph-kicker--mut">${esc(label)}</span>
+          ${line("1+ HIT READS", sc.hit)}${line("1+ HR READS", sc.hr)}
+          ${sc.fav.w + sc.fav.l ? `<span class="ph-score-row"><span class="ph-meta-k">PREGAME FAVOURITES</span><b class="ph-mono">${sc.fav.w}–${sc.fav.l}</b></span>` : ""}
+          ${sc.tot.n ? `<span class="ph-score-row"><span class="ph-meta-k">TOTALS CALLED</span><b class="ph-mono">${sc.tot.h}/${sc.tot.n}</b></span>` : ""}
+        </div>`;
+      };
+      return `<div class="ph-strip-head"><span class="ph-kicker">Scorecard</span><span class="ph-strip-sub">how the reads landed · graded after the final out</span></div>
+        <div class="ph-score">${col("Today · finished games", today)}${col("Yesterday", yday)}</div>`;
+    }
+    // Once tonight's games are all over, what is next: tomorrow's games and
+    // when their reads post.
+    nextSlateHtml() {
+      const games = this.todayGames();
+      if (!games.length || games.some((g) => g.phase !== "final") || !SLATE_IS_TODAY) return "";
+      const date = PH.mlbDate(1);
+      if (!this._tmrwAt || Date.now() - this._tmrwAt > 600000) {
+        this._tmrwAt = Date.now();
+        PH.loadBoard(API_BASE, null, date).then((b) => {
+          this.setState({ tmrw: { date, games: [].concat(b.upcoming || [], b.live || [], b.final || []) } });
+        }).catch(() => {});
+      }
+      const t = this.state.tmrw;
+      if (!t || t.date !== date || !t.games.length) return "";
+      const label = new Date(`${date}T12:00:00Z`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: ET });
+      const list = t.games.slice().sort((a, b) => Date.parse(a.startTs || 0) - Date.parse(b.startTs || 0)).map((g) => `<div class="ph-nextrow">
+          <span class="ph-mono">${esc(this.clockOf(g.startTs) || "TBD")}</span>
+          <b>${esc(g.away)} @ ${esc(g.home)}</b>
+          <span class="ph-ellip ph-mut">${esc(this.startersLine(g))}</span>
+          <span class="ph-mono">${esc(this.gameWp(g).team)} ${esc(this.gameWp(g).val)}</span>
+        </div>`).join("");
+      return `<div class="ph-group">
+          <div class="ph-group-head"><span class="ph-kicker is-pre">NEXT UP · ${esc(label.toUpperCase())}</span>
+            <span class="ph-mono ph-group-n">${t.games.length} game${t.games.length === 1 ? "" : "s"}</span><span class="ph-rule"></span>
+            <span class="ph-group-hint">${esc(COPY.readsTiming)}</span></div>
+          <div class="ph-panel">${list}</div>
+        </div>`;
+    }
+
     // ── decision strip ───────────────────────────────────────────────────
     decisionStripHtml() {
       const live = this.effectiveMode() === "live";
+      // Every game over: there is nothing left to decide, and an empty
+      // "no pregame reads yet" box would read as data that never arrived.
+      if (!live && !this.todayGames().some((g) => g.phase !== "final")) return "";
       const cards = (live ? this.liveCards() : this.pregameCards()).filter(Boolean);
       const notFinal = this.todayGames().filter((g) => g.phase !== "final").length;
       const sub = live ? COPY.stripSubLive
@@ -1423,11 +2075,22 @@
           <span class="ph-strip-sub">${this.numHtml(sub)}</span>
         </div>${body}`;
     }
+    // What each decision card is, in a sentence, for its tooltip.
+    CARD_TIPS = {
+      "STRONGEST 1+ HIT": "The batter whose 1+ hit read sits furthest above the league rate for his spot in the order.",
+      "STRONGEST 1+ HR": "The batter whose 1+ home run read sits furthest above the league rate for his spot.",
+      "BIGGEST PREGAME FAVOURITE": "The largest pregame win probability on the slate.",
+      "HIGHEST PROJECTED TOTAL": "The game the model expects the most combined runs in.",
+      "BIGGEST SWING": "The live game whose win probability has moved furthest since first pitch.",
+      "TOP CALL NOW": "Across every live at-bat, the outcome the model leans toward most compared with the league rate.",
+      "DUE UP": "The strongest home-run read among the next three batters due up in a live game.",
+      "CLOSEST GAME": "The live game nearest a 50/50 coin flip.",
+    };
     phaseChip(kind, text) { return `<span class="ph-phase ph-phase--${kind}">${this.numHtml(text)}</span>`; }
     decisionCardHtml(c) {
-      const viz = c.spark ? `<span class="ph-card-spark">${this.missingHtml("needsroute")}<span class="ph-card-spark-note">win-prob sparkline</span></span>`
+      const viz = c.sparkG ? this.sparkHtml(c.sparkG, 26)
         : c.bar ? this.barHtml(c.bar.w, c.bar.tick, c.bar.cls) : "";
-      return `<button class="ph-card${c.live ? " is-live" : ""}" data-act="${c.act}" data-arg="${esc(c.arg)}">
+      return `<button class="ph-card${c.live ? " is-live" : ""}" data-act="${c.act}" data-arg="${esc(c.arg)}" title="${esc(this.CARD_TIPS[c.kicker.split(" · ")[0]] || "")}">
         <span class="ph-card-head">
           <span class="ph-kicker${c.live ? " is-live" : ""}">${esc(c.kicker)}</span>
           ${this.phaseChip(c.phaseKind, c.phase)}
@@ -1447,7 +2110,7 @@
           <span class="ph-card-why2">${c.why2}</span>
         </span>
         <span class="ph-card-foot">
-          <span class="ph-mono ph-card-fresh ${c.flash || ""}">${esc(c.fresh)}</span>
+          <span class="ph-mono ph-card-fresh ${c.flash || ""}"${c.clock ? ` data-clock data-clock-prefix="updated "` : ""}>${esc(c.fresh)}</span>
           <span class="ph-status ph-status--${c.statusKind || "solid"}">${this.numHtml(c.status)}</span>
         </span>
       </button>`;
@@ -1501,7 +2164,7 @@
         phase: "PREGAME", phaseKind: "pre",
         val: fav.w.val, lift: `+${Math.round((fav.w.prob - 0.5) * 100)} pts`, base: "vs 50%",
         bar: { w: fav.w.prob * 100, tick: 50, cls: "ph-band-bg-avg" },
-        why1: "pregame win prob · log5_v1",
+        why1: "pregame win probability · team strength + starters",
         why2: `starters ${esc(sps(fav.g))}`,
         fresh: fav.g.phase === "live" ? "frozen at first pitch" : "set by game-predict",
         status: fav.g.phase === "live" ? "LIVE NOW" : "PREGAME", statusKind: "solid",
@@ -1518,7 +2181,7 @@
         val: hi.t.proj.toFixed(1), lift: `${hi.t.pick} · ${this.pct(hi.t.prob)}`,
         base: avg == null ? "" : `slate avg ${avg.toFixed(1)}`,
         why1: "team run rates · park factor · starter profiles",
-        why2: `weather used in the model ${this.tagHtml("notserved")}`,
+        why2: "pregame weather and wind are in the model",
         fresh: "frozen at first pitch", status: "RUNS", statusKind: "solid",
         act: "openPill", arg: String(hi.g.gamePk),
       };
@@ -1535,7 +2198,7 @@
       const inn = (g) => `${g.half === "▼" ? "Bot" : "Top"} ${g.inning == null ? "—" : g.inning}`;
       const sit = (g) => `${inn(g)} · ${g.count || "—"} · ${g.outs == null ? "—" : g.outs} out`;
       const at = (g) => `${g.away} @ ${g.home} · ${g.score.away}–${g.score.home}`;
-      const liveCard = (o) => Object.assign({ live: true, phase: "● LIVE", phaseKind: "live", fresh: updated }, o);
+      const liveCard = (o) => Object.assign({ live: true, phase: "● LIVE", phaseKind: "live", fresh: updated, clock: true }, o);
 
       const wps = live.map((g) => ({ g, w: this.gameWp(g) })).filter((x) => x.w.prob != null);
       const sw = wps.slice().sort((a, b) => b.w.swing - a.w.swing)[0];
@@ -1543,20 +2206,20 @@
         kicker: "BIGGEST SWING", title: at(sw.g), sub: `${inn(sw.g)} · ${sw.w.team} win prob since first pitch`,
         val: sw.w.val, lift: sw.w.delta == null ? "" : `${sw.w.delta > 0 ? "+" : sw.w.delta < 0 ? "−" : "±"}${Math.abs(sw.w.delta)} pts`,
         liftBand: sw.w.delta > 0 ? "good" : "avg", base: sw.w.pre == null ? "" : `opened ${this.pct(sw.w.pre)}`,
-        spark: true, why1: "live − pregame win prob · mlb_winprob_v1", why2: "win-prob history needs a route",
+        sparkG: sw.g, why1: "live win probability minus where it opened", why2: "line: win probability after every at-bat",
         flash: this.flashIf("card:swing", `${sw.g.gamePk}:${sw.w.val}`),
-        status: "NEEDS ROUTE", statusKind: "route", act: "liveGo", arg: String(sw.g.gamePk),
+        status: "WIN PROB", statusKind: "solid", act: "liveGo", arg: String(sw.g.gamePk),
       });
 
       const tcs = live.map((g) => ({ g, c: this.topCallOf(g) })).filter((x) => x.c);
-      const tc = tcs.sort((a, b) => b.c.p - a.c.p)[0];
+      const tc = tcs.sort((a, b) => b.c.lift - a.c.lift)[0];
       const top = tc && liveCard({
         kicker: "TOP CALL NOW", title: `${this.outLabel(tc.c.k)} · ${tc.c.mkt}`,
         sub: `${tc.g.away} @ ${tc.g.home} · ${this.shortName(tc.g.batter.name)} vs ${this.shortName(tc.g.pitcher.name)}`,
-        val: this.pct(tc.c.p), valCls: "ph-band-good",
-        lift: `${tc.c.p >= tc.c.lg ? "+" : "−"}${Math.abs(Math.round((tc.c.p - tc.c.lg) * 100))} pts`,
-        liftBand: tc.c.p >= tc.c.lg ? "good" : "avg", base: `league ${this.pct(tc.c.lg)}`,
-        bar: { w: tc.c.p * 100, tick: tc.c.lg * 100, cls: "ph-band-bg-good" },
+        val: this.pct(tc.c.p), valCls: `ph-band-${tc.c.band}`,
+        lift: `${tc.c.lift >= 0 ? "+" : "−"}${Math.abs(Math.round(tc.c.lift * 100))} pts`,
+        liftBand: tc.c.band, base: `league ${this.pct(tc.c.lg)}`,
+        bar: { w: tc.c.p * 100, tick: tc.c.lg * 100, cls: `ph-band-bg-${tc.c.band}` },
         why1: esc(sit(tc.g)), why2: `game at-bat calls ${esc(this.gameAbRecord(tc.g.gamePk))}`,
         flash: this.flashIf("card:top", `${tc.g.gamePk}:${tc.c.k}:${tc.c.p}`),
         status: "LIVE CALL", statusKind: "solid", act: "liveGo", arg: String(tc.g.gamePk),
@@ -1566,8 +2229,8 @@
       const dueCard = due && Object.assign(this.batterCard(
         `DUE UP · ${due.k === 1 ? "ON DECK" : due.k === 2 ? "IN THE HOLE" : "3RD UP"}`, due.b, "hr"), {
         sub: `${this.teamOf(due.b)} #${due.b.slot} · 1+ HR · vs ${due.b.spName || "TBD"} · ${due.g.away} @ ${due.g.home}`,
-        why2: "who bats next: derived from lineup slot + current batter",
-        status: "DERIVED", statusKind: "dashed",
+        why2: "who bats next, worked out from the batting order",
+        status: "FROM ORDER", statusKind: "dashed",
       });
 
       const cl = wps.slice().sort((a, b) => a.w.prob - b.w.prob)[0];
@@ -1637,7 +2300,7 @@
               <button class="ph-chev" ${toggle} aria-expanded="${open}">${open ? "▾" : "▸"}</button>
             </div>
             <div class="ph-gpill-m2">
-              ${this.basesHtml(true)}
+              ${this.basesHtml(g, true)}
               <span class="ph-mono">${esc(sit)}</span>
               <span class="ph-mono ph-ellip ph-gpill-mvenue">${esc(sub)}</span>
             </div>
@@ -1663,7 +2326,7 @@
             <span>${esc(scoreSub)}</span>
           </span>
           <span class="ph-gpill-sit">
-            ${this.basesHtml(false)}
+            ${this.basesHtml(g, false)}
             <span class="ph-mono"><b>${esc(live ? g.count || "—" : "—")}</b><span>${esc(live && g.outs != null ? `${g.outs} out` : "—")}</span></span>
           </span>
           <span class="ph-gpill-cell">
@@ -1676,7 +2339,7 @@
           </span>
           <span class="ph-gpill-cell">
             <span class="ph-gpill-line"><b>${this.numHtml(t.pick)}</b><span class="ph-mono ph-gpill-num is-dim">${this.pct(t.prob)}</span></span>
-            <span class="ph-cap">TOTAL · PREGAME${t.proj == null ? "" : ` · <span class="ph-mono">${t.proj.toFixed(1)}</span> R`}</span>
+            <span class="ph-cap" title="Pregame total pick and projected runs">TOTAL${t.proj == null ? "" : ` · <span class="ph-mono">${t.proj.toFixed(1)}</span> R PROJ`}</span>
           </span>
           <span class="ph-gpill-cell">
             ${sr ? `<span class="ph-gpill-line">
@@ -1726,18 +2389,25 @@
       const weather = ok && c.weather_condition
         ? `${c.weather_condition}${c.temp_f == null ? "" : ` · ${c.temp_f}°F`}` : null;
       const wind = ok && c.wind_mph != null ? `${c.wind_mph} mph ${c.wind_direction || ""}`.trim() : null;
+      // MLB's pregame reading before a game is final, the boxscore after.
+      const wxKey = c.source === "schedule" ? "WEATHER · FORECAST" : "WEATHER";
+      const roof = ok && c.roof_closed != null ? (c.roof_closed ? "Closed" : "Open") : null;
+      // A factor of 1.00 is a league-average park for home runs; shown as
+      // the percentage it moves HR rate, for the season it was measured.
+      const pf = c.park_hr_factor != null
+        ? `${c.park_hr_factor >= 1 ? "+" : "−"}${Math.abs(Math.round((c.park_hr_factor - 1) * 100))}% HR${c.park_hr_factor_season ? ` · ${c.park_hr_factor_season}` : ""}` : null;
       const start = this.clockOf(g.startTs);
       const sps = g.probables.away || g.probables.home
         ? `${this.lastName(g.probables.away)} · ${this.lastName(g.probables.home)}` : null;
       return `<div class="ph-meta-grid">
         ${cell("STADIUM", (ok && c.venue_name) || g.venue || null)}
-        ${cell("ROOF", null)}
-        ${cell("FIRST PITCH", start ? `${start} ET` : null)}
+        ${cell("ROOF", roof)}
+        ${cell("FIRST PITCH", start ? `${start} ${this.tzLabel()}` : null)}
         ${cell("PROBABLE STARTERS", sps)}
-        ${cell("WEATHER", weather)}
+        ${cell(wxKey, weather)}
         ${cell("WIND", wind)}
         ${cell("HP UMPIRE", ok && c.hp_umpire ? c.hp_umpire : null)}
-        ${cell("PARK HR FACTOR", null)}
+        ${cell("PARK HR FACTOR", pf)}
       </div>`;
     }
     // ── base-model cells ──────────────────────────────────────────────────
@@ -1768,6 +2438,11 @@
       if (!list || playerId == null) return null;
       return list.find((x) => String(x.player_id) === String(playerId)) || null;
     }
+    // Settled reads carry what happened: hits (or HRs) and plate appearances.
+    resultLine(rec, m) {
+      if (!rec || rec.actual_count == null || rec.plate_appearances == null) return "";
+      return m === "hr" ? `${rec.actual_count} HR in ${rec.plate_appearances} PA` : `${rec.actual_count}-for-${rec.plate_appearances}`;
+    }
     resultChipHtml(r, g) {
       // `result` absent from the row means the route predates the field;
       // null is pending (never a miss); void is a DNP, excluded from grading.
@@ -1789,12 +2464,19 @@
       rows = srt === "order"
         ? rows.slice().sort((a, b) => (a.slot || 99) - (b.slot || 99))
         : rows.slice().sort((a, b) => maxRel(b) - maxRel(a));
+      const ps = this.projStatus();
+      if (ps !== "ok") {
+        return `<div class="ph-note" role="status">${esc(ps === "error" ? COPY.predLoadError : COPY.predLoading)}</div>`;
+      }
       const pendNote = pending ? `<div class="ph-pending">
           <span class="ph-pending-chip">Lineup pending</span>
           <span>${this.numHtml((rows.length ? COPY.lineupPending : COPY.noProjections).replace("{team}", team))}</span>
         </div>` : "";
       if (!rows.length) return pendNote;
-      const res = (b, m) => this.resultChipHtml(b[m] ? b[m].result : null, g);
+      const res = (b, m) => {
+        const line = this.resultLine(b[m], m);
+        return `<span title="${esc(line)}">${this.resultChipHtml(b[m] ? b[m].result : null, g)}</span>`;
+      };
       const upd = rows.reduce((a, b) => (b.updatedAt && (!a || b.updatedAt > a) ? b.updatedAt : a), null);
       const fresh = g.phase === "pregame"
         ? `PREGAME · updated ${this.clockOf(upd) || "—"} · re-scores until ${pending ? "the lineup locks" : "first pitch"}`
@@ -1816,16 +2498,16 @@
           more: [
             this.mPairHtml("H+R+RBI 1+", this.baseBatterCellHtml(b.hrr, "hrr")),
             this.mPairHtml("TB 1.5+", this.baseBatterCellHtml(b.tb15, "tb")),
-            this.mPairHtml("30D H · HR /PA", this.missingHtml("notserved")),
+            this.mPairHtml("30D H · HR /PA", this.formCellHtml(b.form)),
             this.mPairHtml("H2H", `<span class="ph-mono ph-dim">${h2hTxt(b)}</span>`),
-            this.mPairHtml("TODAY", this.missingHtml("notserved")),
+            g.phase === "final" ? this.mPairHtml("RESULT", `<span class="ph-mono ph-small">${esc(this.resultLine(b.hit, "hit") || "—")}</span>`) : "",
           ].join(""),
         })).join("");
         return `${pendNote}<div class="ph-mlist">${cards}
           <div class="ph-btable-foot"><span>${this.numHtml(fresh)}</span><span>${esc(COPY.tickLegend)}</span></div>
         </div>`;
       }
-      const hd = ["", "#", "BATTER · VS STARTER", "1+ HIT", "1+ HR", "H+R+RBI 1+", "TB 1.5+", "30D H · HR /PA", "H2H", "TODAY", "RESULT"];
+      const hd = ["", "#", "BATTER · VS STARTER", "1+ HIT", "1+ HR", "H+R+RBI 1+", "TB 1.5+", "30D H · HR /PA", "H2H", "RESULT"];
       return `${pendNote}<div class="ph-btable">
         <div class="ph-btable-row ph-btable-head">${hd.map((h) => `<span>${h}</span>`).join("")}</div>
         ${rows.map((b) => {
@@ -1837,9 +2519,8 @@
             ${this.probCellHtml(b, "hit")}
             ${this.probCellHtml(b, "hr")}
             ${this.baseBatterCellHtml(b.hrr, "hrr")}${this.baseBatterCellHtml(b.tb15, "tb")}
-            ${this.missingHtml("notserved")}
+            ${this.formCellHtml(b.form)}
             <span class="ph-mono ph-dim">${h2h}</span>
-            ${this.missingHtml("notserved")}
             ${resHtml(b)}
           </div>`;
         }).join("")}
@@ -1871,7 +2552,12 @@
       return this.STARTER_MARKETS.map(([m]) => [PROP_LABEL[m], this.propCellHtml(props[m])]).concat([
         ["30D K%", `<span class="ph-mono">${this.pct(s.k)}</span>`],
         ["WHIFF", `<span class="ph-mono">${this.pct(s.whiff)}</span>`],
-        ["HR/PA", this.missingHtml("notserved")],
+        ["HR/PA", (() => {
+          const f = Object.values(props).map((r) => r && r.form_30d).find(Boolean);
+          return f && f.hr_rate != null
+            ? `<span class="ph-mono" title="${esc(`home runs allowed per PA, last 30 days (${f.pa} PA)`)}">${this.pct1(f.hr_rate)}</span>`
+            : this.missingHtml("fewpa");
+        })()],
         ["FB VELO", `<span class="ph-mono">${s.velo == null ? "—" : s.velo.toFixed(1)}</span>`],
         ["FATIGUE", `<span class="ph-mono ph-dim">${s.fat == null ? "—" : `${this.signed(s.fat)} mph`}</span>`],
       ]);
@@ -1881,13 +2567,13 @@
     }
     // Phone: a starter as a card — strikeouts and outs up front, the rest of
     // the props and form behind the chevron.
-    starterCardHtml(key, nameHtml, id, pk, extra) {
+    starterCardHtml(key, nameHtml, id, pk, extra, moreExtra) {
       const pairs = this.starterStatPairs(id, pk);
       return this.mCardHtml({
         key,
         head: `${nameHtml}${extra || ""}`,
         stats: pairs.slice(0, 2).map(([k, v]) => this.mPairHtml(k, v)).join(""),
-        more: pairs.slice(2).map(([k, v]) => this.mPairHtml(k, v)).join(""),
+        more: pairs.slice(2).map(([k, v]) => this.mPairHtml(k, v)).join("") + (moreExtra || ""),
       });
     }
     pillStartersTableHtml(g) {
@@ -1968,7 +2654,7 @@
 
     // ── small shared pieces ──────────────────────────────────────────────
     shortName(n) {
-      const parts = String(n || "").trim().split(/\s+/);
+      const parts = String(n || "").trim().split(/\s+/).filter(Boolean);
       if (parts.length < 2) return n || "—";
       return `${parts[0][0]}. ${parts.slice(1).join(" ")}`;
     }
@@ -2000,7 +2686,7 @@
     clockOf(ts) {
       const t = Date.parse(ts || "");
       return isFinite(t)
-        ? new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: ET })
+        ? new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: this.tz() })
         : null;
     }
     untilText(ts) {
@@ -2026,20 +2712,32 @@
       } else {
         text = this.clockOf(g.startTs) || "TBD"; fg = C.blue; bg = "#16294a";
       }
-      return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:${mobile ? 9.5 : 10}px;font-weight:800;letter-spacing:.05em;padding:${mobile ? "2px 6px" : "3px 7px"};border-radius:${mobile ? 5 : 6}px;justify-self:start;white-space:nowrap;color:${fg};background:${bg};">${this.numHtml(text)}</span>`;
+      return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;letter-spacing:.05em;padding:${mobile ? "2px 6px" : "3px 7px"};border-radius:${mobile ? 5 : 6}px;justify-self:start;white-space:nowrap;color:${fg};background:${bg};">${this.numHtml(text)}</span>`;
     }
 
-    // The bases diamond. Every base renders empty, and says why: /live carries
-    // no runners (pitchhawk-data.js hard-codes all three false), so a filled
-    // base would be an invention and an unmarked empty one a false claim.
-    basesHtml(mobile) {
+    // The bases diamond, for a game in progress only — a game not yet started
+    // or already over has nobody on base to draw. Runners come from live-poll
+    // (situation.bases); a state stored before that field existed has
+    // `runners` null, and then the diamond is drawn faint and says so rather
+    // than claiming the bases are clear.
+    basesHtml(g, mobile) {
+      if (!g || g.phase !== "live") return mobile ? "" : `<span class="ph-bases-none"></span>`;
       const C = this.C;
+      const r = g.runners;
       const box = mobile ? { w: 28, h: 21, s: 9, o: 10, l: 18, m: 9 } : { w: 32, h: 24, s: 10, o: 11, l: 21, m: 11 };
-      const base = (top, left) =>
-        `<span style="position:absolute;top:${top}px;left:${left}px;width:${box.s}px;height:${box.s}px;transform:rotate(45deg);border:1px solid ${C.bd2};border-radius:2px;background:transparent;"></span>`;
-      return `<span title="${esc(COPY.runnersNote)}" style="position:relative;width:${box.w}px;height:${box.h}px;flex:none;display:block;">
-        ${base(0, box.m)}${base(box.o, mobile ? 0 : 1)}${base(box.o, box.l)}
+      const base = (top, left, on) =>
+        `<span style="position:absolute;top:${top}px;left:${left}px;width:${box.s}px;height:${box.s}px;transform:rotate(45deg);border:1px solid ${on ? C.amb : C.bd2};border-radius:2px;background:${on ? C.amb : "transparent"};"></span>`;
+      const tip = r ? this.basesText(r) : COPY.runnersNote;
+      return `<span title="${esc(tip)}" aria-label="${esc(tip)}" role="img" style="position:relative;width:${box.w}px;height:${box.h}px;flex:none;display:block;${r ? "" : "opacity:.45;"}">
+        ${base(0, box.m, r && r.second)}${base(box.o, mobile ? 0 : 1, r && r.third)}${base(box.o, box.l, r && r.first)}
       </span>`;
+    }
+    basesText(r) {
+      if (!r) return null;
+      const on = [["first", "1st"], ["second", "2nd"], ["third", "3rd"]].filter(([k]) => r[k]).map(([, l]) => l);
+      if (!on.length) return "bases empty";
+      if (on.length === 3) return "bases loaded";
+      return `runner${on.length > 1 ? "s" : ""} on ${on.join(" & ")}`;
     }
 
     totPickOf(mkt) {
@@ -2488,7 +3186,6 @@
       if (!n) return "—";
       return `${c}/${n} · ${Math.round((c / n) * 100)}%`;
     }
-    accBand(r) { return r == null ? null : r >= 0.66 ? "good" : r >= 0.5 ? "amber" : "bad"; }
     outLabel(k) { return k == null ? null : (PH.OUTCOME_LABEL[k] || k); }
     signed(v, d) {
       if (v == null) return "—";
@@ -2521,6 +3218,7 @@
             ${this.liveHeroHtml(sel.g, sel.top, live.length)}
             ${this.railPlateHtml(sel.g)}
             ${this.pitchLogHtml(sel.g)}
+            ${this.earlierAbsHtml(sel.g)}
             ${this.railPitchingHtml(sel.g)}
             ${this.railGameHtml(sel.g)}
           </div>
@@ -2531,6 +3229,7 @@
           <div class="ph-live-main">
             ${this.liveHeroHtml(sel.g, sel.top, live.length)}
             ${this.pitchLogHtml(sel.g)}
+            ${this.earlierAbsHtml(sel.g)}
           </div>
           <div class="ph-live-rail">
             ${this.railPlateHtml(sel.g)}
@@ -2554,7 +3253,7 @@
       let best = null;
       live.forEach((g) => {
         const c = this.topCallOf(g);
-        if (c && (!best || c.p > best.p)) best = { g, p: c.p };
+        if (c && (!best || c.lift > best.lift)) best = { g, lift: c.lift };
       });
       return { g: best ? best.g : live[0], top: true };
     }
@@ -2589,9 +3288,17 @@
           <span class="ph-hero-note">${esc(COPY.heroNoCallInGame)}</span></div>`;
       }
       const top = d.rows[0];
+      // The headline is the most likely outcome; its colour says whether that
+      // is a lean over league or just the league's usual answer. The biggest
+      // lean is named separately when it is a different outcome.
+      const band = top.lg == null ? "avg" : this.leanBand(top.p - top.lg);
+      const lean = d.rows.filter((r) => r.lg != null).sort((a, b) => (b.p - b.lg) - (a.p - a.lg))[0];
+      const leanTxt = lean && lean.k !== top.k && lean.p - lean.lg >= 0.02
+        ? `<span class="ph-hero-note">biggest lean: <b>${esc(this.outLabel(lean.k))}</b> <span class="ph-mono">+${Math.round((lean.p - lean.lg) * 100)} pts</span> vs league</span>` : "";
       return `<div class="ph-dist">
         <span class="ph-hero-k">${esc(title)}</span>
-        <span class="ph-dist-call"><b>${esc(this.outLabel(top.k))}</b><span class="ph-mono">${this.pct(top.p)}</span></span>
+        <span class="ph-dist-call ph-dist-call--${band}" title="most likely outcome · ${band === "good" ? "above" : band === "low" ? "below" : "about"} the league rate"><b>${esc(this.outLabel(top.k))}</b><span class="ph-mono">${this.pct(top.p)}</span></span>
+        ${leanTxt}
         ${d.rows.map((r) => `<div class="ph-dist-row">
             <span>${esc(this.outLabel(r.k))}</span>
             <span class="ph-dist-track"><span class="ph-dist-fill${r.rec ? " is-rec" : ""}" style="width:${(r.p * 100).toFixed(1)}%"></span></span>
@@ -2611,13 +3318,15 @@
       return m ? this.gameStats(m.abs) : null;
     }
     liveHeroHtml(g, top, nLive) {
-      const sit = `${g.away} ${g.score.away} @ ${g.home} ${g.score.home} · ${g.half}${g.inning == null ? "—" : g.inning} · ${g.count || "—"} · ${g.outs == null ? "—" : g.outs} out · bases —`;
+      const sit = [`${g.away} ${g.score.away} @ ${g.home} ${g.score.home}`, `${g.half}${g.inning == null ? "—" : g.inning}`,
+        g.count || "—", `${g.outs == null ? "—" : g.outs} out`, this.basesText(g.runners)].filter(Boolean).join(" · ");
       const side = g.half === "▲" ? "away" : "home";
       const b = this.battersOf(g.gamePk).find((x) => g.batter && x.id === String(g.batter.id));
       const bMeta = [g.batter.hand ? `(${g.batter.hand})` : null, side === "home" ? g.home : g.away, b && b.slot ? `#${b.slot}` : null].filter(Boolean).join(" · ");
       const spd = g.m && g.m.pitch_speed_ou, abp = g.m && g.m.ab_pitches_ou;
       const st = this.gameCallStats(g);
-      const tone = (c, n) => (n ? `ph-tone-${this.accBand(c / n)}` : "");
+      // Toned against each market's naive baseline (see skillBand).
+      const tone = (c, n, base) => { const b = this.skillBand(c, n, base); return b ? `ph-tone-${b}` : ""; };
       const tile = (v, s, l, cls) => `<div class="ph-hero-tile">
           <span class="ph-mono ph-hero-tile-v ${cls || ""}">${v}</span>
           <span class="ph-mono ph-hero-tile-s">${s}</span>
@@ -2627,24 +3336,24 @@
       return `<div class="ph-hero">
         <div class="ph-hero-head">
           <span class="ph-hero-badge"><span class="ph-dot is-live ph-dot-sm"></span>${top ? "TOP CALL NOW · ALL GAMES" : "SELECTED GAME"}</span>
-          <span class="ph-mono ph-hero-sit">${esc(sit)} ${this.tagHtml("notserved")}</span>
-          <span class="ph-mono ph-hero-upd">updated <span class="${this.flashIf(`live:${g.gamePk}`, g.lastPitch)}">${esc(upd || "—")}</span></span>
+          <span class="ph-mono ph-hero-sit">${esc(sit)}</span>
+          <span class="ph-mono ph-hero-upd">updated <span class="${this.flashIf(`live:${g.gamePk}`, g.lastPitch)}" data-clock>${esc(upd || "—")}</span></span>
         </div>
         <div class="ph-hero-who">
           <b class="ph-hero-bat">${esc(g.batter.name)}</b><span class="ph-mono">${this.numHtml(bMeta)}</span>
           <span class="ph-hero-vs">vs</span>
           <b class="ph-hero-pit">${esc(g.pitcher.name)}</b><span class="ph-mono">${g.pitcher.hand ? `(${esc(g.pitcher.hand)})` : ""}</span>
-          <span class="ph-hero-note">${top ? this.numHtml(`highest call of ${nLive} live at-bat${nLive === 1 ? "" : "s"}`) : "the open at-bat in this game"}</span>
+          <span class="ph-hero-note">${top ? this.numHtml(`strongest lean over league of ${nLive} live at-bat${nLive === 1 ? "" : "s"}`) : "the open at-bat in this game"}</span>
         </div>
         <div class="ph-hero-dists">
           ${this.distHtml("NEXT PITCH", this.distRows(g.m && g.m.pitch_result && g.m.pitch_result.probs, this.LEAGUE_PITCH))}
           ${this.distHtml("HOW THIS AT-BAT ENDS", this.distRows(g.m && g.m.ab_result && g.m.ab_result.probs, this.LEAGUE_AB))}
         </div>
         <div class="ph-hero-tiles">
-          ${tile(spd && spd.predictedValue != null ? `${Number(spd.predictedValue).toFixed(1)} mph` : "—", esc(this.ouLine(spd)), "VELO CALL · NEXT PITCH")}
+          ${tile(spd && spd.predictedValue != null ? `${Number(spd.predictedValue).toFixed(1)} mph` : "—", esc(`${this.ouLine(spd)} · typical miss ±${this.SPEED_SIGMA}`), "VELO CALL · NEXT PITCH")}
           ${tile(abp && abp.predictedValue != null ? Number(abp.predictedValue).toFixed(1) : "—", esc(this.ouLine(abp)), "PITCHES IN THIS AT-BAT")}
-          ${tile(st ? esc(this.ratioPct(st.abC, st.abN)) : "—", "graded at-bats", "AT-BAT CALLS THIS GAME", st && tone(st.abC, st.abN))}
-          ${tile(st ? esc(this.ratioPct(st.pC, st.pN)) : "—", `velo MAE ${st && st.mae != null ? `${st.mae.toFixed(1)} mph` : "—"}`, "PITCH CALLS THIS GAME", st && tone(st.pC, st.pN))}
+          ${tile(st ? esc(this.ratioPct(st.abC, st.abN)) : "—", `graded at-bats · naive ${this.pct(Math.max(...Object.values(this.LEAGUE_AB)))}`, "AT-BAT CALLS THIS GAME", st && tone(st.abC, st.abN, Math.max(...Object.values(this.LEAGUE_AB))))}
+          ${tile(st ? esc(this.ratioPct(st.pC, st.pN)) : "—", `naive ${this.pct(Math.max(...Object.values(this.LEAGUE_PITCH)))} · velo miss ${st && st.mae != null ? `${st.mae.toFixed(1)} mph` : "—"}`, "PITCH CALLS THIS GAME", st && tone(st.pC, st.pN, Math.max(...Object.values(this.LEAGUE_PITCH))))}
         </div>
       </div>`;
     }
@@ -2711,7 +3420,7 @@
           ${grade}
         </div>`;
       }).join("");
-      const sum = `pitch ${this.ratioPct(log.called, log.graded)} · MAE ${log.mae == null ? "—" : log.mae.toFixed(1)} · pending calls never count as misses`;
+      const sum = `pitch ${this.ratioPct(log.called, log.graded)} · velo miss ${log.mae == null ? "—" : log.mae.toFixed(1)} mph · pending calls never count as misses`;
       return `<div class="ph-panel">
         <div class="ph-panel-head">
           <span class="ph-kicker">Pitch-by-pitch · this at-bat</span>
@@ -2719,6 +3428,45 @@
         </div>
         ${this.mob() ? "" : `<div class="ph-plog-row ph-btable-head"><span>#</span><span>COUNT</span><span>TYPE</span><span>VELO CALLED → ACTUAL</span><span>Δ</span><span>CALL</span><span>RESULT</span><span>GRADE</span></div>`}
         ${body}
+      </div>`;
+    }
+
+    // ── earlier at-bats ──────────────────────────────────────────────────
+    // Every at-bat already played in this game, newest first: the call the
+    // model made on how it would end, what happened, and the pitch count.
+    // Built from the game's prediction rows (loadDayRows), which the tab has
+    // been fetching all along for its accuracy tiles.
+    earlierAbsHtml(g) {
+      const m = this.models().find((x) => String(x.pk) === String(g.gamePk));
+      const dr = this.dayState(PH.mlbDate(0));
+      if (!m) {
+        return `<div class="ph-panel"><div class="ph-panel-head"><span class="ph-kicker">Earlier at-bats · this game</span></div>
+          <div class="ph-note">${esc(dr.pending ? "Loading this game's at-bats…" : "No earlier at-bats recorded for this game yet.")}</div></div>`;
+      }
+      const done = m.abs.filter((ab) => ab.actual != null).slice().reverse();
+      if (!done.length) return "";
+      const key = `abs:${g.gamePk}`;
+      const all = !!this.state.mOpen[key];
+      const shown = all ? done : done.slice(0, 8);
+      const rows = shown.map((ab) => {
+        const grade = ab.ok === true ? `<span class="ph-res ph-res--good">✓</span>` : ab.ok === false ? `<span class="ph-res ph-res--bad">✗</span>` : `<span class="ph-missing-dash">—</span>`;
+        return `<div class="ph-abrow">
+          <span class="ph-mono ph-dim">${esc(ab.inn)}</span>
+          <span class="ph-ellip"><b>${esc(this.shortName(ab.batter))}</b> <span class="ph-mut">vs ${esc(this.lastName(ab.pitcher))}</span></span>
+          <span class="ph-ellip">called <b>${esc(this.outLabel(ab.predLabel) || "—")}</b> <span class="ph-mono ph-dim">${this.pct(ab.predProb)}</span></span>
+          <span class="ph-ellip">${esc(this.outLabel(ab.actual) || "—")}</span>
+          <span class="ph-mono ph-dim">${ab.actPitches} p</span>
+          ${grade}
+        </div>`;
+      }).join("");
+      const st = this.gameStats(m.abs);
+      return `<div class="ph-panel">
+        <div class="ph-panel-head">
+          <span class="ph-kicker">Earlier at-bats · this game</span>
+          <span class="ph-mono ph-panel-note">${esc(`at-bat calls ${this.ratioPct(st.abC, st.abN)}`)}</span>
+        </div>
+        ${rows}
+        ${done.length > 8 ? `<button class="ph-more" data-act="mToggle" data-arg="${esc(key)}">${all ? "Show the last 8" : `Show all <span class="ph-mono">${done.length}</span> ▾`}</button>` : ""}
       </div>`;
     }
 
@@ -2748,7 +3496,12 @@
               ? `<span class="ph-nm ph-nm--solid"><span class="ph-meta-k">REST OF GAME · 1+ HIT / HR</span><b class="ph-mono">${this.pct(e.hit)} / ${this.pct(e.hr)}</b><span class="ph-base-top">${this.baseTagHtml()}<span class="ph-mono ph-base-sub">${Number(e.remaining_pa).toFixed(1)} PA left</span></span></span>`
               : `<span class="ph-nm"><span class="ph-meta-k">REST OF GAME · 1+ HIT / HR</span><b class="ph-mono ph-mut">— / —</b></span>`;
           })()}
-          <span class="ph-nm"><span class="ph-meta-k">TODAY SO FAR · H / HR / PA</span><b class="ph-mono ph-mut">—</b>${this.tagHtml("notserved")}</span>
+          ${(() => {
+            const t = g.batterToday;
+            return t
+              ? `<span class="ph-nm ph-nm--solid"><span class="ph-meta-k">TODAY SO FAR · H / HR / PA</span><b class="ph-mono">${t.h} / ${t.hr} / ${t.pa}</b><span class="ph-mono ph-base-sub">${t.bb} BB · ${t.k} K</span></span>`
+              : `<span class="ph-nm"><span class="ph-meta-k">TODAY SO FAR · H / HR / PA</span><b class="ph-mono ph-mut">—</b></span>`;
+          })()}
         </div>
       </div>`;
     }
@@ -2769,7 +3522,7 @@
         <div class="ph-rail-5">${props}</div>
         <span class="ph-rail-note">${sp ? this.baseTagHtml() : ""} ${esc(sp ? COPY.railPropsNote : COPY.railPropsNone)}</span>
         <div class="ph-rail-3">
-          <span class="ph-meta"><span class="ph-meta-k">PITCH COUNT</span>${this.missingHtml("notserved")}</span>
+          <span class="ph-meta"><span class="ph-meta-k">PITCH COUNT</span>${g.pitchCountGame == null ? this.missingHtml("notserved") : `<b class="ph-mono">${g.pitchCountGame}</b>`}</span>
           <span class="ph-meta"><span class="ph-meta-k">30D K%</span><b class="ph-mono">${this.pct(s.k)}</b></span>
           <span class="ph-meta"><span class="ph-meta-k">WHIFF · FB VELO</span><b class="ph-mono">${this.pct(s.whiff)} · ${s.velo == null ? "—" : s.velo.toFixed(1)}</b></span>
         </div>
@@ -2787,7 +3540,7 @@
           <b>${esc(w.team)}</b><b class="ph-mono ph-rail-wp-v">${esc(w.val)}</b>${this.deltaHtml(w.delta)}
           <span class="ph-mono ph-mut ph-rail-wp-open">opened ${this.pct(w.pre)}</span>
         </div>
-        <div class="ph-card-spark">${this.missingHtml("needsroute")}<span class="ph-card-spark-note">per-pitch win-prob history</span></div>
+        ${this.sparkHtml(g, 40)}
         <div class="ph-rail-tot">
           <span class="ph-meta-k">TOTAL · PREGAME</span><b>${this.numHtml(t.pick)}</b>
           <span class="ph-mono ph-dim">${this.pct(t.prob)}${t.proj == null ? "" : ` · ${t.proj.toFixed(1)} R`}</span>
@@ -2805,7 +3558,7 @@
         const tc = this.topCallOf(x);
         const st = this.gameCallStats(x);
         const r = st && st.abN ? st.abC / st.abN : null;
-        const band = this.accBand(r);
+        const band = st ? this.skillBand(st.abC, st.abN, Math.max(...Object.values(this.LEAGUE_AB))) : null;
         return `<button class="ph-olive" data-act="liveSel" data-arg="${esc(String(x.gamePk))}">
           <span class="ph-olive-top">
             <span class="ph-phase ph-phase--live">● ${this.numHtml(`${this.halfWord(x.half)} ${x.inning == null ? "" : x.inning}`)}</span>
@@ -2834,13 +3587,21 @@
     }
 
     liveEmptyHtml() {
-      const next = this.todayGames().filter((g) => g.phase === "pregame")
-        .sort((a, b) => Date.parse(a.startTs || 0) - Date.parse(b.startTs || 0))[0];
+      const up = this.todayGames().filter((g) => g.phase === "pregame")
+        .sort((a, b) => Date.parse(a.startTs || 0) - Date.parse(b.startTs || 0));
+      // Nothing live: what is coming and when, each a way into its pregame
+      // reads, rather than a single line and a dead end.
+      const list = up.map((g) => `<button class="ph-nextrow ph-nextrow--btn" data-act="openGame" data-arg="${esc(String(g.gamePk))}">
+          <span class="ph-mono">${esc(this.clockOf(g.startTs) || "TBD")}</span>
+          <b>${esc(g.away)} @ ${esc(g.home)}</b>
+          <span class="ph-ellip ph-mut">${esc(this.startersLine(g))}</span>
+          <span class="ph-mono ph-mut">${esc(this.untilText(g.startTs) || "")}</span>
+        </button>`).join("");
       return `<div class="ph-panel ph-live-empty">
         <span class="ph-kicker ph-kicker--mut">Top call now · all games</span>
         <b>${esc(COPY.liveNothingTitle)}</b>
         <span>${esc(COPY.liveNothingBody)}</span>
-        ${next ? `<span class="ph-mut">${this.numHtml(`Next first pitch: ${next.away} @ ${next.home} · ${this.clockOf(next.startTs) || "TBD"} ET`)}</span>` : ""}
+        ${up.length ? `<div class="ph-live-up"><span class="ph-kicker ph-kicker--mut">Coming up · ${esc(this.tzLabel())}</span>${list}</div>` : ""}
       </div>`;
     }
 
@@ -2877,6 +3638,10 @@
       ["pitch_result", "Pitch", "Next pitch", "PITCH"],
     ];
     D_DEFAULTS = { dTf: 30, dMk: "all", dTeam: "", dPark: "", dHand: "any", dSide: "any", dFeedN: 40 };
+    // "Season": the widest window the graded routes serve. Pitch and at-bat
+    // reads only reach back 35 days (the predictions hot window); batter and
+    // game reads go back to when grading began.
+    D_SEASON = 120;
     D_PAGE = 40;
     // Home parks, for the "Stadium · TEAM · City, ST" label. The venue name
     // always comes from the data; a city is only attached when that name is
@@ -2922,10 +3687,11 @@
         ? `${this.dKpiTilesHtml(sum)}
            ${this.calibrationChartHtml(sum)}
            ${this.dailyGapChartHtml(sum)}
+           ${this.accuracyTrendHtml()}
            ${this.byMarketTableHtml(sum)}
            ${this.byTeamGridHtml(sum)}
            ${this.splitsHtml(sum)}`
-        : this.dEmptyHtml();
+        : this.dEmptyHtml() + this.accuracyTrendHtml();
       if (this.mob()) {
         const feed = s.mOpen["d:view"] === "feed";
         return `${head}
@@ -2945,7 +3711,10 @@
       const to = PH.mlbDate(0);
       return { from: tf === "today" ? to : PH.mlbDate(-(Number(tf) - 1)), to };
     }
-    dTfName() { return this.state.dTf === "today" ? "Today" : `Last ${this.state.dTf} days`; }
+    dTfName() {
+      const tf = this.state.dTf;
+      return tf === "today" ? "Today" : tf === this.D_SEASON ? "Season" : `Last ${tf} days`;
+    }
     dMarketName(k, i) { const m = this.D_MARKETS.find((x) => x[0] === k); return m ? m[i || 1] : k; }
     dQuery() {
       const s = this.state, w = this.dWindow();
@@ -3002,8 +3771,10 @@
     }
     async loadGradedSummary() {
       const sig = this.dQuery().toString();
-      if (this._gsumSig === sig) return;
+      const retry = this.state.gsum.err && Date.now() >= (this._gsumRetryAt || 0);
+      if (this._gsumSig === sig && !retry) return;
       this._gsumSig = sig;
+      this._gsumRetryAt = Date.now() + this.D_RETRY_MS;
       const res = await this.dFetch(`/graded/summary?${sig}`);
       if (this._gsumSig !== sig) return;   // a newer scenario was asked for
       let next;
@@ -3018,9 +3789,11 @@
     async loadGraded(more) {
       const g = this.state.graded;
       const sig = this.dQuery().toString();
-      if (!more && this._gradedSig === sig) return;
+      const retry = g.err && Date.now() >= (this._gradedRetryAt || 0);
+      if (!more && this._gradedSig === sig && !retry) return;
       if (more && (g.next == null || this._gradedMore)) return;
       this._gradedSig = sig;
+      this._gradedRetryAt = Date.now() + this.D_RETRY_MS;
       this._gradedMore = !!more;
       const cursor = more ? g.next : 0;
       const res = await this.dFetch(`/graded?${sig}&limit=${this.D_PAGE}&cursor=${cursor}`);
@@ -3040,9 +3813,17 @@
       } else next = Object.assign({}, g, { loaded: true, err: true });
       this.setState({ graded: next });
     }
+    // A failed fetch is retried no sooner than D_RETRY_MS later, and never by
+    // the failure's own repaint. This used to clear its "asked" flag and call
+    // setState on failure — the repaint re-entered dataHtml(), which asked
+    // again, which failed again: 1,300 requests in ten seconds from one tab
+    // whenever the route errored, and a DOM rebuilt so often that the nav
+    // could not be clicked.
+    D_RETRY_MS = 30000;
     async loadVenues() {
-      if (this._venuesAsked) return;
+      if (this._venuesAsked && !(this._venuesRetryAt && Date.now() >= this._venuesRetryAt)) return;
       this._venuesAsked = true;
+      this._venuesRetryAt = 0;
       const res = await this.dFetch("/graded/venues");
       let venues = [];
       if (res.body) venues = res.body.venues || [];
@@ -3051,7 +3832,11 @@
         const by = {};
         fx.forEach((r) => { if (!by[r.venue_id]) by[r.venue_id] = { venue_id: r.venue_id, venue_name: r.venue_name, home_abbr: r.home_abbr }; });
         venues = Object.values(by);
-      } else this._venuesAsked = false;   // retry on a later render
+      } else {
+        // Nothing changed on screen, so nothing to repaint.
+        this._venuesRetryAt = Date.now() + this.D_RETRY_MS;
+        return;
+      }
       this.setState({ venues });
     }
 
@@ -3138,7 +3923,7 @@
         const k = (s.dTeam ? 1 : 0) + (s.dPark ? 1 : 0) + (s.dHand !== "any" ? 1 : 0) + (s.dSide !== "any" ? 1 : 0);
         return `<div class="ph-fbar ph-fbar--d">
           <div class="ph-fbar-line">
-            ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"]])}
+            ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"], [String(this.D_SEASON), "Season"]])}
             <button class="ph-chip${k ? " is-on" : ""}" data-act="mToggle" data-arg="f:data" aria-expanded="${open}">Filters${k ? ` <span class="ph-mono">${k}</span>` : ""} ${open ? "▴" : "▾"}</button>
           </div>
           <div class="ph-fscroll">${chip("all", "All")}${this.D_MARKETS.map((m) => chip(m[0], m[1])).join("")}</div>
@@ -3160,7 +3945,7 @@
       }
       return `<div class="ph-fbar ph-fbar--d">
         <div class="ph-fbar-line">
-          ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"]])}
+          ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"], [String(this.D_SEASON), "Season"]])}
           <span class="ph-vrule"></span>
           <span class="ph-fgroup">${chip("all", "All")}${this.D_MARKETS.map((m) => chip(m[0], m[1])).join("")}</span>
         </div>
@@ -3236,7 +4021,9 @@
     }
     dailyGapChartHtml(sum) {
       const s = this.state, w = this.dWindow();
-      const days = s.dTf === "today" ? 7 : Number(s.dTf);
+      // At most 60 bars: a season of one-pixel bars says nothing.
+      const days = s.dTf === "today" ? 7 : Math.min(60, Number(s.dTf));
+      const outage = this.outageDays();
       const by = {};
       (sum.daily || []).forEach((d) => { by[d.date] = this.derive(d); });
       const bars = [];
@@ -3246,20 +4033,103 @@
         const date = PH.mlbDate(-i);
         const t = by[date];
         const v = t && t.n ? Math.max(-10, Math.min(10, t.gap * 100)) : 0;
-        const tip = `${i === 0 ? "Today" : date} · ${t && t.n ? `${t.n} reads · ${this.gapTxt(t.gap)}` : "no reads"}`;
+        const out = !(t && t.n) && outage.has(date);
+        const tip = `${i === 0 ? "Today" : date} · ${t && t.n ? `${t.n} reads · ${this.gapTxt(t.gap)}` : out ? "not graded — grading was paused" : "no reads"}`;
         const on = mob && sel === date;
         if (on) selTip = tip;
-        bars.push(`<div class="ph-gap-col${date < w.from ? " is-out" : ""}${on ? " is-sel" : ""}" title="${esc(tip)}"${mob ? ` data-act="mSel" data-arg="d:gap|${date}"` : ""}>
+        bars.push(`<div class="ph-gap-col${date < w.from ? " is-out" : ""}${on ? " is-sel" : ""}${out ? " is-ungraded" : ""}" title="${esc(tip)}"${mob ? ` data-act="mSel" data-arg="d:gap|${date}"` : ""}>
           <span class="ph-gap-up">${v > 0 ? `<span class="ph-gb--${this.gapBand(t.gap)}" style="height:${(v * 10).toFixed(1)}%"></span>` : ""}</span>
           <span class="ph-gap-dn">${v < 0 ? `<span class="ph-gb--${this.gapBand(t.gap)}" style="height:${(-v * 10).toFixed(1)}%"></span>` : ""}</span>
         </div>`);
       }
       const sub = s.dTf === "today" ? "last 7 days for context · today highlighted"
-        : `each bar is one day · ${mob ? "tap" : "hover"} for counts`;
+        : `each bar is one day${Number(s.dTf) > 60 ? " · last 60 shown" : ""} · ${mob ? "tap" : "hover"} for counts`;
       return this.dCard("Daily gap · landed − predicted", sub, `
         <div class="ph-gap">${bars.join("")}</div>
         <div class="ph-gap-axis ph-mono"><span>${days > 1 ? esc(PH.mlbDate(-(days - 1))) : ""}</span><span>±10 pts</span><span>TODAY</span></div>
+        ${this.outageNoteHtml(PH.mlbDate(-(days - 1)), PH.mlbDate(0))}
         ${mob ? `<div class="ph-mono ph-chart-sel">${esc(selTip || "tap a day for its counts")}</div>` : ""}`);
+    }
+    // Days the model made calls but nothing was graded: the settle job was
+    // stalled (2026-09-13..24 in production). Read off /accuracy, where such
+    // a day has n > 0 and n_graded = 0 — it must not read as "no games".
+    outageDays() {
+      const out = new Set();
+      ((this.state.accuracy && this.state.accuracy.days) || []).forEach((d) => {
+        if ((d.n || 0) > 0 && !(d.n_graded || 0)) out.add(d.day);
+      });
+      return out;
+    }
+    outageNoteHtml(from, to) {
+      const days = [...this.outageDays()].filter((d) => d >= from && d <= to).sort();
+      if (!days.length) return "";
+      // Collapse consecutive days into ranges for the sentence.
+      const ranges = [];
+      days.forEach((d) => {
+        const last = ranges[ranges.length - 1];
+        const prev = last && new Date(Date.parse(`${last[1]}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
+        if (last && prev === d) last[1] = d; else ranges.push([d, d]);
+      });
+      const fmt = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" });
+      const txt = ranges.map(([a, b]) => (a === b ? fmt(a) : `${fmt(a)}–${fmt(b)}`)).join(", ");
+      return `<p class="ph-caption ph-caption--warn">${esc(COPY.dOutage.replace("{days}", txt))}</p>`;
+    }
+    // Accuracy by day for the per-pitch and per-at-bat markets, from the
+    // permanent nightly rollup (/accuracy) — including the two regression
+    // markets, pitch speed and pitches per at-bat, which graded_read does
+    // not carry. Hatched days are days with calls and no grades.
+    ACC_MARKETS = [
+      ["ab_result", "At-bat result", "rate"], ["pitch_result", "Next pitch", "rate"],
+      ["ab_pitches_ou", "Pitches in the at-bat (O/U)", "rate"], ["pitch_speed_ou", "Next-pitch speed · avg miss", "mae"],
+      ["game_moneyline", "Live win prob · favourite won", "rate"],
+    ];
+    accuracyTrendHtml() {
+      const acc = this.state.accuracy;
+      if (!acc || !acc.loaded) return this.dCard("Accuracy over time", "per day", `<div class="ph-note">${esc(COPY.dLoading)}</div>`);
+      if (acc.err) return this.dCard("Accuracy over time", "per day", `<div class="ph-note">${esc(COPY.dLoadError)}</div>`);
+      const s = this.state, w = this.dWindow();
+      const span = s.dTf === "today" ? 14 : Math.max(7, Number(s.dTf));
+      const dates = [];
+      for (let i = span - 1; i >= 0; i -= 1) dates.push(PH.mlbDate(-i));
+      const by = {};
+      (acc.days || []).forEach((d) => { (by[d.market] = by[d.market] || {})[d.day] = d; });
+      const rows = this.ACC_MARKETS.map(([mk, label, kind]) => {
+        const series = dates.map((day) => {
+          const d = (by[mk] || {})[day];
+          if (!d || !(d.n || 0)) return { day, v: null };
+          if (!(d.n_graded || 0)) return { day, v: null, ungraded: true };
+          const dec = (d.wins || 0) + (d.losses || 0);
+          const v = kind === "mae" ? (d.mean_abs_error == null ? null : Number(d.mean_abs_error)) : dec ? d.wins / dec : null;
+          return { day, v, n: d.n_graded };
+        });
+        const vals = series.filter((x) => x.v != null);
+        if (!vals.length && !series.some((x) => x.ungraded)) return "";
+        const lo = kind === "mae" ? 0 : Math.max(0, Math.min(...vals.map((x) => x.v)) - 0.05);
+        const hi = kind === "mae" ? Math.max(8, ...vals.map((x) => x.v)) : Math.min(1, Math.max(...vals.map((x) => x.v)) + 0.05);
+        const X = (i) => (dates.length === 1 ? 50 : (i / (dates.length - 1)) * 100);
+        const Y = (v) => 30 - ((v - lo) / ((hi - lo) || 1)) * 28 - 1;
+        let path = "", pen = false;
+        series.forEach((x, i) => {
+          if (x.v == null) { pen = false; return; }
+          path += `${pen ? "L" : "M"}${X(i).toFixed(2)},${Y(x.v).toFixed(2)} `; pen = true;
+        });
+        const holes = series.map((x, i) => x.ungraded
+          ? `<rect x="${(X(i) - 50 / dates.length).toFixed(2)}" y="0" width="${(100 / dates.length).toFixed(2)}" height="30" class="ph-acc-hole"/>` : "").join("");
+        const tot = vals.reduce((a, x) => ({ v: a.v + x.v * (x.n || 1), n: a.n + (x.n || 1) }), { v: 0, n: 0 });
+        const avg = tot.n ? tot.v / tot.n : null;
+        const fmt = (v) => (v == null ? "—" : kind === "mae" ? `${v.toFixed(1)} mph` : this.pct1(v));
+        const last = vals.length ? vals[vals.length - 1] : null;
+        return `<div class="ph-acc-row">
+          <span class="ph-acc-lbl">${esc(label)}</span>
+          <svg viewBox="0 0 100 30" preserveAspectRatio="none" class="ph-acc-svg" role="img" aria-label="${esc(`${label}, ${fmt(avg)} over the window`)}">${holes}<path d="${path}" class="ph-acc-line" vector-effect="non-scaling-stroke"/></svg>
+          <span class="ph-mono ph-acc-v" title="weighted by graded calls over the window">${fmt(avg)}</span>
+          <span class="ph-mono ph-mut ph-acc-last">last ${last ? fmt(last.v) : "—"}</span>
+        </div>`;
+      }).join("");
+      return this.dCard("Accuracy over time", `per day · ${span} days · ignores the filters above`, `
+        <div class="ph-acc">${rows || `<div class="ph-note">${esc(COPY.dFeedEmpty)}</div>`}</div>
+        <div class="ph-legend"><span><i class="ph-acc-hole-key"></i>calls made, not graded</span></div>
+        <p class="ph-caption">${esc(COPY.dAccNote)}</p>`);
     }
     byMarketTableHtml(sum) {
       const by = {};
@@ -3438,6 +4308,191 @@
       </div>`;
     }
 
+    // ══ OVERLAYS: search, player / team drawer, guide ═══════════════════
+    TEAM_NAMES = {
+      AZ: "Arizona Diamondbacks", ATL: "Atlanta Braves", BAL: "Baltimore Orioles", BOS: "Boston Red Sox",
+      CHC: "Chicago Cubs", CWS: "Chicago White Sox", CIN: "Cincinnati Reds", CLE: "Cleveland Guardians",
+      COL: "Colorado Rockies", DET: "Detroit Tigers", HOU: "Houston Astros", KC: "Kansas City Royals",
+      LAA: "Los Angeles Angels", LAD: "Los Angeles Dodgers", MIA: "Miami Marlins", MIL: "Milwaukee Brewers",
+      MIN: "Minnesota Twins", NYM: "New York Mets", NYY: "New York Yankees", ATH: "Athletics",
+      PHI: "Philadelphia Phillies", PIT: "Pittsburgh Pirates", SD: "San Diego Padres", SF: "San Francisco Giants",
+      SEA: "Seattle Mariners", STL: "St. Louis Cardinals", TB: "Tampa Bay Rays", TEX: "Texas Rangers",
+      TOR: "Toronto Blue Jays", WSH: "Washington Nationals",
+    };
+    fold(t) { return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); }
+    searchResultsHtml(q) {
+      const n = this.fold(q).trim();
+      if (!n) return `<p class="ph-ov-note">${esc(COPY.searchHint)}</p>`;
+      const hit = (t) => this.fold(t).includes(n);
+      const bats = (this.batters() || []).filter((b) => hit(b.name)).slice(0, 8);
+      const sps = [];
+      this.todayGames().forEach((g) => [["away", g.probables.away, g.probables.awayId, g.away], ["home", g.probables.home, g.probables.homeId, g.home]]
+        .forEach(([side, name, id, team]) => { if (name && id && hit(name)) sps.push({ g, side, name, id, team }); }));
+      const teams = Object.keys(this.TEAM_NAMES).filter((t) => hit(t) || hit(this.TEAM_NAMES[t])).slice(0, 6);
+      const row = (act, arg, title, sub) => `<button class="ph-ov-row" data-act="${act}" data-arg="${esc(arg)}"><b>${esc(title)}</b><span>${this.numHtml(sub)}</span></button>`;
+      const parts = [];
+      if (bats.length) {
+        parts.push(`<span class="ph-kicker ph-kicker--mut">Batters</span>`);
+        bats.forEach((b) => { const g = this.gameByPk(b.pk); parts.push(row("ovPlayer", `${b.id}|${b.pk}`, b.name, `${this.teamOf(b)} · ${g ? `${g.away} @ ${g.home}` : ""}`)); });
+      }
+      if (sps.length) {
+        parts.push(`<span class="ph-kicker ph-kicker--mut">Starting pitchers</span>`);
+        sps.slice(0, 5).forEach((x) => parts.push(row("ovStarter", `${x.g.gamePk}|${x.side}`, x.name, `${x.team} · ${x.g.away} @ ${x.g.home}`)));
+      }
+      if (teams.length) {
+        parts.push(`<span class="ph-kicker ph-kicker--mut">Teams</span>`);
+        teams.forEach((t) => parts.push(row("ovTeam", t, this.TEAM_NAMES[t], t)));
+      }
+      return parts.length ? parts.join("") : `<p class="ph-ov-note">${esc(COPY.searchNone)}</p>`;
+    }
+    overlayHtml() {
+      const o = this.state.overlay;
+      if (!o) return "";
+      let title = "", body = "";
+      if (o.kind === "search") {
+        title = "Search";
+        body = `<input id="ph-search" class="ph-ov-input" type="search" data-search placeholder="Player or team" autocomplete="off" aria-label="Search players and teams" value="${esc(this.state.searchQ || "")}">
+          <div id="ph-search-results" class="ph-ov-results" aria-live="polite">${this.searchResultsHtml(this.state.searchQ || "")}</div>`;
+      } else if (o.kind === "help") {
+        title = "How to read Pitch Hawk";
+        body = `<p class="ph-ov-note">${esc(COPY.guideIntro)}</p>
+          <dl class="ph-gloss">${COPY.glossary.map(([t, d]) => `<dt>${esc(t)}</dt><dd>${esc(d)}</dd>`).join("")}</dl>`;
+      } else if (o.kind === "player") {
+        const b = (this.batters() || []).find((x) => x.id === String(o.id) && (!o.pk || x.pk === String(o.pk)));
+        title = b ? b.name : "Player";
+        body = b ? this.playerPanelHtml(b) : `<p class="ph-ov-note">${esc(COPY.playerNone)}</p>`;
+      } else if (o.kind === "starter") {
+        const g = this.gameByPk(o.pk);
+        const name = g ? g.probables[o.side] : null, id = g ? g.probables[`${o.side}Id`] : null;
+        title = name || "Starter";
+        body = g && id ? `<div class="ph-ov-grid">
+            ${this.mPairHtml("MATCHUP", `<span class="ph-meta-v">${this.numHtml(`${o.side === "home" ? g.home : g.away} vs ${o.side === "home" ? g.away : g.home} · ${this.clockOf(g.startTs) || "TBD"}`)}</span>`)}
+            ${this.starterStatPairs(id, g.gamePk).map(([k, v]) => this.mPairHtml(k, v)).join("")}
+          </div>
+          <div class="ph-ov-act">${this.openGameBtnHtml(g.gamePk, "sp")}</div>` : `<p class="ph-ov-note">${esc(COPY.playerNone)}</p>`;
+      } else if (o.kind === "team") {
+        title = this.TEAM_NAMES[o.abbr] || o.abbr;
+        body = this.teamPanelHtml(o.abbr);
+      }
+      return `<div class="ph-ov" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+        <div class="ph-ov-scrim" data-act="ovClose"></div>
+        <div class="ph-ov-panel">
+          <div class="ph-ov-head">
+            ${o.kind !== "search" && o.back ? `<button class="ph-iconbtn" data-act="ovOpen" data-arg="search" aria-label="Back to search">‹</button>` : ""}
+            <b>${esc(title)}</b>
+            <button class="ph-iconbtn ph-ov-x" data-act="ovClose" aria-label="Close">✕</button>
+          </div>
+          <div class="ph-ov-body">${body}</div>
+        </div>
+      </div>`;
+    }
+    // One batter on today's slate: every read the model has on him, the form
+    // behind it, and the game it is in.
+    playerPanelHtml(b) {
+      const g = this.gameByPk(b.pk);
+      const atBat = g && g.phase === "live" && g.batter && String(g.batter.id) === b.id;
+      const rog = g && g.phase === "live" ? this.rogOf(g, b.id) : null;
+      const h = this.h2hOf(b);
+      const h2h = !h || h.pending ? "—" : !h.found ? "fewer than 3 PA" : `${h.h_count}-for-${h.pa_count}, ${h.hr_count} HR`;
+      return `<div class="ph-ov-sub">${this.numHtml(`${this.teamOf(b)} · ${b.slot ? `batting #${b.slot}` : "lineup pending"} · vs ${b.spName || "TBD"}`)}${atBat ? ` <span class="ph-phase ph-phase--live">● AT THE PLATE</span>` : ""}</div>
+        <div class="ph-ov-grid">
+          ${this.mPairHtml("1+ HIT", this.probCellHtml(b, "hit"))}
+          ${this.mPairHtml("1+ HR", this.probCellHtml(b, "hr"))}
+          ${this.mPairHtml("H+R+RBI 1+", this.baseBatterCellHtml(b.hrr, "hrr"))}
+          ${this.mPairHtml("TB 1.5+", this.baseBatterCellHtml(b.tb15, "tb"))}
+          ${this.mPairHtml("30D H · HR /PA", this.formCellHtml(b.form))}
+          ${this.mPairHtml(`${esc(this.lastName(b.spName)).toUpperCase()} ALLOWS · 30D`, this.formCellHtml(b.oppForm))}
+          ${this.mPairHtml("VS THIS STARTER", `<span class="ph-mono">${esc(h2h)}</span>`)}
+          ${rog ? this.mPairHtml("REST OF GAME · HIT / HR", this.baseCellHtml(`${this.pct(rog.hit)} / ${this.pct(rog.hr)}`, `${Number(rog.remaining_pa).toFixed(1)} PA left`)) : ""}
+          ${g && g.phase === "final" ? this.mPairHtml("RESULT", `<span class="ph-mono">${esc(this.resultLine(b.hit, "hit") || "—")} · ${esc(this.resultLine(b.hr, "hr") || "")}</span>`) : ""}
+          ${g ? this.mPairHtml("GAME", `<span class="ph-meta-v">${this.numHtml(`${g.away} @ ${g.home} · ${g.phase === "pregame" ? this.clockOf(g.startTs) || "TBD" : g.phase === "live" ? `${g.score.away}–${g.score.home} · ${this.halfWord(g.half)} ${g.inning || ""}` : `final ${g.score.away}–${g.score.home}`}`)}</span>`) : ""}
+        </div>
+        <div class="ph-ov-act">${this.pinBtnHtml("b:" + b.id, "Watch this batter")}<span class="ph-mut">watch</span>
+          ${atBat ? `<button class="ph-chip" data-act="liveGo" data-arg="${esc(String(g.gamePk))}">Watch live ›</button>` : ""}
+          ${this.openGameBtnHtml(b.pk, b.side)}</div>`;
+    }
+    teamPanelHtml(abbr) {
+      const games = this.todayGames().filter((g) => g.away === abbr || g.home === abbr);
+      if (games.length) {
+        return games.map((g) => {
+          const side = g.home === abbr ? "home" : "away";
+          const top = this.battersOf(g.gamePk).filter((b) => b.side === side)
+            .map((b) => ({ b, c: this.probCell(b, "hit") })).filter((x) => x.c.pts != null)
+            .sort((a, z) => z.c.pts - a.c.pts).slice(0, 3);
+          const w = this.gameWp(g);
+          return `<div class="ph-ov-sub">${this.numHtml(`${g.away} @ ${g.home} · ${g.phase === "pregame" ? `first pitch ${this.clockOf(g.startTs) || "TBD"} ${this.tzLabel()}` : g.phase === "live" ? `live · ${g.score.away}–${g.score.home}` : `final · ${g.score.away}–${g.score.home}`}`)}</div>
+            <div class="ph-ov-grid">
+              ${this.mPairHtml(w.caption, `<span class="ph-mono">${esc(`${w.team} ${w.val}`)}</span>`)}
+              ${top.map(({ b, c }) => this.mPairHtml(esc(b.name), `<span class="ph-mono ph-band-${c.band}">1+ hit ${this.pct(c.p)} · ${esc(c.lift)}</span>`)).join("")}
+            </div>
+            <div class="ph-ov-act">${this.pinBtnHtml("g:" + g.gamePk, "Watch this game")}<span class="ph-mut">watch</span>${this.openGameBtnHtml(g.gamePk, side)}</div>`;
+        }).join("");
+      }
+      const nx = this.state.teamNext[abbr];
+      if (!nx) { this.loadTeamNext(abbr); return `<p class="ph-ov-note">${esc(COPY.teamNotToday.replace("{team}", abbr))} Looking up the next game…</p>`; }
+      if (!nx.found) return `<p class="ph-ov-note">${esc(COPY.teamNoNext.replace("{team}", abbr))}</p>`;
+      const g = nx.game;
+      const when = new Date(g.start_ts).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: this.tz() });
+      return `<p class="ph-ov-note">${esc(COPY.teamNotToday.replace("{team}", abbr))}</p>
+        <div class="ph-ov-grid">${this.mPairHtml("NEXT GAME", `<span class="ph-meta-v">${this.numHtml(`${g.away_abbr} @ ${g.home_abbr} · ${when} ${this.tzLabel()}`)}</span>`)}
+          ${this.mPairHtml("BALLPARK", `<span class="ph-meta-v">${esc(g.venue_name || "—")}</span>`)}</div>
+        <p class="ph-ov-note">${esc(COPY.readsTiming)}</p>`;
+    }
+    async loadTeamNext(abbr) {
+      if (this._teamAsked && this._teamAsked[abbr]) return;
+      (this._teamAsked || (this._teamAsked = {}))[abbr] = true;
+      const body = await fetchJson(`/team/${abbr}/next`);
+      this.setState({ teamNext: Object.assign({}, this.state.teamNext, { [abbr]: body || { found: false } }) });
+    }
+    openOverlay(o) {
+      this._ovReturn = document.activeElement;
+      this.setState({ overlay: o });
+      requestAnimationFrame(() => {
+        const el = this.root.querySelector(o.kind === "search" ? "#ph-search" : ".ph-ov-x");
+        if (el) el.focus();
+        // A reopened search keeps its last query, selected, so typing replaces it.
+        if (el && el.select) el.select();
+      });
+    }
+    closeOverlay() {
+      this.setState({ overlay: null });
+      // Back to whatever opened it, if it still exists after the re-render.
+      const ret = this._ovReturn;
+      const sel = ret && ret.getAttribute && ret.getAttribute("data-act")
+        ? `[data-act="${ret.getAttribute("data-act")}"][data-arg="${ret.getAttribute("data-arg") || ""}"]` : null;
+      const el = sel ? this.root.querySelector(sel) : null;
+      if (el) el.focus();
+    }
+
+    patchClocks() {
+      const t = this.clockSec(this.state.api.updatedAt) || "—";
+      this.root.querySelectorAll("[data-clock]").forEach((el) => {
+        el.textContent = (el.getAttribute("data-clock-prefix") || "") + t;
+      });
+    }
+    // Screen readers hear the selected live game move (score, inning, outs,
+    // batter) — not every pitch, which would be noise. The region sits
+    // outside #ph-root so the re-render never replaces it.
+    announce(text) {
+      let el = document.getElementById("ph-announce");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "ph-announce"; el.className = "ph-sr";
+        el.setAttribute("aria-live", "polite"); el.setAttribute("role", "status");
+        document.body.appendChild(el);
+      }
+      if (el.textContent !== text) el.textContent = text;
+    }
+    announceLive() {
+      if (this.state.view !== "live") return;
+      const live = this.liveGames();
+      if (!live.length) return;
+      const g = this.liveSelGame().g;
+      const msg = `${g.away} ${g.score.away}, ${g.home} ${g.score.home}. ${this.halfWord(g.half) === "TOP" ? "Top" : "Bottom"} of the ${g.inning || ""}, ${g.outs == null ? "" : `${g.outs} out`}. ${g.batter ? `${g.batter.name} batting.` : ""}`;
+      const key = `${g.gamePk}|${g.score.away}|${g.score.home}|${g.inning}|${g.half}|${g.outs}|${g.batter && g.batter.id}`;
+      if (key !== this._announced) { this._announced = key; this.announce(msg); }
+    }
+
     render() {
       // The whole UI is rebuilt with innerHTML, which destroys focus and
       // selection. Skip a render while the user is in a filter control —
@@ -3446,12 +4501,20 @@
       // the next render after blur.
       const ae = document.activeElement;
       const busy = ae && ae.hasAttribute
-        && ae.hasAttribute("data-pfilter");
+        && (ae.hasAttribute("data-pfilter") || ae.hasAttribute("data-search"));
       if (busy && this.root.contains(ae)) {
         this._renderDeferred = true;
         return;
       }
       this._renderDeferred = false;
+      this._lastFull = Date.now();
+      // Remember what had focus so it survives the rebuild: a keyboard user
+      // who pressed Enter on a tab or chip was otherwise thrown back to the
+      // top of the document on every render.
+      const fa = ae && ae !== document.body && this.root.contains(ae) ? {
+        act: ae.getAttribute("data-act"), arg: ae.getAttribute("data-arg"),
+        pf: ae.getAttribute("data-pfilter"), id: ae.id,
+      } : null;
       this.root.setAttribute("data-theme", this.dk() ? "dark" : "light");
       const view = this.state.view;
       // A view is built to a string BEFORE it is assigned, so anything that
@@ -3473,16 +4536,31 @@
       this._bindMq();
       // Shell rows above the view. The banner shows on every tab; Watching on
       // Home and Live only.
-      const watch = view === "home" || view === "live" ? this.watchRowHtml() : "";
-      const top = this.apiBannerHtml() + watch;
+      // Watching follows the reader to every tab.
+      const watch = this.watchRowHtml();
+      const top = this.apiBannerHtml() + this.staleBannerHtml() + watch;
       this.root.innerHTML = `
         ${this.headerHtml()}
-        <main class="ph-main ph-shell">${top}${main}</main>
-        ${this.footerHtml()}`;
+        <main class="ph-main ph-shell" tabindex="-1">${top}${main}</main>
+        ${this.footerHtml()}
+        ${this.overlayHtml()}
+        ${this.toastHtml()}`;
       // Lazy lookups the views asked for while rendering (head-to-head,
       // starter profiles). One batch per render; each lookup is cached, so a
       // re-render never asks twice.
       this._flushWants();
+      this.syncUrl();
+      if (fa) {
+        const q = (v) => String(v).replace(/["\\]/g, "\\$&");
+        const sel = fa.id ? `#${fa.id}`
+          : fa.act ? `[data-act="${q(fa.act)}"]${fa.arg != null ? `[data-arg="${q(fa.arg)}"]` : ""}`
+            : fa.pf ? `[data-pfilter="${q(fa.pf)}"]` : null;
+        // The control is gone when the action navigated (a card that opened
+        // another tab): focus lands on the new view instead of the document.
+        const el = (sel ? this.root.querySelector(sel) : null) || this.root.querySelector("main");
+        if (el) { try { el.focus({ preventScroll: true }); } catch (_e) { el.focus(); } }
+      }
+      this.announceLive();
     }
 
 
@@ -3514,13 +4592,30 @@
         } catch (e) {
           // /live answering is the board's definition of "the API is up".
           // Keep every last-good number on screen and say why it isn't moving.
+          this._failStreak = (this._failStreak || 0) + 1;
           if (!this.state.api.down) this.setState({ api: Object.assign({}, this.state.api, { down: true }) });
           throw e;
         }
+        this._failStreak = 0;
         const now = Date.now();
+        const wasDown = this.state.api.down;
         this.state.api = { down: false, lastGood: now, updatedAt: now };
         if (Array.isArray(games)) {
+          // Only rebuild the page when the slate actually moved. A full
+          // innerHTML render every 8s threw away taps that landed mid-rebuild
+          // and churned the DOM for nothing; an unchanged poll now just
+          // re-stamps the "updated" clocks in place. Countdowns ("in 3h 12m")
+          // still need a full render now and then, hence the minute cap.
+          const sig = JSON.stringify(games);
+          const same = !wasDown && sig === this._gamesSig && Date.now() - (this._lastFull || 0) < 60000;
+          this._gamesSig = sig;
           PH.games = games;
+          if (same) {
+            this.refreshLiveRows().then((changed) => { if (changed) this.render(); }).catch(() => {});
+            this.patchClocks();
+            this.checkAlerts();
+            return;
+          }
           // Not awaited: the board must never wait on at-bat history. It
           // re-renders itself when the rows land, and no-ops unless a live
           // game's situation actually moved.
@@ -3528,6 +4623,7 @@
             .then((changed) => { if (changed) this.render(); })
             .catch(() => {});
           this.render();
+          this.checkAlerts();
         }
         // loadLive throws on network error → keep last-good board.
       } catch (_e) { console.warn("[pitchhawk] live poll failed; keeping last data"); }
@@ -3540,9 +4636,16 @@
     }
     // ±20% jitter so 1000 clients don't stampede the origin in lockstep.
     _jitter(ms) { return Math.round(ms * (0.8 + Math.random() * 0.4)); }
+    // While /live is failing the poll backs off — 8s, 16s, 32s, capped at 64s —
+    // so every open tab does not keep a down origin under a full-rate load.
+    // The first success drops it straight back to 8s.
+    pollDelay() {
+      const n = Math.min(this._failStreak || 0, 3);
+      return POLL_MS * Math.pow(2, n);
+    }
     _scheduleNextPoll() {
       clearTimeout(this._pollTo);
-      this._pollTo = setTimeout(() => this._pollTick(), this._jitter(POLL_MS));
+      this._pollTo = setTimeout(() => this._pollTick(), this._jitter(this.pollDelay()));
     }
     async _pollTick() {
       // Pause network work while the tab is backgrounded.
@@ -3560,22 +4663,29 @@
       // exactly the case the banner is documented not to fire in.
       this._setStaleBanner(!!(h && h.data_fresh === false) && this.liveGames().length > 0, h);
     }
+    // Drawn in the page flow, above the view, like the API-down banner. It
+    // used to be a fixed bar at top:0 with z-index 9999, which sat on top of
+    // the sticky header and covered the logo and the tabs.
     _setStaleBanner(stale, h) {
-      let el = document.getElementById("ph-stale");
-      if (!stale) { if (el) el.remove(); return; }
-      if (!el) {
-        el = document.createElement("div");
-        el.id = "ph-stale";
-        el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#b9541b;" +
-          "color:#fff;text-align:center;font-size:.85rem;padding:.4rem;font-family:inherit;";
-        document.body.appendChild(el);
-      }
-      const age = h && h.jobs && h.jobs["live-poll"] ? h.jobs["live-poll"].age_seconds : null;
-      el.textContent = "⚠ Live data delayed" +
-        (age != null ? ` (updated ~${Math.round(age / 60)}m ago)` : "") +
-        " — showing the last data received.";
+      const age = stale && h && h.jobs && h.jobs["live-poll"] ? h.jobs["live-poll"].age_seconds : null;
+      const next = stale ? { age } : null;
+      if (JSON.stringify(next) === JSON.stringify(this.state.stale || null)) return;
+      this.setState({ stale: next });
+    }
+    staleBannerHtml() {
+      const s = this.state.stale;
+      if (!s || this.state.api.down) return "";
+      const ago = s.age != null ? ` · updated ~${Math.round(s.age / 60)}m ago` : "";
+      return `<div class="ph-banner-err ph-banner-warn" role="status">
+        <span class="ph-kicker">⚠ ${esc(COPY.staleTitle)}</span>
+        <span class="ph-banner-err-body">${esc(COPY.staleBody)}</span>
+        <span class="ph-banner-err-when">${esc(ago.replace(/^ · /, ""))}</span>
+      </div>`;
     }
     start() {
+      // The screen-reader live region exists from the first paint, so the
+      // first announcement is not swallowed while the region is being created.
+      this.announce("");
       this.render();
       this.hydrate();
       this.poll();

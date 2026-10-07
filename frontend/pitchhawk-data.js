@@ -317,15 +317,24 @@ window.PITCHHAWK = (function () {
       onDeck: "On-deck TBD",
       inning: sit.inning, half: sit.half || "▲", count: sit.count || "0-0",
       outs: sit.outs || 0,
-      runners: { first: false, second: false, third: false },
+      // null, never all-false, when the feed did not say: an empty diamond
+      // is a claim that the bases are clear.
+      runners: sit.bases ? {
+        first: !!sit.bases.first, second: !!sit.bases.second, third: !!sit.bases.third,
+      } : null,
       pitchCountPa: sit.pitch_count_pa != null ? sit.pitch_count_pa : pitches.length,
-      pitchCountGame: null, pitches, nextPred, lastPitch: sit.last_pitch_ts, stale, m, mPre,
+      // The current pitcher's pitches this game, and the batter's line today
+      // ({ pa, h, hr, bb, k }); both written by live-poll, null before that.
+      pitchCountGame: sit.pitcher_pitch_count != null ? Number(sit.pitcher_pitch_count) : null,
+      batterToday: lg.batter_today || null,
+      pitches, nextPred, lastPitch: sit.last_pitch_ts, stale, m, mPre,
       modelVersion: lg.model_version || null,
       // Phase + coverage are what let the board render a scheduled game
       // honestly: which markets exist, which do not, and why the situation
       // panel is empty.
       phase: lg.phase || (sit.inning != null ? "live" : "pregame"),
       status: lg.status || null,
+      gameType: lg.game_type || null,
       startTs: lg.start_ts || null,
       coverage: lg.coverage || null,
       // Live base models from /live: projected total vs the pregame line, and
