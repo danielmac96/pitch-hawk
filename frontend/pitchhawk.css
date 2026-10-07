@@ -1227,3 +1227,13 @@ body { margin: 0; }
   .ph-score-row .ph-mut { grid-column: 1 / -1; text-align: left; margin-top: -4px; }
 }
 .ph-note--warn { border: 1px solid var(--amb-edge); background: var(--amber-bg); color: var(--amber); border-radius: 10px; padding: 9px 12px; margin-bottom: 14px; font-size: 12.5px; }
+.ph-live-up { display: flex; flex-direction: column; width: 100%; margin-top: 10px; text-align: left; }
+.ph-nextrow--btn { width: 100%; background: transparent; border: 0; border-top: 1px solid var(--row-border); color: var(--text); font: inherit; cursor: pointer; min-height: 44px; text-align: left; }
+.ph-nextrow--btn:hover { background: var(--surface-2); }
+.ph-nextrow > .ph-mono:first-child { white-space: nowrap; }
+@media (min-width: 768px) { .ph-nextrow { grid-template-columns: 84px 110px minmax(0, 1fr) auto; } }
+.ph-main:focus { outline: none; }
+@media (max-width: 767.98px) {
+  .ph-banner-err { padding: 10px 12px; gap: 6px 10px; }
+  .ph-banner-err-body { font-size: 12.5px; }
+}

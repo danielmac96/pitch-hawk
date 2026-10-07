@@ -137,9 +137,9 @@ window.PH_COPY = (function () {
     ],
 
     postseasonNote:
-      "Postseason: batter reads come from a model fitted on regular-season games, " +
-      "and playoff hitting runs well below it — this year's Division Series hit " +
-      "reads landed about 46% against 64% predicted. Treat hit and HR reads as optimistic.",
+      "Postseason: batter reads come from a regular-season model and run hot " +
+      "against playoff pitching (Division Series hit reads landed 46% vs 64% " +
+      "predicted). Treat hit and HR reads as optimistic.",
 
     // live
     // The selected game has no scored call on the current at-bat yet.

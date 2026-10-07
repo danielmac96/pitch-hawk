@@ -674,8 +674,8 @@
         const w = this.resolvePin(k);
         const known = k.startsWith("g:") ? !!w.game : !!(w.rows && w.rows.length);
         if (known) { if (dates[k] !== today) { dates[k] = today; dirty = true; } return true; }
-        if (!dates[k]) { dates[k] = today; dirty = true; return true; }
-        return dates[k] >= today;
+        // Undated means pinned before dates were kept: an earlier slate.
+        return !!dates[k] && dates[k] >= today;
       });
       if (dirty) this.savePinDates();
       if (keep.length !== this.state.pins.length) {
@@ -755,7 +755,14 @@
       if (!key || !/^[gb]:\S+$/.test(key)) return;
       const pins = this.state.pins.slice();
       const i = pins.indexOf(key);
-      if (i >= 0) pins.splice(i, 1); else pins.push(key);
+      if (i >= 0) pins.splice(i, 1);
+      else {
+        pins.push(key);
+        // Stamped when pinned, so a pin for a batter whose read has not
+        // posted yet survives until his slate has passed.
+        this.pinDates()[key] = slateDate();
+        this.savePinDates();
+      }
       this.savePins(pins);
     }
     isPinned(key) { return this.state.pins.indexOf(key) >= 0; }
@@ -1145,12 +1152,13 @@
               </button>
               ${this.resultChipHtml(rec ? rec.result : null, g)}`,
             stats: `${this.mPairHtml(m === "hit" ? "P(1+ HIT)" : "P(1+ HR)", this.probCellHtml(b, m, true))}
-              ${this.mPairHtml("LIFT", `<span class="ph-stack"><span class="ph-mono ph-lift ph-lift--${c.band || "avg"}">${esc(c.lift || "—")}</span><span class="ph-mono ph-small ph-mut">${c.rel == null ? "" : `${c.rel.toFixed(2)}× league`}</span></span>`)}`,
+              ${this.mPairHtml("LIFT", `<span class="ph-stack"><span class="ph-mono ph-lift ph-lift--${c.band || "avg"}">${esc(c.lift || "—")}</span><span class="ph-mono ph-small ph-mut">${c.rel == null ? "" : `${c.rel.toFixed(2)}× league`}</span></span>`)}
+              <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WHY</span><span class="ph-card-why ph-mono"><span>${w[0]}</span></span></span>`,
             more: `${this.mPairHtml("PHASE", this.phaseChip(pk, pt))}
               ${this.mPairHtml("LINEUP", `<span class="ph-status ph-status--${b.slot ? "solid" : "dashed"} ph-status--left">${b.slot ? "LINEUP ✓" : "LINEUP PENDING"}</span>`)}
               ${this.mPairHtml("REST OF GAME", rogP != null ? this.baseCellHtml(this.pct(rogP), `${Number(live.remaining_pa).toFixed(1)} PA left`) : `<span class="ph-missing-dash">—</span>`)}
               ${this.mPairHtml("FRESH", `<span class="ph-mono ph-small">${esc(g.phase === "final" ? "graded" : `updated ${this.clockOf(b.updatedAt) || "—"}`)}</span>`)}
-              <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WHY</span><span class="ph-card-why ph-mono"><span>${w[0]}</span><span class="ph-card-why2">${w[1]}</span></span></span>
+              <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">MATCHUP</span><span class="ph-card-why ph-mono"><span>${w[1]}</span></span></span>
               ${this.openGameBtnHtml(b.pk, b.side)}`,
           });
         }).join("");
@@ -3573,13 +3581,21 @@
     }
 
     liveEmptyHtml() {
-      const next = this.todayGames().filter((g) => g.phase === "pregame")
-        .sort((a, b) => Date.parse(a.startTs || 0) - Date.parse(b.startTs || 0))[0];
+      const up = this.todayGames().filter((g) => g.phase === "pregame")
+        .sort((a, b) => Date.parse(a.startTs || 0) - Date.parse(b.startTs || 0));
+      // Nothing live: what is coming and when, each a way into its pregame
+      // reads, rather than a single line and a dead end.
+      const list = up.map((g) => `<button class="ph-nextrow ph-nextrow--btn" data-act="openGame" data-arg="${esc(String(g.gamePk))}">
+          <span class="ph-mono">${esc(this.clockOf(g.startTs) || "TBD")}</span>
+          <b>${esc(g.away)} @ ${esc(g.home)}</b>
+          <span class="ph-ellip ph-mut">${esc(this.startersLine(g))}</span>
+          <span class="ph-mono ph-mut">${esc(this.untilText(g.startTs) || "")}</span>
+        </button>`).join("");
       return `<div class="ph-panel ph-live-empty">
         <span class="ph-kicker ph-kicker--mut">Top call now · all games</span>
         <b>${esc(COPY.liveNothingTitle)}</b>
         <span>${esc(COPY.liveNothingBody)}</span>
-        ${next ? `<span class="ph-mut">${this.numHtml(`Next first pitch: ${next.away} @ ${next.home} · ${this.clockOf(next.startTs) || "TBD"} ${this.tzLabel()}`)}</span>` : ""}
+        ${up.length ? `<div class="ph-live-up"><span class="ph-kicker ph-kicker--mut">Coming up · ${esc(this.tzLabel())}</span>${list}</div>` : ""}
       </div>`;
     }
 
@@ -4519,7 +4535,7 @@
       const top = this.apiBannerHtml() + this.staleBannerHtml() + watch;
       this.root.innerHTML = `
         ${this.headerHtml()}
-        <main class="ph-main ph-shell">${top}${main}</main>
+        <main class="ph-main ph-shell" tabindex="-1">${top}${main}</main>
         ${this.footerHtml()}
         ${this.overlayHtml()}
         ${this.toastHtml()}`;
@@ -4533,7 +4549,9 @@
         const sel = fa.id ? `#${fa.id}`
           : fa.act ? `[data-act="${q(fa.act)}"]${fa.arg != null ? `[data-arg="${q(fa.arg)}"]` : ""}`
             : fa.pf ? `[data-pfilter="${q(fa.pf)}"]` : null;
-        const el = sel ? this.root.querySelector(sel) : null;
+        // The control is gone when the action navigated (a card that opened
+        // another tab): focus lands on the new view instead of the document.
+        const el = (sel ? this.root.querySelector(sel) : null) || this.root.querySelector("main");
         if (el) { try { el.focus({ preventScroll: true }); } catch (_e) { el.focus(); } }
       }
       this.announceLive();
@@ -4659,6 +4677,9 @@
       </div>`;
     }
     start() {
+      // The screen-reader live region exists from the first paint, so the
+      // first announcement is not swallowed while the region is being created.
+      this.announce("");
       this.render();
       this.hydrate();
       this.poll();
