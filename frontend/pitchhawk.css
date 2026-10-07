@@ -238,6 +238,8 @@ body { margin: 0; }
   border-radius: 12px; padding: 12px 16px; margin-bottom: 14px;
 }
 .ph-banner-err .ph-kicker { color: var(--err-fg); }
+.ph-banner-warn { border-color: var(--amb-edge); background: var(--amber-bg); }
+.ph-banner-warn .ph-kicker { color: var(--amber); }
 .ph-banner-err-body { font-size: 13px; color: var(--text); }
 .ph-banner-err-when { margin-left: auto; font-size: 11.5px; color: var(--text-2); }
 
@@ -1024,3 +1026,6 @@ body { margin: 0; }
   .ph-mcard.is-on { border-color: var(--accent); }
 }
 .ph-chart-sel { margin-top: 8px; font-size: 11px; color: var(--text-2); }
+
+/* An empty state that is a failure, not an absence. */
+.ph-empty--err { border-color: var(--err-bd); color: var(--err-fg); }

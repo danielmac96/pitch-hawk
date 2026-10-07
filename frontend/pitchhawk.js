@@ -107,7 +107,9 @@
   // even fired. Afterwards it refreshes only every 5 minutes, because a
   // completed slate does not change.
   async function fetchRecap(force) {
-    if (!force && RECAP !== null && Date.now() - RECAP_AT < 300000) return false;
+    // Gated on the last fetch, not on RECAP: an empty recap is a real answer,
+    // and gating on `RECAP !== null` re-asked /board on every 8s poll.
+    if (!force && RECAP_AT && Date.now() - RECAP_AT < 300000) return false;
     try {
       const b = await PH.loadBoard(API_BASE);
       RECAP_AT = Date.now();
@@ -160,6 +162,8 @@
         // `lastGood` is when /live last answered; `updatedAt` feeds the
         // "updated hh:mm:ss" clocks.
         api: { down: false, lastGood: null, updatedAt: null },
+        // /health says the live poller is behind while games are on: { age }.
+        stale: null,
         // Home / Predictions ranking mode. null = automatic: Live whenever a
         // game is live, otherwise Pregame (see effectiveMode()).
         mode: null,
@@ -562,10 +566,32 @@
     PRED_DEFAULTS = { pMarket: "hit", pTeam: "", pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false };
     PRED_PAGE = 25;
 
+    // What the batter and starter tables are waiting on, if anything. These
+    // read /projections, and until it has answered there is nothing to filter:
+    // drawing "no predictions match these filters" over a pending or failed
+    // fetch told a reader their filters were the problem.
+    projStatus() {
+      const p = this.state.proj;
+      if (p.rows === null) return p.err ? "error" : "loading";
+      return "ok";
+    }
     predHtml() {
       this.loadTrust();
       const mk = this.state.pMarket;
       let table, count;
+      const projMk = mk === "hit" || mk === "hr" || mk === "sp";
+      const ps = projMk ? this.projStatus() : "ok";
+      const gamesPending = !projMk && !this.todayGames().length && this.state.api.lastGood == null;
+      if (ps !== "ok" || gamesPending) {
+        const err = ps === "error" || (gamesPending && this.state.api.down);
+        return `<div class="ph-titlerow">
+            <h1 class="ph-h1">${esc(COPY.predTitle)}</h1>
+            <span class="ph-strip-sub">${esc(SLATE_IS_TODAY ? COPY.predSub : COPY.predSubNext)}</span>
+          </div>
+          ${this.predFilterBarHtml(null)}
+          ${this.trustTilesHtml()}
+          <div class="ph-empty${err ? " ph-empty--err" : ""}" role="status">${esc(err ? COPY.predLoadError : COPY.predLoading)}</div>`;
+      }
       if (mk === "hit" || mk === "hr") {
         const rows = this.predBatterRows();
         count = rows.length;
@@ -628,7 +654,11 @@
           <input type="range" min="-10" max="15" step="1" value="${s.pMin}" data-pfilter="pMin" aria-label="Minimum lift in points">
           <span class="ph-mono ph-range-val">${esc(minLabel)}</span>
         </label>` : "";
-      const countHtml = `<span class="ph-mono ph-fbar-count"><b>${count}</b> result${count === 1 ? "" : "s"}</span>`;
+      // null while the rows are still on their way: a count of 0 there is a
+      // claim about the data, and the data has not arrived.
+      const countHtml = count == null
+        ? `<span class="ph-mono ph-fbar-count"><b>—</b> results</span>`
+        : `<span class="ph-mono ph-fbar-count"><b>${count}</b> result${count === 1 ? "" : "s"}</span>`;
       // Phone: mode and market always in view; the rest behind "Filters".
       if (this.mob()) {
         const open = !!s.mOpen["f:pred"];
@@ -1039,8 +1069,11 @@
       // 1+ Hit and 1+ HR are the trained markets; without them the batter
       // surface has nothing to rank, so their failure is the error state.
       if (!res[0] || !res[1]) {
+        const was = this.state.proj.err;
         this.state.proj = Object.assign({}, this.state.proj, { err: true });
-        return false;
+        // Repaint once on the transition, so a first-load failure reads as an
+        // error rather than as a load that never finishes.
+        return !was;
       }
       const rows = [].concat(...res.map((r) => (r && r.rows) || []));
       const changed = JSON.stringify(rows) !== JSON.stringify(this.state.proj.rows);
@@ -1789,6 +1822,10 @@
       rows = srt === "order"
         ? rows.slice().sort((a, b) => (a.slot || 99) - (b.slot || 99))
         : rows.slice().sort((a, b) => maxRel(b) - maxRel(a));
+      const ps = this.projStatus();
+      if (ps !== "ok") {
+        return `<div class="ph-note" role="status">${esc(ps === "error" ? COPY.predLoadError : COPY.predLoading)}</div>`;
+      }
       const pendNote = pending ? `<div class="ph-pending">
           <span class="ph-pending-chip">Lineup pending</span>
           <span>${this.numHtml((rows.length ? COPY.lineupPending : COPY.noProjections).replace("{team}", team))}</span>
@@ -3002,8 +3039,10 @@
     }
     async loadGradedSummary() {
       const sig = this.dQuery().toString();
-      if (this._gsumSig === sig) return;
+      const retry = this.state.gsum.err && Date.now() >= (this._gsumRetryAt || 0);
+      if (this._gsumSig === sig && !retry) return;
       this._gsumSig = sig;
+      this._gsumRetryAt = Date.now() + this.D_RETRY_MS;
       const res = await this.dFetch(`/graded/summary?${sig}`);
       if (this._gsumSig !== sig) return;   // a newer scenario was asked for
       let next;
@@ -3018,9 +3057,11 @@
     async loadGraded(more) {
       const g = this.state.graded;
       const sig = this.dQuery().toString();
-      if (!more && this._gradedSig === sig) return;
+      const retry = g.err && Date.now() >= (this._gradedRetryAt || 0);
+      if (!more && this._gradedSig === sig && !retry) return;
       if (more && (g.next == null || this._gradedMore)) return;
       this._gradedSig = sig;
+      this._gradedRetryAt = Date.now() + this.D_RETRY_MS;
       this._gradedMore = !!more;
       const cursor = more ? g.next : 0;
       const res = await this.dFetch(`/graded?${sig}&limit=${this.D_PAGE}&cursor=${cursor}`);
@@ -3040,9 +3081,17 @@
       } else next = Object.assign({}, g, { loaded: true, err: true });
       this.setState({ graded: next });
     }
+    // A failed fetch is retried no sooner than D_RETRY_MS later, and never by
+    // the failure's own repaint. This used to clear its "asked" flag and call
+    // setState on failure — the repaint re-entered dataHtml(), which asked
+    // again, which failed again: 1,300 requests in ten seconds from one tab
+    // whenever the route errored, and a DOM rebuilt so often that the nav
+    // could not be clicked.
+    D_RETRY_MS = 30000;
     async loadVenues() {
-      if (this._venuesAsked) return;
+      if (this._venuesAsked && !(this._venuesRetryAt && Date.now() >= this._venuesRetryAt)) return;
       this._venuesAsked = true;
+      this._venuesRetryAt = 0;
       const res = await this.dFetch("/graded/venues");
       let venues = [];
       if (res.body) venues = res.body.venues || [];
@@ -3051,7 +3100,11 @@
         const by = {};
         fx.forEach((r) => { if (!by[r.venue_id]) by[r.venue_id] = { venue_id: r.venue_id, venue_name: r.venue_name, home_abbr: r.home_abbr }; });
         venues = Object.values(by);
-      } else this._venuesAsked = false;   // retry on a later render
+      } else {
+        // Nothing changed on screen, so nothing to repaint.
+        this._venuesRetryAt = Date.now() + this.D_RETRY_MS;
+        return;
+      }
       this.setState({ venues });
     }
 
@@ -3474,7 +3527,7 @@
       // Shell rows above the view. The banner shows on every tab; Watching on
       // Home and Live only.
       const watch = view === "home" || view === "live" ? this.watchRowHtml() : "";
-      const top = this.apiBannerHtml() + watch;
+      const top = this.apiBannerHtml() + this.staleBannerHtml() + watch;
       this.root.innerHTML = `
         ${this.headerHtml()}
         <main class="ph-main ph-shell">${top}${main}</main>
@@ -3514,9 +3567,11 @@
         } catch (e) {
           // /live answering is the board's definition of "the API is up".
           // Keep every last-good number on screen and say why it isn't moving.
+          this._failStreak = (this._failStreak || 0) + 1;
           if (!this.state.api.down) this.setState({ api: Object.assign({}, this.state.api, { down: true }) });
           throw e;
         }
+        this._failStreak = 0;
         const now = Date.now();
         this.state.api = { down: false, lastGood: now, updatedAt: now };
         if (Array.isArray(games)) {
@@ -3540,9 +3595,16 @@
     }
     // ±20% jitter so 1000 clients don't stampede the origin in lockstep.
     _jitter(ms) { return Math.round(ms * (0.8 + Math.random() * 0.4)); }
+    // While /live is failing the poll backs off — 8s, 16s, 32s, capped at 64s —
+    // so every open tab does not keep a down origin under a full-rate load.
+    // The first success drops it straight back to 8s.
+    pollDelay() {
+      const n = Math.min(this._failStreak || 0, 3);
+      return POLL_MS * Math.pow(2, n);
+    }
     _scheduleNextPoll() {
       clearTimeout(this._pollTo);
-      this._pollTo = setTimeout(() => this._pollTick(), this._jitter(POLL_MS));
+      this._pollTo = setTimeout(() => this._pollTick(), this._jitter(this.pollDelay()));
     }
     async _pollTick() {
       // Pause network work while the tab is backgrounded.
@@ -3560,20 +3622,24 @@
       // exactly the case the banner is documented not to fire in.
       this._setStaleBanner(!!(h && h.data_fresh === false) && this.liveGames().length > 0, h);
     }
+    // Drawn in the page flow, above the view, like the API-down banner. It
+    // used to be a fixed bar at top:0 with z-index 9999, which sat on top of
+    // the sticky header and covered the logo and the tabs.
     _setStaleBanner(stale, h) {
-      let el = document.getElementById("ph-stale");
-      if (!stale) { if (el) el.remove(); return; }
-      if (!el) {
-        el = document.createElement("div");
-        el.id = "ph-stale";
-        el.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;background:#b9541b;" +
-          "color:#fff;text-align:center;font-size:.85rem;padding:.4rem;font-family:inherit;";
-        document.body.appendChild(el);
-      }
-      const age = h && h.jobs && h.jobs["live-poll"] ? h.jobs["live-poll"].age_seconds : null;
-      el.textContent = "⚠ Live data delayed" +
-        (age != null ? ` (updated ~${Math.round(age / 60)}m ago)` : "") +
-        " — showing the last data received.";
+      const age = stale && h && h.jobs && h.jobs["live-poll"] ? h.jobs["live-poll"].age_seconds : null;
+      const next = stale ? { age } : null;
+      if (JSON.stringify(next) === JSON.stringify(this.state.stale || null)) return;
+      this.setState({ stale: next });
+    }
+    staleBannerHtml() {
+      const s = this.state.stale;
+      if (!s || this.state.api.down) return "";
+      const ago = s.age != null ? ` · updated ~${Math.round(s.age / 60)}m ago` : "";
+      return `<div class="ph-banner-err ph-banner-warn" role="status">
+        <span class="ph-kicker">⚠ ${esc(COPY.staleTitle)}</span>
+        <span class="ph-banner-err-body">${esc(COPY.staleBody)}</span>
+        <span class="ph-banner-err-when">${esc(ago.replace(/^ · /, ""))}</span>
+      </div>`;
     }
     start() {
       this.render();

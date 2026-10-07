@@ -25,7 +25,10 @@ window.PH_COPY = (function () {
     apiDownTitle: "✗ Feed unreachable",
     apiDownBody:
       "Couldn't reach the Pitch Hawk API. This is a connection problem, not an " +
-      "empty slate. Retrying on the 8-second poll.",
+      "empty slate. Retrying automatically, a little less often each time.",
+    // shell · live poller behind while games are on (GET /health data_fresh=false)
+    staleTitle: "Live data delayed",
+    staleBody: "The live feed has not updated recently. Everything shown is the last data received.",
     apiDownLastGood: "last good update",
     apiDownNever: "no update received yet",
 
@@ -48,6 +51,10 @@ window.PH_COPY = (function () {
     predSubWpLive: "Live mode: biggest swing since first pitch first",
     predSubGame: "sorted by strength of the pregame read",
     predSubSp: "every starter · props reserved until modeled · supporting form served",
+    predLoading: "Loading today's projections…",
+    predLoadError:
+      "Couldn't load today's projections. A connection problem, not an empty " +
+      "slate — retrying automatically.",
     predEmptyTitle: "No predictions match these filters",
     predEmptyBody: "Lower the minimum lift, include pending lineups, or widen the status and team filters.",
     predNoneTitle: "No predictions today",
