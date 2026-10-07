@@ -1,0 +1,57 @@
+name: Model lab
+
+# Remote execution for the modeling workbench against the R2 warehouse, for
+# development branches.
+#
+# WHY THIS EXISTS. The warehouse and train-models workflows are
+# workflow_dispatch, and the Claude GitHub App that develops on claude/**
+# branches cannot dispatch workflows. A push-triggered workflow runs the
+# workflow file from the pushed commit, so committing a request to
+# modeling/lab/request.json on such a branch is how a backfill or a training
+# run gets executed where the R2 and Supabase secrets live.
+#
+# WHAT IT CAN DO. Only what scripts/lab_run.py allowlists: `python -m
+# warehouse ...` and `python -m modeling ...` subcommands. Never --promote
+# (lab_run.py refuses it): like train-models, a lab run records model_runs
+# rows and changes nothing production serves.
+#
+# Safe to delete once the work it supports has merged.
+
+on:
+  push:
+    branches: ["claude/**"]
+    paths: ["modeling/lab/request.json"]
+
+concurrency:
+  # Shares the nightly's group so a lab backfill and the nightly never write
+  # the R2 manifest at the same time.
+  group: warehouse-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  lab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      PITCHHAWK_CACHE: ${{ github.workspace }}/.cache
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-modeling.txt
+      - name: Run the request
+        run: python scripts/lab_run.py modeling/lab/request.json
