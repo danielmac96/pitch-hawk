@@ -7,8 +7,9 @@
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
 import { gradeProjection } from "../_shared/batterprojection.ts";
 import { gradeBase } from "../_shared/basemodels.ts";
+import { type BoxLines, parseBoxscore } from "../_shared/boxscore.ts";
 import { ingestGame, upsertGames } from "../_shared/ingest.ts";
-import { getSchedule, isFinal, mlbToday } from "../_shared/mlb.ts";
+import { getSchedule, isFinal, mlbGet, mlbToday } from "../_shared/mlb.ts";
 import { isStale, isVoidStatus, walkQueue } from "../_shared/settlequeue.ts";
 
 const BATCH = 400;
@@ -453,14 +454,39 @@ async function settleProjections(
       }
     }
 
+    // The official line, when MLB will give it to us. Runs, outs recorded and
+    // earned runs exist nowhere else (see _shared/boxscore.ts); for the rest
+    // it agrees with at_bats and is preferred because it is what a book
+    // grades against. A fetch failure falls back to at_bats rather than
+    // failing the game -- the box-only markets then void.
+    let box: BoxLines | null = null;
+    if (!voided) {
+      try {
+        box = parseBoxscore(await mlbGet(`/game/${gamePk}/boxscore`));
+      } catch (e) {
+        errors.push(`boxscore ${gamePk}: ${String(e).slice(0, 120)}`);
+      }
+    }
+
     for (const r of (rows ?? []) as any[]) {
       const id = r.player_id;
+      const bl = box?.batters.get(id);
+      const pl = box?.pitchers.get(id);
       const g = r.market === "batter_hit" || r.market === "batter_hr"
-        ? gradeProjection(r.market, pa.get(id) ?? 0, hits.get(id) ?? 0, homers.get(id) ?? 0)
-        : gradeBase(r.market, r.line == null ? null : Number(r.line), {
-          pa: pa.get(id) ?? 0, tb: tb.get(id) ?? 0,
-          bf: bf.get(id) ?? 0, k: ks.get(id) ?? 0, bb: bbs.get(id) ?? 0, hits: hitsAllowed.get(id) ?? 0,
-        });
+        ? (bl
+          ? gradeProjection(r.market, bl.pa, bl.h, bl.hr)
+          : gradeProjection(r.market, pa.get(id) ?? 0, hits.get(id) ?? 0, homers.get(id) ?? 0))
+        : gradeBase(r.market, r.line == null ? null : Number(r.line), box
+          ? {
+            official: true,
+            pa: bl?.pa ?? 0, tb: bl?.tb ?? 0, h: bl?.h ?? 0, r: bl?.r ?? 0, rbi: bl?.rbi ?? 0,
+            bf: pl?.bf ?? 0, k: pl?.k ?? 0, bb: pl?.bb ?? 0, hits: pl?.h ?? 0,
+            outs: pl?.outs ?? 0, er: pl?.er ?? 0,
+          }
+          : {
+            pa: pa.get(id) ?? 0, tb: tb.get(id) ?? 0,
+            bf: bf.get(id) ?? 0, k: ks.get(id) ?? 0, bb: bbs.get(id) ?? 0, hits: hitsAllowed.get(id) ?? 0,
+          });
       const { error: uerr } = await db.from("player_game_projections").update({
         result: g.result,
         actual_count: g.actual_count,

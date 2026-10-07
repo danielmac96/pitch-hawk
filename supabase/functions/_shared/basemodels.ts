@@ -178,18 +178,23 @@ export function liveTotal(
 }
 
 // ── grading ─────────────────────────────────────────────────────────────────
-// Exact where the hot tables can say exactly what happened; void otherwise,
-// so a market we cannot grade never sits pending (and never trips /health).
-//   batter_tb15                    total bases from at_bats.result_detail
-//   pitcher_k | pitcher_bb | hits  counted per pitcher from at_bats.result
-//   batter_hrr                     void: runs and RBI are not stored
-//   pitcher_outs | pitcher_er      void: outs per PA and run attribution
-//                                  are not stored
+// Graded from the official boxscore line when settle could fetch it
+// (_shared/boxscore.ts), else from the hot at_bats table. Markets only the
+// boxscore can answer void without it, so a market we cannot grade never sits
+// pending (and never trips /health):
+//   batter_tb15                    total bases (box, else at_bats.result_detail)
+//   batter_hrr                     hits + runs + RBI            (box only)
+//   pitcher_k | pitcher_bb | hits  per pitcher (box, else at_bats.result)
+//   pitcher_outs | pitcher_er      outs recorded, earned runs   (box only)
 // A batter with no plate appearance, or a starter who faced no batter, is
 // void -- a scratch is not a miss.
 export interface BaseGradeInputs {
   pa?: number; tb?: number;                          // batter
+  h?: number; r?: number; rbi?: number;              // batter, box only
   bf?: number; k?: number; bb?: number; hits?: number; // pitcher
+  outs?: number; er?: number;                        // pitcher, box only
+  /** True when the inputs came from the official boxscore. */
+  official?: boolean;
 }
 export function gradeBase(market: string, line: number | null, x: BaseGradeInputs) {
   const voidRow = { result: "void" as const, actual_count: null as number | null, plate_appearances: x.pa ?? x.bf ?? 0 };
@@ -199,9 +204,13 @@ export function gradeBase(market: string, line: number | null, x: BaseGradeInput
       : voidRow;
   switch (market) {
     case "batter_tb15": return decide(x.tb ?? 0, x.pa ?? 0, line ?? 1.5);
+    case "batter_hrr":
+      return x.official ? decide((x.h ?? 0) + (x.r ?? 0) + (x.rbi ?? 0), x.pa ?? 0, line ?? 0.5) : voidRow;
     case "pitcher_k": return decide(x.k ?? 0, x.bf ?? 0, line ?? 0);
     case "pitcher_bb": return decide(x.bb ?? 0, x.bf ?? 0, line ?? 0);
     case "pitcher_hits": return decide(x.hits ?? 0, x.bf ?? 0, line ?? 0);
-    default: return voidRow;   // batter_hrr, pitcher_outs, pitcher_er
+    case "pitcher_outs": return x.official ? decide(x.outs ?? 0, x.bf ?? 0, line ?? 0) : voidRow;
+    case "pitcher_er": return x.official ? decide(x.er ?? 0, x.bf ?? 0, line ?? 0) : voidRow;
+    default: return voidRow;
   }
 }
