@@ -9,7 +9,8 @@
 // (migration 20260728000001), which never recorded a single row.
 
 import { json, svc } from "../_shared/db.ts";
-import { mlbToday } from "../_shared/mlb.ts";
+import { getGameConditions, isRoofClosed, mlbToday } from "../_shared/mlb.ts";
+import { winProbSeries } from "../_shared/winprob.ts";
 import { resolveSlate } from "../_shared/slate.ts";
 import * as aggs from "../_shared/aggregates.ts";
 import { DEFAULT_LIMIT, MAX_LIMIT, pitchFeed } from "../_shared/pitchfeed.ts";
@@ -63,7 +64,14 @@ const TTL: Record<string, number> = {
   // making the cache pointless. game/context is immutable once a game is
   // final, hence an hour.
   "player/profile": 300, "player/splits": 300, "player/fatigue": 300,
-  "matchup": 300, "game/context": 3600,
+  // game/context was an hour when it only ever read the nightly boxscore
+  // table; it now falls back to MLB's pregame readings for games that table
+  // does not have yet, and those move (crews and forecasts are posted late).
+  "matchup": 300, "game/context": 900,
+  // Per-at-bat win-probability history: grows by one point an at-bat.
+  "game/winprob": 15,
+  // A team's next game only changes when the schedule does.
+  "team/next": 300,
   // Board recap is built from graded rows that stop moving once a slate is
   // final; the live section inside it is refreshed by the client's own /live
   // poll, so 60s here does not make the live board stale.
@@ -552,6 +560,10 @@ async function slatePayloads(date: string): Promise<any[]> {
           last_pitch_ts: ls.last_pitch_ts,
           home_score: ls.home_score,
           away_score: ls.away_score,
+          // Written by live-poll from the play-by-play (raw_json); null on
+          // a state stored before those fields existed.
+          bases: raw.bases ?? null,
+          pitcher_pitch_count: raw.pitcher_pitch_count ?? null,
         }
         : {
           inning: null, half: null, count: null, outs: null,
@@ -567,6 +579,8 @@ async function slatePayloads(date: string): Promise<any[]> {
       // projected batter's rest-of-game 1+ hit / HR. null unless live.
       live_models: liveModels,
       current_pa_pitches: isLive ? (raw.current_pa_pitches ?? []) : [],
+      // The batter at the plate's line so far today: { pa, h, hr, bb, k }.
+      batter_today: isLive ? (raw.batter_today ?? null) : null,
       pa_predictions: paPredictions,
       markets,
       // Explicit coverage, so the client never has to infer "missing" from a
@@ -669,9 +683,18 @@ async function projections(url: URL): Promise<Response> {
   const { data } = await q.order("probability", { ascending: false }).limit(1000);
 
   const rows = data ?? [];
-  const names = await playerNames([
-    ...rows.map((r: any) => r.player_id),
+  const isPitcherRow = (r: any) => (r.role ?? "batter") === "pitcher";
+  const batterIds = [...new Set(rows.filter((r: any) => !isPitcherRow(r)).map((r: any) => r.player_id))];
+  const pitcherIds = [...new Set([
+    ...rows.filter(isPitcherRow).map((r: any) => r.player_id),
     ...rows.map((r: any) => r.opposing_pitcher_id).filter(Boolean),
+  ])];
+  const [names, form] = await Promise.all([
+    playerNames([
+      ...rows.map((r: any) => r.player_id),
+      ...rows.map((r: any) => r.opposing_pitcher_id).filter(Boolean),
+    ]),
+    rollingForm(batterIds as number[], pitcherIds as number[]),
   ]);
   return json({
     date,
@@ -704,8 +727,44 @@ async function projections(url: URL): Promise<Response> {
       role: r.role ?? "batter",
       line: r.line != null ? Number(r.line) : null,
       expected_value: r.expected_value != null ? Number(r.expected_value) : null,
+      // 30-day per-PA form from the rolling-stats tables the live scorer
+      // reads: the player's own, and for a batter, the opposing starter's
+      // rates allowed. null when the player has no row (too few PAs).
+      form_30d: isPitcherRow(r)
+        ? (form.pitchers.get(r.player_id) ?? null)
+        : (form.batters.get(r.player_id) ?? null),
+      opp_form_30d: r.opposing_pitcher_id != null
+        ? (form.pitchers.get(r.opposing_pitcher_id) ?? null) : null,
     })),
   });
+}
+
+// 30-day per-PA hit and home-run rates, batters and pitchers, keyed by id.
+// These are the same rows model.ts reads for the *_hit_delta / *_hr_delta
+// features, so the "why" a reader sees is the input the model used.
+type Form30 = { pa: number; hit_rate: number | null; hr_rate: number | null };
+async function rollingForm(batterIds: number[], pitcherIds: number[]) {
+  const num = (v: unknown) => (v == null ? null : Number(v));
+  const empty = { data: [] as any[] };
+  const [{ data: b }, { data: p }] = await Promise.all([
+    batterIds.length
+      ? svc().from("batter_rolling_stats").select("batter_id,sample_pas,hit_rate,hr_rate")
+        .in("batter_id", batterIds)
+      : Promise.resolve(empty),
+    pitcherIds.length
+      ? svc().from("pitcher_rolling_stats").select("pitcher_id,sample_abs,hit_rate,hr_rate")
+        .in("pitcher_id", pitcherIds)
+      : Promise.resolve(empty),
+  ]);
+  const batters = new Map<number, Form30>();
+  for (const r of b ?? []) {
+    batters.set(r.batter_id, { pa: Number(r.sample_pas ?? 0), hit_rate: num(r.hit_rate), hr_rate: num(r.hr_rate) });
+  }
+  const pitchers = new Map<number, Form30>();
+  for (const r of p ?? []) {
+    pitchers.set(r.pitcher_id, { pa: Number(r.sample_abs ?? 0), hit_rate: num(r.hit_rate), hr_rate: num(r.hr_rate) });
+  }
+  return { batters, pitchers };
 }
 
 // ── /api/graded, /api/graded/summary, /api/graded/venues ─────────────────
@@ -720,8 +779,11 @@ async function projections(url: URL): Promise<Response> {
 const GRADED_MARKETS = [
   "batter_hit", "batter_hr", "game_moneyline", "game_total", "ab_result", "pitch_result",
 ];
-// 35 days: the pitch and at-bat reads follow the predictions hot window.
-const GRADED_MAX_DAYS = 35;
+// The widest window a graded request may ask for. Pitch and at-bat reads
+// only go back as far as the predictions hot window (35 days); batter and
+// game reads go back to when graded_read began, so the Data Feed's "Season"
+// window asks for 120 days and gets whatever each market has.
+const GRADED_MAX_DAYS = 120;
 function gradedFilters(sp: URLSearchParams) {
   const market = sp.get("market");
   const team = (sp.get("team") ?? "").toUpperCase();
@@ -1573,6 +1635,73 @@ async function board(url: URL): Promise<Response> {
   });
 }
 
+// Context for one game: the nightly boxscore row when the warehouse has
+// published it, otherwise MLB's own pregame readings (weather is posted before
+// first pitch, the umpire crew once assigned) — the warehouse only ever covers
+// FINISHED games, which left every pill a reader opens today blank. Plus the
+// park's home-run factor, which is per venue-season and always available.
+async function gameContextFull(pk: number): Promise<Record<string, unknown>> {
+  const db = svc();
+  const [ctx, { data: g }] = await Promise.all([
+    aggs.gameContext(db, pk),
+    db.from("games").select("venue_id,venue_name,season").eq("game_pk", pk).maybeSingle(),
+  ]);
+  const out: Record<string, any> = { ...ctx.data, found: ctx.found, source: ctx.found ? "boxscore" : null };
+  if (ctx.found && out.roof_closed == null && out.weather_condition != null) {
+    out.roof_closed = isRoofClosed(out.weather_condition);
+  }
+  if (!ctx.found) {
+    try {
+      const c = await getGameConditions(pk);
+      if (c && (c.weather_condition != null || c.hp_umpire != null)) {
+        Object.assign(out, c, { found: true, source: "schedule" });
+      }
+    } catch (_e) { /* MLB unreachable: the warehouse answer (absent) stands */ }
+  }
+  const venueId = out.venue_id ?? g?.venue_id ?? null;
+  if (venueId != null) {
+    let q = db.from("park_hr_factors").select("season,hr_factor").eq("venue_id", venueId);
+    if (g?.season != null) q = q.lte("season", g.season);
+    const { data: pf } = await q.order("season", { ascending: false }).limit(1);
+    out.park_hr_factor = pf?.[0]?.hr_factor != null ? Number(pf[0].hr_factor) : null;
+    out.park_hr_factor_season = pf?.[0]?.season ?? null;
+  }
+  out.venue_name = out.venue_name ?? g?.venue_name ?? null;
+  return out;
+}
+
+async function winProb(pk: number): Promise<Record<string, unknown>> {
+  const db = svc();
+  const [{ data: rows }, { data: pre }, { data: firsts }] = await Promise.all([
+    db.from("predictions").select("id,at_bat_index,probs")
+      .eq("game_pk", pk).eq("market", "game_moneyline").order("id").limit(3000),
+    db.from("game_predictions").select("probs")
+      .eq("game_pk", pk).eq("market", "game_moneyline").eq("phase", "pregame").limit(1),
+    db.from("pitches").select("at_bat_index,inning,top_inning")
+      .eq("game_pk", pk).eq("pitch_number", 1),
+  ]);
+  const innings = new Map<number, { inning: number | null; top_inning: boolean | null }>();
+  for (const f of firsts ?? []) innings.set(f.at_bat_index, { inning: f.inning, top_inning: f.top_inning });
+  const p0: any = pre?.[0]?.probs ?? null;
+  return {
+    game_pk: pk,
+    pregame_home: p0?.home != null ? Number(p0.home) : p0?.away != null ? 1 - Number(p0.away) : null,
+    points: winProbSeries(rows ?? [], innings),
+  };
+}
+
+// A team's next game (or the one in progress), for a reader whose team is not
+// on the slate being shown.
+async function teamNext(abbr: string): Promise<Record<string, unknown>> {
+  const since = new Date(Date.now() - 5 * 3600_000).toISOString();
+  const { data } = await svc().from("games")
+    .select("game_pk,official_date,start_ts,status,away_abbr,home_abbr,venue_name")
+    .or(`home_abbr.eq.${abbr},away_abbr.eq.${abbr}`)
+    .gte("start_ts", since).order("start_ts").limit(1);
+  const g = (data ?? [])[0] ?? null;
+  return { team: abbr, found: g != null, game: g };
+}
+
 function jsonWith(body: unknown, origin: string, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status, headers: { "Content-Type": "application/json", ...corsHeaders(origin) },
@@ -1632,17 +1761,22 @@ Deno.serve(async (req) => {
     const gm = route.match(/^game\/(\d+)\/context$/);
     if (gm) {
       const pk = Number(gm[1]);
+      // 200 even when absent: a 404 logged a browser console error on every
+      // load during a live game, and `cached()` only memoises 200s.
       return await hit(`game/${pk}/context`, TTL["game/context"],
-        async () => {
-          const r = await aggs.gameContext(svc(), pk);
-          // 200 even when absent. Context is written by the nightly warehouse
-          // publish, so every in-progress game is legitimately missing until
-          // tomorrow -- the overwhelmingly common case. A 404 here logged a
-          // browser console error on every Data Feed load during a live game,
-          // and `cached()` only memoises 200s, so it also re-hit the origin
-          // on every batter change.
-          return json({ found: r.found, ...r.data });
-        });
+        async () => json(await gameContextFull(pk)));
+    }
+
+    const wm = route.match(/^game\/(\d+)\/winprob$/);
+    if (wm) {
+      const pk = Number(wm[1]);
+      return await hit(`game/${pk}/winprob`, TTL["game/winprob"], async () => json(await winProb(pk)));
+    }
+
+    const tm = route.match(/^team\/([A-Za-z]{2,3})\/next$/);
+    if (tm) {
+      const abbr = tm[1].toUpperCase();
+      return await hit(`team/${abbr}/next`, TTL["team/next"], async () => json(await teamNext(abbr)));
     }
     switch (route) {
       case "health": case "": return await hit(route, TTL[route] ?? 0, health);

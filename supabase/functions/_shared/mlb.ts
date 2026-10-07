@@ -195,6 +195,102 @@ export async function getProbables(dateISO: string): Promise<ProbableRow[]> {
   return out;
 }
 
+// ── game conditions for a game the warehouse has not published yet ────────
+//
+// game_context is written nightly from the boxscore of FINISHED games, so it
+// never has a row for a game that is scheduled or in progress — the two
+// states a reader actually opens a game pill in. The same readings are on the
+// schedule endpoint before first pitch (weather) and once crews are assigned
+// (officials), in one request per game.
+export interface GameConditions {
+  venue_name: string | null;
+  weather_condition: string | null;
+  temp_f: number | null;
+  wind_mph: number | null;
+  wind_direction: string | null;
+  roof_closed: boolean | null;
+  hp_umpire: string | null;
+}
+
+export function parseGameConditions(g: any): GameConditions {
+  const w = g?.weather ?? {};
+  const [windMph, windDir] = parseWind(w.wind);
+  const officials: any[] = Array.isArray(g?.officials) ? g.officials : [];
+  const hp = officials.find((o) => /home plate/i.test(String(o?.officialType ?? "")));
+  return {
+    venue_name: g?.venue?.name ?? null,
+    weather_condition: w.condition ?? null,
+    temp_f: weatherNum(w.temp),
+    wind_mph: windMph,
+    wind_direction: windDir,
+    // null, not false, when there is no reading at all: "roof open" is a
+    // claim, and an absent forecast does not make it.
+    roof_closed: w.condition != null ? isRoofClosed(w.condition) : null,
+    hp_umpire: hp?.official?.fullName ?? null,
+  };
+}
+
+export async function getGameConditions(gamePk: number): Promise<GameConditions | null> {
+  const data = await mlbGet("/schedule", {
+    sportId: "1", gamePk: String(gamePk), hydrate: "weather,officials,venue",
+  });
+  const g = data?.dates?.[0]?.games?.[0];
+  return g ? parseGameConditions(g) : null;
+}
+
+// ── who is on base ─────────────────────────────────────────────────────────
+//
+// Replays the current half-inning's runner movements: each play's
+// `runners[].movement` says where a runner started and where he ended (a base,
+// "score", or nowhere when he was put out). Removals are applied before
+// additions within a play, so 1B->2B and 2B->3B on the same play cannot
+// collide on second. A new half-inning starts with the bases empty — the
+// automatic runner in extra innings arrives as a movement like any other.
+export interface Bases { first: boolean; second: boolean; third: boolean }
+
+const BASE_KEY: Record<string, keyof Bases> = { "1B": "first", "2B": "second", "3B": "third" };
+
+export function basesFromPlays(plays: any[]): Bases {
+  const bases: Bases = { first: false, second: false, third: false };
+  if (!Array.isArray(plays) || !plays.length) return bases;
+  const last = plays[plays.length - 1];
+  const inning = last?.about?.inning, top = last?.about?.isTopInning;
+  for (const p of plays) {
+    if (p?.about?.inning !== inning || p?.about?.isTopInning !== top) continue;
+    const moves = (Array.isArray(p?.runners) ? p.runners : []).map((r: any) => r?.movement ?? {});
+    for (const m of moves) {
+      const k = BASE_KEY[m.start ?? m.originBase];
+      if (k) bases[k] = false;
+    }
+    for (const m of moves) {
+      const k = BASE_KEY[m.end];
+      if (k && !m.isOut) bases[k] = true;
+    }
+  }
+  return bases;
+}
+
+// The batter's line so far in this game, from completed at-bats.
+export interface BatterLine { pa: number; h: number; hr: number; bb: number; k: number }
+
+export function batterLineToday(atBats: AtBatRow[], batterId: number | null): BatterLine | null {
+  if (batterId == null) return null;
+  const mine = atBats.filter((a) => a.batter_id === batterId);
+  return {
+    pa: mine.length,
+    h: mine.filter((a) => a.result === "hit").length,
+    hr: mine.filter((a) => a.result_detail === "home_run").length,
+    bb: mine.filter((a) => a.result === "walk").length,
+    k: mine.filter((a) => a.result === "strikeout").length,
+  };
+}
+
+// Pitches the given pitcher has thrown in this game.
+export function pitcherPitchCount(pitches: PitchRow[], pitcherId: number | null): number | null {
+  if (pitcherId == null) return null;
+  return pitches.filter((p) => p.pitcher_id === pitcherId).length;
+}
+
 export function isLive(status: string | null | undefined): boolean {
   return !!status && LIVE_STATUSES.has(status);
 }
@@ -281,8 +377,9 @@ export interface CurrentPlaySummary {
 
 export async function getPlayByPlay(
   gamePk: number,
-): Promise<{ pitches: PitchRow[]; atBats: AtBatRow[]; currentPlay: CurrentPlaySummary | null }> {
+): Promise<{ pitches: PitchRow[]; atBats: AtBatRow[]; currentPlay: CurrentPlaySummary | null; bases: Bases }> {
   const data = await mlbGet(`/game/${gamePk}/playByPlay`);
+  const bases = basesFromPlays(data.allPlays ?? []);
   const pitches: PitchRow[] = [];
   const atBats: AtBatRow[] = [];
   for (const play of data.allPlays ?? []) {
@@ -319,7 +416,7 @@ export async function getPlayByPlay(
       pitch_count: (lastPlay?.playEvents ?? []).filter((e: any) => e.type === "pitch").length,
     }
     : null;
-  return { pitches, atBats, currentPlay };
+  return { pitches, atBats, currentPlay, bases };
 }
 
 export function deriveLiveState(

@@ -13,7 +13,8 @@ import {
 import { ensurePlayers, upsertGames } from "../_shared/ingest.ts";
 import { pendingAtBats, posKey } from "../_shared/livepitch.ts";
 import {
-  currentPaPitches, deriveLiveState, getPlayByPlay, getSchedule, isFinal, isLive,
+  batterLineToday, currentPaPitches, deriveLiveState, getPlayByPlay, getSchedule, isFinal, isLive,
+  pitcherPitchCount,
   liveHomeWinProb, mlbToday,
 } from "../_shared/mlb.ts";
 import { isVoidStatus } from "../_shared/settlequeue.ts";
@@ -107,7 +108,7 @@ Deno.serve(async (req) => {
 
     for (const g of liveGames) {
       try {
-        const { pitches, atBats, currentPlay } = await getPlayByPlay(g.game_pk);
+        const { pitches, atBats, currentPlay, bases } = await getPlayByPlay(g.game_pk);
         const state = deriveLiveState(g.game_pk, pitches, currentPlay);
         if (!state) continue;
 
@@ -139,6 +140,11 @@ Deno.serve(async (req) => {
             current_pa_abi: latestAbIndex(pitches),
             away_team: g.away_team, home_team: g.home_team,
             away_abbr: g.away_abbr, home_abbr: g.home_abbr,
+            // Read-only display context for the Live tab. Derived from the
+            // same play-by-play already fetched above, so no extra MLB call.
+            bases,
+            pitcher_pitch_count: pitcherPitchCount(pitches, (state.pitcher_id as number | null) ?? null),
+            batter_today: batterLineToday(atBats, (state.batter_id as number | null) ?? null),
           },
         };
         await db.from("live_state").upsert(lsRow, { onConflict: "game_pk" });
