@@ -497,6 +497,62 @@ PROJECTION_SCHEMA = pa.schema([
     ("updated_at", _TS),
 ])
 
+# ── player_box ──────────────────────────────────────────────────────────────
+# One row per player per game, from the official boxscore that ingest already
+# fetches for umpire and weather context. Until 2026-10 every per-player line
+# in that payload was discarded.
+#
+# It is the only source in the warehouse for three things the player markets
+# are graded on and therefore must be TRAINED on:
+#   runs scored    belong to whoever crossed the plate, not the batter at it
+#   outs recorded  include pickoffs and caught stealing, which at_bats omits
+#   earned runs    need the official scorer's earned/unearned call and the
+#                  inherited-runner rules
+# It also carries the posted batting order, so a model knows who STARTED in
+# slot 3 rather than inferring it from the order players first came up.
+#
+# The live grader reads the same payload (supabase/functions/_shared/
+# boxscore.ts), so the label a model is fitted on and the one it is graded on
+# share a source.
+#
+# A player who both batted and pitched has one row with both blocks filled;
+# a block the player did not record is NULL, not zero.
+PLAYER_BOX_SCHEMA = pa.schema([
+    ("game_pk", pa.int64()),
+    ("game_date", pa.date32()),
+    ("player_id", pa.int32()),
+    ("team_id", pa.int32()),
+    ("is_home", pa.bool_()),
+    # "300" = starter in slot 3, "301" = first sub in that slot. Raw, so a
+    # reader can recover substitution order; `slot` is the starter decode.
+    ("batting_order", pa.string()),
+    ("slot", pa.int32()),
+    # batting
+    ("pa", pa.int32()),
+    ("ab", pa.int32()),
+    ("h", pa.int32()),
+    ("doubles", pa.int32()),
+    ("triples", pa.int32()),
+    ("hr", pa.int32()),
+    ("r", pa.int32()),
+    ("rbi", pa.int32()),
+    ("tb", pa.int32()),
+    ("bb", pa.int32()),
+    ("k", pa.int32()),
+    ("hbp", pa.int32()),
+    # pitching
+    ("p_started", pa.bool_()),
+    ("p_bf", pa.int32()),
+    ("p_outs", pa.int32()),
+    ("p_h", pa.int32()),
+    ("p_bb", pa.int32()),
+    ("p_k", pa.int32()),
+    ("p_hr", pa.int32()),
+    ("p_r", pa.int32()),
+    ("p_er", pa.int32()),
+    ("p_pitches", pa.int32()),
+])
+
 SCHEMAS: dict[str, pa.Schema] = {
     "pitches": PITCH_SCHEMA,
     "at_bats": AT_BAT_SCHEMA,
@@ -504,6 +560,7 @@ SCHEMAS: dict[str, pa.Schema] = {
     "players": PLAYER_SCHEMA,
     "venues": VENUE_SCHEMA,
     "game_weather": WEATHER_SCHEMA,
+    "player_box": PLAYER_BOX_SCHEMA,
     "contact_quality": CONTACT_SCHEMA,
     "predictions": PREDICTION_SCHEMA,
     "picks": PICK_SCHEMA,
@@ -541,7 +598,7 @@ EXPORT_DATASETS = ("predictions", "picks", "game_predictions",
 # Unlike EXPORT_DATASETS these ARE independently re-fetchable, from Open-Meteo,
 # whose archive is stable for a past date. A verifier for them is therefore
 # possible and simply does not exist yet. Nothing gates on their verification.
-DERIVED_DATASETS = ("game_weather",)
+DERIVED_DATASETS = ("game_weather", "player_box")
 
 # Every day-partitioned dataset, whichever direction it came from.
 DAY_PARTITIONED = DATASETS + EXPORT_DATASETS + DERIVED_DATASETS
@@ -558,6 +615,7 @@ KEY_COLUMNS: dict[str, tuple[str, ...]] = {
     "players": ("player_id",),
     "venues": ("venue_id", "season"),
     "game_weather": ("game_pk",),
+    "player_box": ("game_pk", "player_id"),
     "contact_quality": ("grain", "ev_bucket", "la_bucket", "pull_bucket"),
     "predictions": ("id",),
     "picks": ("id",),

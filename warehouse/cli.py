@@ -39,8 +39,8 @@ from warehouse.config import (
 )
 from warehouse.contact import STATCAST_FLOOR as CONTACT_FLOOR
 from warehouse.ingest import (
-    daterange, ingest_day, ingest_weather_range, refresh_contact_quality,
-    refresh_players, refresh_venues,
+    daterange, ingest_day, ingest_player_box_range, ingest_weather_range,
+    refresh_contact_quality, refresh_players, refresh_venues,
 )
 from warehouse.mlb import MlbApiError, schedule
 from warehouse.store import LocalStore, R2Store
@@ -427,6 +427,45 @@ def cmd_weather(args) -> int:
     return EXIT_OK
 
 
+def cmd_player_box(args) -> int:
+    """Per-player boxscore lines (player_box) for stored game-days.
+
+    New days get these from `ingest` for free. This exists for HISTORY: the
+    lines were discarded until 2026-10, and the player-prop models train on
+    them. `--catchup N` covers the N most recent stored game-days that lack
+    them, so the nightly drains the backlog a slice at a time -- newest first,
+    because recent seasons are what the models weight most.
+    """
+    store = _store(args)
+    if args.catchup:
+        m = manifest.load(store)
+        have = set(manifest.days(m, "player_box"))
+        missing = [d for d in manifest.days(m, "games") if d not in have]
+        if not missing:
+            print("player_box: every stored game-day already has lines")
+            return EXIT_OK
+        days = sorted(missing, reverse=True)[:args.catchup]
+        print(f"player_box catch-up: {len(missing)} game-days missing, "
+              f"covering {len(days)} ({days[-1]} .. {days[0]})")
+    else:
+        start = args.start or _yesterday()
+        days = daterange(start, args.end or start)
+
+    def on_day(day, rows, err):
+        print(f"  {day}  " + (f"FAILED {err}" if err else f"{rows} rows"),
+              flush=True)
+
+    t = ingest_player_box_range(store, days, workers=args.workers,
+                                on_day=on_day)
+    print(f"player_box: {t['days']} days, {t['games']} games, "
+          f"{t['rows']} rows, {t['bytes']/1e6:.1f} MB")
+    if t["failed"]:
+        print(f"  {len(t['failed'])} day(s) failed and were not written; "
+              f"the next run retries them", file=sys.stderr)
+        return EXIT_FAILED
+    return EXIT_OK
+
+
 def cmd_publish(args) -> int:
     """Build the display aggregates in DuckDB and swap them into Supabase."""
     from warehouse import publish as pub
@@ -573,6 +612,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="Use the forecast endpoint instead of the archive, "
                         "for days that have not happened yet.")
     w.set_defaults(fn=cmd_weather)
+
+    pb = sub.add_parser("player-box",
+                        help="per-player boxscore lines for stored game-days")
+    pb.add_argument("--catchup", type=int, metavar="N",
+                    help="Cover the N most recent stored game-days with no "
+                         "player_box yet.")
+    pb.add_argument("--from", dest="start", help="YYYY-MM-DD")
+    pb.add_argument("--to", dest="end", help="YYYY-MM-DD (default: --from)")
+    pb.add_argument("--workers", type=int, default=6)
+    pb.set_defaults(fn=cmd_player_box)
 
     b = sub.add_parser("backfill", help="ingest whole seasons (resumable)")
     b.add_argument("--seasons", nargs="*", type=int, default=None)
