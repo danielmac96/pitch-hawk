@@ -21,6 +21,33 @@ Below 1024px (`Board.mob()`) every tab renders a phone layout: one column,
 wide tables as expandable cards, filters behind a toggle. The rules are in
 [`design-tokens.md`](design-tokens.md#responsive-system-mobile-first).
 
+## URL state
+
+The tab, the game in view and the filters live in the hash, so a reload keeps
+the reader's place, a link can be shared and Back steps between tabs:
+
+```
+#/home?open=<pk,...>            #/live/<pk>
+#/pred?m=hr&team=NYY,BOS&status=live&lineup=1&min=3&sort=prob-
+#/data?tf=14&mk=batter_hit&team=NYY&park=3313&hand=L&side=home
+```
+
+`routeOf()` writes it after every render (push on a new tab or game, replace on
+a filter change); `routePatch()` reads it on boot and on `popstate`. Unknown
+values fall back to the defaults.
+
+## Rendering
+
+`render()` rebuilds `#ph-root` with `innerHTML`, but no longer on every poll:
+a poll whose `/live` payload is unchanged only re-stamps the `[data-clock]`
+elements in place (a full render still happens at least once a minute, for
+countdowns). Focus is captured before a rebuild and restored after it by
+`data-act`/`data-arg`, and the Live tab announces score / inning / batter
+changes through an `aria-live` region outside the root.
+
+Gaps render as a quiet dash with the reason in a tooltip (`missingHtml`); model
+ids live in tooltips, not cells.
+
 ## Checking layouts without the live API
 
 `scripts/dev_mock_api.py` serves `dist/` and a canned slate (live, final and

@@ -110,9 +110,26 @@ night's data serving rather than a half-written table.
 | `pitcher_fatigue_profile` | `/player/{id}/fatigue` |
 | `batter_power_profile` | (feeds profiles) |
 | `batted_ball_profile` | (not yet routed) |
-| `park_hr_factors` | (not yet routed) |
+| `park_hr_factors` | `/game/{game_pk}/context` (`park_hr_factor`, latest season ≤ the game's) |
 | `matchup_history` | `/matchup/{pitcher}/{batter}` |
 | `game_context` | `/game/{game_pk}/context` |
+
+`game_context` only ever holds **finished** games — it comes from the boxscore.
+For a game that is scheduled or in progress, `/game/{game_pk}/context` falls
+back to MLB's own pregame readings (weather, roof, home-plate umpire) from the
+schedule endpoint and says so with `source: "schedule"` (`"boxscore"` once the
+nightly row exists). The warehouse schedule ingest is regular-season only
+(`gameType=R`), so postseason games never get a `game_context` row at all; the
+fallback is what fills them.
+
+Live tables served alongside:
+
+| source | served at |
+|---|---|
+| `batter_rolling_stats` / `pitcher_rolling_stats` (`hit_rate`, `hr_rate`, 30 days) | `/projections` rows as `form_30d` and `opp_form_30d` |
+| `predictions` `game_moneyline` rows (one per at-bat) | `/game/{game_pk}/winprob` |
+| `games` | `/team/{abbr}/next` |
+| `live_state.raw_json` `bases`, `pitcher_pitch_count`, `batter_today` | `/live` (`situation.bases`, `situation.pitcher_pitch_count`, `batter_today`) |
 
 `batted_ball_profile` is player x role x scope: GB/FB/LD/popup, pull, oppo,
 pull-in-the-air, hard-hit (EV >= 95), mean exit velocity and launch angle.

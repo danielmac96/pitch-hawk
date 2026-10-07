@@ -70,7 +70,7 @@ def game(i, away, home, venue, phase):
         "game_pk": pk, "game_label": f"{away} @ {home}", "away_abbr": away, "home_abbr": home,
         "venue": venue, "phase": phase, "start_ts": iso(start),
         "status": {"live": "In Progress", "final": "Final", "pregame": "Scheduled"}[phase],
-        "model_version": "v3.2.0",
+        "model_version": "v3.2.0", "game_type": "R",
         "probable_away_pitcher": {"id": 600000 + i * 2, "name": name()},
         "probable_home_pitcher": {"id": 600001 + i * 2, "name": name()},
         "markets_pregame": [
@@ -113,7 +113,9 @@ def game(i, away, home, venue, phase):
     ab = norm({"out": .45, "hit": .24, "strikeout": .22, "walk": .09})
     g["situation"] = {"away_score": a, "home_score": h, "inning": rnd.randint(2, 9), "half": rnd.choice(["▲", "▼"]),
                       "count": f"{balls}-{strikes}", "outs": rnd.randint(0, 2), "last_pitch_ts": iso(NOW),
-                      "pitch_count_pa": n}
+                      "pitch_count_pa": n, "pitcher_pitch_count": rnd.randint(12, 104),
+                      "bases": {"first": rnd.random() < .4, "second": rnd.random() < .25, "third": rnd.random() < .15}}
+    g["batter_today"] = {"pa": 2, "h": 1, "hr": 0, "bb": 0, "k": 1}
     g.update({"batter_id": 700000 + i * 20 + 1, "batter_name": name(), "batter_hand": rnd.choice("LR"),
               "pitcher_id": g["probable_home_pitcher"]["id"], "pitcher_name": g["probable_home_pitcher"]["name"],
               "pitcher_hand": rnd.choice("LR"), "current_pa_pitches": pitches, "pa_predictions": preds})
@@ -150,7 +152,9 @@ def projections():
                 base = dict(game_pk=g["game_pk"], player_id=pid, player=pname, role="batter",
                             is_home=side == "home", lineup_slot=s if lineup_known else None,
                             expected_pa=xpa, opposing_pitcher_id=opp["id"], opposing_pitcher=opp["name"],
-                            updated_at=iso(NOW - timedelta(minutes=12)), model_version="bh_v2")
+                            updated_at=iso(NOW - timedelta(minutes=12)), model_version="bh_v2",
+                            form_30d={"pa": rnd.randint(8, 110), "hit_rate": round(rnd.uniform(.15, .32), 4), "hr_rate": round(rnd.uniform(0, .07), 4)},
+                            opp_form_30d={"pa": rnd.randint(40, 160), "hit_rate": round(rnd.uniform(.18, .28), 4), "hr_rate": round(rnd.uniform(.015, .045), 4)})
                 res = (lambda: rnd.choice(["hit", "miss", "miss", "void"])) if g["phase"] == "final" else (lambda: None)
                 rows.append(dict(base, market="batter_hit", probability=round(rnd.uniform(.45, .78), 3),
                                  per_pa_probability=round(rnd.uniform(.18, .32), 3), result=res()))
@@ -193,8 +197,22 @@ def route(path, q):
             rows = [r for r in rows if r["role"] == first("role")]
         return 200, {"rows": rows}
     if path.startswith("/game/") and path.endswith("/context"):
-        return 200, {"found": True, "venue_name": "Mock Park", "weather_condition": "Partly Cloudy", "temp_f": 71,
-                     "wind_mph": 9, "wind_direction": "Out To CF", "hp_umpire": "Pat Hoberg"}
+        return 200, {"found": True, "source": "schedule", "venue_name": "Mock Park", "weather_condition": "Partly Cloudy",
+                     "temp_f": 71, "wind_mph": 9, "wind_direction": "Out To CF", "hp_umpire": "Pat Hoberg",
+                     "roof_closed": False, "park_hr_factor": 1.04, "park_hr_factor_season": 2026}
+    if path.startswith("/game/") and path.endswith("/winprob"):
+        pk = int(path.split("/")[2]); g = next((x for x in GAMES if x["game_pk"] == pk), None)
+        if not g or g["phase"] == "pregame":
+            return 200, {"game_pk": pk, "pregame_home": None, "points": []}
+        cur = hp0 = g["markets_pregame"][0]["probs"]["home"]; pts = []
+        for abi in range(40):
+            cur = min(.98, max(.02, cur + rnd.gauss(0, .035)))
+            pts.append({"abi": abi, "inning": abi // 8 + 1, "half": "▲" if (abi // 4) % 2 == 0 else "▼", "home": round(cur, 4)})
+        return 200, {"game_pk": pk, "pregame_home": hp0, "points": pts}
+    if path.startswith("/team/") and path.endswith("/next"):
+        t = path.split("/")[2].upper()
+        return 200, {"team": t, "found": True, "game": {"game_pk": 900001, "official_date": TODAY, "start_ts": iso(NOW + timedelta(days=2)),
+                     "status": "Scheduled", "away_abbr": t, "home_abbr": "KC", "venue_name": "Kauffman Stadium"}}
     if path == "/pitches":
         return 200, {"rows": [], "next_cursor": None}
     if path == "/accuracy":
