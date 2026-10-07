@@ -179,6 +179,18 @@
         h2h: {},
         // Per-at-bat win-probability history per game_pk (GET /game/{pk}/winprob).
         wp: {},
+        // Search / player / team / guide panel over the page; null when closed.
+        overlay: null, searchQ: "", teamNext: {},
+        // Yesterday's graded slate for the Home scorecard, and tomorrow's
+        // slate once tonight's games are over.
+        yday: null, tmrw: null,
+        // Opt-in alerts for pinned batters and games; the toast fallback.
+        alerts: (() => { try { return window.localStorage.getItem("ph-alerts") === "1"; } catch (_e) { return false; } })(),
+        toast: null,
+        // Clocks in the reader's own time zone instead of Eastern.
+        tzLocal: (() => { try { return window.localStorage.getItem("ph-tz") === "local"; } catch (_e) { return false; } })(),
+        // First-visit "how to read this" card on Home, until dismissed.
+        hintSeen: (() => { try { return window.localStorage.getItem("ph-hint-seen") === "1"; } catch (_e) { return true; } })(),
         // Predictions filters (see PRED_DEFAULTS) and the trust tiles.
         ...this.PRED_DEFAULTS,
         trust: null,
@@ -201,11 +213,34 @@
       this._dayRowsSig = {};
       this._dayRowsSeq = {};
       this._models = {};
+      // The URL wins over the defaults on first paint (see routePatch).
+      this.applyRoute();
+      window.addEventListener("popstate", () => {
+        if (!this.applyRoute()) { this.state.view = "home"; this._lastHash = this.routeOf(); }
+        this.render();
+        if (this.state.view === "live") this.syncDay(false, "live");
+        if (this.state.view === "home") Object.keys(this.state.open).forEach((pk) => this.loadGameContext(pk));
+      });
       this.root.addEventListener("click", (e) => this._onClick(e));
       // `change` rather than `input`: it fires on blur/Enter, so a re-render
       // never lands mid-keystroke. Combined with the focus guard in render(),
       // typing in a filter box survives the 8s poll.
       this.root.addEventListener("change", (e) => this._onFilterChange(e));
+      // Search filters as you type, but repaints only its own results list:
+      // a full render would rebuild the input under the cursor.
+      this.root.addEventListener("input", (e) => {
+        if (!e.target || !e.target.hasAttribute || !e.target.hasAttribute("data-search")) return;
+        this.state.searchQ = e.target.value;
+        const out = document.getElementById("ph-search-results");
+        if (out) out.innerHTML = this.searchResultsHtml(e.target.value);
+      });
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape" && this.state.overlay) { e.preventDefault(); this.closeOverlay(); }
+        // "/" opens search, as on most data sites — unless the reader is typing.
+        if (e.key === "/" && !this.state.overlay && !/^(INPUT|SELECT|TEXTAREA)$/.test((document.activeElement || {}).tagName || "")) {
+          e.preventDefault(); this.openOverlay({ kind: "search" });
+        }
+      });
     }
 
     _onFilterChange(e) {
@@ -224,6 +259,113 @@
       }
     }
     setState(patch) { Object.assign(this.state, patch); this.render(); }
+
+    // ── URL state ────────────────────────────────────────────────────────
+    // The tab, the game in view and the filters live in the hash, so a reload
+    // keeps the reader's place, a link can be shared, and Back steps between
+    // tabs instead of leaving the site.
+    //   #/home?open=<pk,..>   #/pred?m=hr&team=NYY,BOS&status=live&lineup=1&min=3
+    //   #/live/<pk>           #/data?tf=14&mk=batter_hit&team=NYY&park=..&hand=L&side=home
+    VIEWS = ["home", "pred", "live", "data"];
+    routeOf() {
+      const s = this.state, q = new URLSearchParams();
+      let path = s.view;
+      if (s.view === "live" && s.liveSel && s.liveSel !== "top") path += `/${s.liveSel}`;
+      if (s.view === "home") {
+        const open = Object.keys(s.open).filter((k) => s.open[k]);
+        if (open.length) q.set("open", open.join(","));
+      }
+      if ((s.view === "home" || s.view === "pred") && s.mode) q.set("mode", s.mode);
+      if (s.view === "pred") {
+        const d = this.PRED_DEFAULTS;
+        if (s.pMarket !== d.pMarket) q.set("m", s.pMarket);
+        if (s.pTeams.length) q.set("team", s.pTeams.join(","));
+        if (s.pStatus !== d.pStatus) q.set("status", s.pStatus);
+        if (s.pConfOnly) q.set("lineup", "1");
+        if (s.pMin > -10) q.set("min", String(s.pMin));
+        if (s.pSort !== d.pSort || s.pDir !== d.pDir) q.set("sort", `${s.pSort}${s.pDir > 0 ? "+" : "-"}`);
+      }
+      if (s.view === "data") {
+        const d = this.D_DEFAULTS;
+        if (s.dTf !== d.dTf) q.set("tf", String(s.dTf));
+        if (s.dMk !== d.dMk) q.set("mk", s.dMk);
+        if (s.dTeam) q.set("team", s.dTeam);
+        if (s.dPark) q.set("park", String(s.dPark));
+        if (s.dHand !== d.dHand) q.set("hand", s.dHand);
+        if (s.dSide !== d.dSide) q.set("side", s.dSide);
+      }
+      const qs = q.toString();
+      return `#/${path}${qs ? `?${qs}` : ""}`;
+    }
+    // The state a hash describes, as a patch. Unknown values fall back to the
+    // defaults rather than throwing: a hand-edited or stale link still opens.
+    routePatch(hash) {
+      const raw = String(hash || "").replace(/^#\/?/, "");
+      if (!raw) return null;
+      const [pathPart, qs] = raw.split("?");
+      const [view, seg] = pathPart.split("/");
+      if (!this.VIEWS.includes(view)) return null;
+      const q = new URLSearchParams(qs || "");
+      const patch = { view };
+      const mode = q.get("mode");
+      patch.mode = mode === "live" || mode === "pregame" ? mode : null;
+      if (view === "live") patch.liveSel = seg && /^\d+$/.test(seg) ? seg : "top";
+      if (view === "home") {
+        const open = {};
+        (q.get("open") || "").split(",").filter((k) => /^\d+$/.test(k)).forEach((k) => { open[k] = true; });
+        patch.open = open;
+      }
+      if (view === "pred") {
+        const d = this.PRED_DEFAULTS;
+        const m = q.get("m");
+        patch.pMarket = this.PRED_MARKETS.some(([k]) => k === m) ? m : d.pMarket;
+        patch.pTeams = (q.get("team") || "").split(",").map((t) => t.trim().toUpperCase()).filter((t) => /^[A-Z]{2,3}$/.test(t));
+        const st = q.get("status");
+        patch.pStatus = ["all", "live", "upcoming", "final"].includes(st) ? st : d.pStatus;
+        patch.pConfOnly = q.get("lineup") === "1";
+        const min = Number(q.get("min"));
+        patch.pMin = q.has("min") && isFinite(min) ? Math.max(-10, Math.min(15, min)) : d.pMin;
+        const sort = /^(lift|prob|time|name)([+-])$/.exec(q.get("sort") || "");
+        patch.pSort = sort ? sort[1] : d.pSort;
+        patch.pDir = sort ? (sort[2] === "+" ? 1 : -1) : d.pDir;
+      }
+      if (view === "data") {
+        const d = this.D_DEFAULTS;
+        const tf = q.get("tf");
+        patch.dTf = tf === "today" ? "today" : [7, 14, 30, this.D_SEASON].includes(Number(tf)) ? Number(tf) : d.dTf;
+        const mk = q.get("mk");
+        patch.dMk = this.D_MARKETS.some((x) => x[0] === mk) ? mk : d.dMk;
+        const team = (q.get("team") || "").toUpperCase();
+        patch.dTeam = this.PARKS[team] ? team : "";
+        patch.dPark = /^\d+$/.test(q.get("park") || "") ? q.get("park") : "";
+        patch.dHand = ["L", "R"].includes(q.get("hand")) ? q.get("hand") : d.dHand;
+        patch.dSide = ["home", "away"].includes(q.get("side")) ? q.get("side") : d.dSide;
+        patch.dFeedN = this.D_PAGE;
+        patch.graded = { rows: [], total: 0, next: null, loaded: false, err: false };
+      }
+      return patch;
+    }
+    // Push a history entry when the reader moves somewhere (another tab,
+    // another game); replace it when they only adjust a filter, so Back does
+    // not step through every chip they touched.
+    syncUrl() {
+      const h = this.routeOf();
+      if (h === this._lastHash) return;
+      const prev = this._lastHash;
+      this._lastHash = h;
+      const url = `${window.location.pathname}${window.location.search}${h}`;
+      try {
+        if (prev && prev.split("?")[0] !== h.split("?")[0]) window.history.pushState(null, "", url);
+        else window.history.replaceState(null, "", url);
+      } catch (_e) { /* sandboxed frames can refuse history writes */ }
+    }
+    applyRoute() {
+      const patch = this.routePatch(window.location.hash);
+      if (!patch) return false;
+      Object.assign(this.state, patch);
+      this._lastHash = this.routeOf();
+      return true;
+    }
 
     // ── formatters ───────────────────────────────────────────────────────
     dk() { return this.state.dark; }
@@ -311,6 +453,29 @@
           return this.setState({ pSort: arg, pDir: dir });
         }
         case "pAll": return this.setState({ pAll: !this.state.pAll });
+        case "pTeamT": {
+          if (!arg) return this.setState({ pTeams: [], pAll: false });
+          const t = this.state.pTeams.slice(), i = t.indexOf(arg);
+          if (i >= 0) t.splice(i, 1); else t.push(arg);
+          return this.setState({ pTeams: t.sort(), pAll: false });
+        }
+        case "pExport": return this.predExport();
+        case "alerts": return this.toggleAlerts();
+        case "toastX": return this.setState({ toast: null });
+        case "ovOpen": return this.openOverlay({ kind: arg });
+        case "ovClose": return this.closeOverlay();
+        case "ovPlayer": { const [id, pk] = String(arg).split("|"); return this.openOverlay({ kind: "player", id, pk, back: true }); }
+        case "ovStarter": { const [pk, side] = String(arg).split("|"); return this.openOverlay({ kind: "starter", pk, side, back: true }); }
+        case "ovTeam": return this.openOverlay({ kind: "team", abbr: arg, back: true });
+        case "tz": {
+          const v = !this.state.tzLocal;
+          try { window.localStorage.setItem("ph-tz", v ? "local" : "et"); } catch (_e) { /* session only */ }
+          return this.setState({ tzLocal: v });
+        }
+        case "hintDone": {
+          try { window.localStorage.setItem("ph-hint-seen", "1"); } catch (_e) { /* session only */ }
+          return this.setState({ hintSeen: true });
+        }
         case "pClear": { this.predClear(); return this.render(); }
         // A Predictions row opens in place (see predBatterDetailHtml).
         case "pOpen":
@@ -318,6 +483,7 @@
         // Explicitly leave for a game's Home pill. arg "pk" or "pk|side".
         case "openGame": {
           const [pk, side] = String(arg).split("|");
+          this.state.overlay = null;
           return this.openPill(pk, side || null);
         }
         case "mode": return this.setState({ mode: arg === "live" || arg === "pregame" ? arg : null });
@@ -326,7 +492,7 @@
         case "liveSel": return this.setState({ liveSel: arg });
         // A decision card or pin about a live game: the Live tab on that game.
         case "liveGo": {
-          this.setState({ view: "live", liveSel: String(arg) });
+          this.setState({ view: "live", liveSel: String(arg), overlay: null });
           this.syncDay(false, "live");
           return;
         }
@@ -367,7 +533,7 @@
       const view = this.state.view;
       const tabs = COPY.tabs.map(([k, label]) => {
         const on = view === k;
-        return `<button data-act="view" data-arg="${k}" class="ph-tab${on ? " ph-tab-on" : ""}">${label}</button>`;
+        return `<button data-act="view" data-arg="${k}" class="ph-tab${on ? " ph-tab-on" : ""}" role="tab" aria-selected="${on}">${label}</button>`;
       }).join("");
       const liveCount = liveNowCount();
       const liveText = liveCount
@@ -385,7 +551,11 @@
             <span class="ph-dot${liveCount ? " is-live" : ""}"></span>
             <span>${liveText}</span>
           </div>
-          <nav class="ph-nav">${tabs}</nav>
+          <div class="ph-hdr-tools">
+            <button class="ph-iconbtn" data-act="ovOpen" data-arg="search" aria-label="Search players and teams" title="Search players and teams"><svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="2"/><line x1="11" y1="11" x2="15" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="ph-iconbtn-lbl">Search</span></button>
+            <button class="ph-iconbtn" data-act="ovOpen" data-arg="help" aria-label="How to read the board" title="How to read the board"><span aria-hidden="true">?</span><span class="ph-iconbtn-lbl">Guide</span></button>
+          </div>
+          <nav class="ph-nav" role="tablist" aria-label="Sections">${tabs}</nav>
         </div>
       </header>`;
     }
@@ -403,7 +573,16 @@
     // ── clocks ───────────────────────────────────────────────────────────
     clockSec(ts) {
       return ts == null ? null
-        : new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: ET });
+        : new Date(ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", second: "2-digit", timeZone: this.tz() });
+    }
+    // Clocks are Eastern by default (the slate is an Eastern date); a reader
+    // can switch them to their own time zone. The slate DATE stays Eastern.
+    tz() { return this.state.tzLocal ? undefined : ET; }
+    tzLabel() {
+      if (!this.state.tzLocal) return "ET";
+      try {
+        return new Date().toLocaleTimeString([], { timeZoneName: "short" }).split(" ").pop() || "local";
+      } catch (_e) { return "local"; }
     }
 
     // Escaped text with every run of digits set in the data face, for mixed
@@ -473,6 +652,105 @@
       try { window.localStorage.setItem(PINS_KEY, JSON.stringify(pins)); } catch (_e) { /* session only */ }
       this.setState({ pins });
     }
+    // The last slate date each pin was seen on the board, under its own key
+    // so the pin list keeps the shape the redesign handoff specified.
+    pinDates() {
+      if (this._pinDates) return this._pinDates;
+      try { this._pinDates = JSON.parse(window.localStorage.getItem(`${PINS_KEY}-seen`) || "{}") || {}; } catch (_e) { this._pinDates = {}; }
+      return this._pinDates;
+    }
+    savePinDates() {
+      try { window.localStorage.setItem(`${PINS_KEY}-seen`, JSON.stringify(this._pinDates || {})); } catch (_e) { /* session only */ }
+    }
+    // A pin that resolves today is stamped with today; one that has not
+    // resolved since an earlier slate is dropped. Runs only once the slate
+    // and the projections have both loaded, so a pin is never expired just
+    // because the data it points at is still on its way.
+    expirePins() {
+      if (!(PH.games || []).length || this.state.proj.rows === null) return;
+      const today = slateDate(), dates = this.pinDates();
+      let dirty = false;
+      const keep = this.state.pins.filter((k) => {
+        const w = this.resolvePin(k);
+        const known = k.startsWith("g:") ? !!w.game : !!(w.rows && w.rows.length);
+        if (known) { if (dates[k] !== today) { dates[k] = today; dirty = true; } return true; }
+        if (!dates[k]) { dates[k] = today; dirty = true; return true; }
+        return dates[k] >= today;
+      });
+      if (dirty) this.savePinDates();
+      if (keep.length !== this.state.pins.length) {
+        try { window.localStorage.setItem(PINS_KEY, JSON.stringify(keep)); } catch (_e) { /* session only */ }
+        this.state.pins = keep;
+      }
+    }
+
+    // ── alerts for what a reader is watching ─────────────────────────────
+    // Opt-in. A pinned batter coming to the plate or on deck, a pinned game
+    // swinging 15+ points of win probability, or going final. A browser
+    // notification when permitted, an in-page toast otherwise. Each event
+    // fires once.
+    toggleAlerts() {
+      const on = !this.state.alerts;
+      try { window.localStorage.setItem("ph-alerts", on ? "1" : "0"); } catch (_e) { /* session only */ }
+      if (on && "Notification" in window && Notification.permission === "default") {
+        try { Notification.requestPermission().then(() => this.render()); } catch (_e) { /* old Safari */ }
+      }
+      this.setState({ alerts: on });
+      if (on) this.notify(COPY.alertsOnTitle, COPY.alertsOnBody);
+    }
+    notify(title, body) {
+      const n = window.Notification;
+      if (n && n.permission === "granted" && document.hidden) {
+        try { new n(title, { body, tag: `ph-${title}` }); return; } catch (_e) { /* fall through to the toast */ }
+      }
+      this.setState({ toast: { title, body, at: Date.now() } });
+      clearTimeout(this._toastTo);
+      this._toastTo = setTimeout(() => this.setState({ toast: null }), 7000);
+    }
+    checkAlerts() {
+      if (!this.state.alerts || !this.state.pins.length) return;
+      const seen = this._alerted || (this._alerted = new Set());
+      const fire = (key, title, body) => { if (seen.has(key)) return; seen.add(key); this.notify(title, body); };
+      const live = this.liveGames();
+      this.state.pins.forEach((pin) => {
+        const id = pin.slice(2);
+        if (pin.startsWith("b:")) {
+          live.forEach((g) => {
+            const where = `${g.away} @ ${g.home} · ${this.halfWord(g.half).toLowerCase()} ${g.inning || ""}`;
+            if (g.batter && String(g.batter.id) === id) {
+              fire(`up:${g.gamePk}:${id}:${g.inning}${g.half}`, `${g.batter.name} is up`, where);
+              return;
+            }
+            const side = g.half === "▲" ? "away" : "home";
+            const bs = this.battersOf(g.gamePk).filter((b) => b.side === side);
+            const cur = g.batter && bs.find((b) => b.id === String(g.batter.id));
+            const me = bs.find((b) => b.id === id);
+            if (cur && cur.slot && me && me.slot === (cur.slot % 9) + 1) {
+              fire(`deck:${g.gamePk}:${id}:${g.inning}${g.half}`, `${me.name} is on deck`, where);
+            }
+          });
+        } else {
+          const g = (PH.games || []).find((x) => String(x.gamePk) === id);
+          if (!g) return;
+          if (g.phase === "final") { fire(`final:${id}`, `Final: ${g.away} ${g.score.away}, ${g.home} ${g.score.home}`, COPY.alertsFinalBody); return; }
+          if (g.phase !== "live") return;
+          const w = this.gameWp(g);
+          const last = (this._wpSeen || (this._wpSeen = {}))[id];
+          if (w.prob == null) return;
+          const homeP = w.team === g.home ? w.prob : 1 - w.prob;
+          if (last == null) { this._wpSeen[id] = homeP; return; }
+          if (Math.abs(homeP - last) >= 0.15) {
+            this._wpSeen[id] = homeP;
+            fire(`swing:${id}:${Math.round(homeP * 100)}`, `Big swing: ${g.away} @ ${g.home}`, `${w.team} now ${w.val} to win · ${this.halfWord(g.half).toLowerCase()} ${g.inning || ""}`);
+          }
+        }
+      });
+    }
+    toastHtml() {
+      const t = this.state.toast;
+      if (!t) return "";
+      return `<div class="ph-toast" role="status"><b>${esc(t.title)}</b><span>${esc(t.body)}</span><button class="ph-link" data-act="toastX" aria-label="Dismiss">✕</button></div>`;
+    }
     togglePin(key) {
       if (!key || !/^[gb]:\S+$/.test(key)) return;
       const pins = this.state.pins.slice();
@@ -500,6 +778,7 @@
 
     // ── ★ WATCHING row ───────────────────────────────────────────────────
     watchRowHtml() {
+      this.expirePins();
       const pins = this.state.pins;
       if (!pins.length) return "";
       const pills = pins.map((key) => {
@@ -538,7 +817,10 @@
           <button class="ph-watch-unpin" data-act="pin" data-arg="${esc(key)}" title="${esc(COPY.watchUnpin)}" aria-label="${esc(COPY.watchUnpin)}">★</button>
         </span>`;
       }).join("");
-      return `<div class="ph-watch"><span class="ph-kicker">${esc(COPY.watchingLabel)}</span>${pills}</div>`;
+      const a = this.state.alerts;
+      const denied = a && window.Notification && Notification.permission === "denied";
+      const bell = `<button class="ph-chip${a ? " is-on" : ""}" data-act="alerts" aria-pressed="${!!a}" title="${esc(a ? COPY.alertsOffTip : COPY.alertsOnTip)}">${a ? "🔔 Alerts on" : "🔕 Alerts off"}</button>${denied ? `<span class="ph-mut ph-small">${esc(COPY.alertsDenied)}</span>` : ""}`;
+      return `<div class="ph-watch"><span class="ph-kicker">${esc(COPY.watchingLabel)}</span>${pills}${bell}</div>`;
     }
 
     // ── API unreachable ──────────────────────────────────────────────────
@@ -573,7 +855,7 @@
     // Every probability on today's slate in one table, switchable by market.
     // Filters live in state (p*), never in the DOM, so they survive the poll.
     PRED_MARKETS = [["hit", "1+ Hit"], ["hr", "1+ HR"], ["wp", "Win prob"], ["tot", "Totals"], ["sp", "Starters"]];
-    PRED_DEFAULTS = { pMarket: "hit", pTeam: "", pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false, pOpen: {} };
+    PRED_DEFAULTS = { pMarket: "hit", pTeams: [], pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false, pOpen: {} };
     PRED_PAGE = 25;
 
     // What the batter and starter tables are waiting on, if anything. These
@@ -638,14 +920,18 @@
       // page is about. Everything else goes back to its default.
       const d = this.PRED_DEFAULTS;
       Object.assign(this.state, {
-        pTeam: d.pTeam, pStatus: d.pStatus, pConfOnly: d.pConfOnly, pMin: d.pMin, pAll: false,
+        pTeams: [], pStatus: d.pStatus, pConfOnly: d.pConfOnly, pMin: d.pMin, pAll: false,
       });
     }
     predStatusOk(g) {
       const s = this.state.pStatus;
       return s === "all" || (s === "upcoming" ? g.phase === "pregame" : g.phase === s);
     }
-    predTeamOk(...teams) { return !this.state.pTeam || teams.includes(this.state.pTeam); }
+    // Several teams at once (a DFS stack is two or three clubs); none = all.
+    predTeamOk(...teams) {
+      const want = this.state.pTeams;
+      return !want.length || teams.some((t) => want.includes(t));
+    }
     predFilterBarHtml(count) {
       const s = this.state;
       const anyLive = this.todayGames().some((g) => g.phase === "live");
@@ -654,10 +940,16 @@
         `<button class="ph-chip${on ? " is-on" : ""}" data-act="${act}" data-arg="${esc(k)}">${esc(label)}</button>`;
       const minLabel = s.pMin <= -10 ? "any" : `${s.pMin >= 0 ? "+" : "−"}${Math.abs(s.pMin)} pts`;
       const batter = s.pMarket === "hit" || s.pMarket === "hr";
-      const teamSel = `<select class="ph-select" data-pfilter="pTeam" aria-label="Team">
-          <option value="">All teams</option>
-          ${teams.map((t) => `<option value="${esc(t)}"${s.pTeam === t ? " selected" : ""}>${esc(t)}</option>`).join("")}
-        </select>`;
+      const tOpen = !!s.mOpen["f:teams"];
+      const teamLbl = !s.pTeams.length ? "All teams" : s.pTeams.length <= 3 ? s.pTeams.join(", ") : `${s.pTeams.length} teams`;
+      const teamSel = `<span class="ph-teampick">
+          <button class="ph-select ph-teampick-btn" data-act="mToggle" data-arg="f:teams" aria-expanded="${tOpen}" aria-label="Teams">${esc(teamLbl)} ${tOpen ? "▴" : "▾"}</button>
+          ${tOpen ? `<span class="ph-teampick-panel" role="group" aria-label="Pick teams">
+            ${chip("pTeamT", "", "All", !s.pTeams.length)}
+            ${teams.map((t) => `<button class="ph-chip${s.pTeams.includes(t) ? " is-on" : ""}" data-act="pTeamT" data-arg="${esc(t)}" aria-pressed="${s.pTeams.includes(t)}">${esc(t)}</button>`).join("")}
+          </span>` : ""}
+        </span>`;
+      const exportBtn = count ? `<button class="ph-link" data-act="pExport" title="Download every row that matches these filters as CSV">Export CSV</button>` : "";
       const statusChips = `<span class="ph-fgroup">${[["all", "All"], ["live", "Live"], ["upcoming", "Upcoming"], ["final", "Final"]].map(([k, l]) => chip("pStatus", k, l, s.pStatus === k)).join("")}</span>`;
       const batterCtl = batter ? `${chip("pConfOnly", "1", `${s.pConfOnly ? "✓ " : ""}Lineup confirmed only`, s.pConfOnly)}
         <label class="ph-range">MIN LIFT
@@ -672,7 +964,7 @@
       // Phone: mode and market always in view; the rest behind "Filters".
       if (this.mob()) {
         const open = !!s.mOpen["f:pred"];
-        const n = (s.pTeam ? 1 : 0) + (s.pStatus !== "all" ? 1 : 0)
+        const n = (s.pTeams.length ? 1 : 0) + (s.pStatus !== "all" ? 1 : 0)
           + (batter && s.pConfOnly ? 1 : 0) + (batter && s.pMin > -10 ? 1 : 0);
         return `<div class="ph-fbar">
           <div class="ph-fbar-line">
@@ -681,7 +973,7 @@
             ${countHtml}
           </div>
           <div class="ph-fscroll">${this.PRED_MARKETS.map(([k, l]) => chip("pMarket", k, l, s.pMarket === k)).join("")}</div>
-          ${open ? `<div class="ph-fbar-line ph-fbar-more">${teamSel}${statusChips}${batterCtl}<button class="ph-link" data-act="pClear">Clear</button></div>` : ""}
+          ${open ? `<div class="ph-fbar-line ph-fbar-more">${teamSel}${statusChips}${batterCtl}<button class="ph-link" data-act="pClear">Clear</button>${exportBtn}</div>` : ""}
         </div>`;
       }
       return `<div class="ph-fbar">
@@ -693,8 +985,50 @@
         ${statusChips}
         ${batterCtl}
         <button class="ph-link" data-act="pClear">Clear</button>
+        ${exportBtn}
         ${countHtml}
       </div>`;
+    }
+
+    // Every row the current filters match — not just the page on screen — as
+    // a CSV download, in the order shown.
+    predCsv() {
+      const m = this.state.pMarket;
+      const q = (v) => { const t = v == null ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+      let head, rows;
+      if (m === "hit" || m === "hr") {
+        head = ["rank", "player", "team", "slot", "opposing_starter", "game", "status", "probability", "league_rate", "lift_pts", "xpa", "form_30d_rate", "result"];
+        rows = this.predBatterRows().map((r, i) => {
+          const f = r.b.form ? r.b.form[m === "hit" ? "hit_rate" : "hr_rate"] : null;
+          const rec = r.b[m];
+          return [i + 1, r.b.name, this.teamOf(r.b), r.b.slot || "", r.b.spName || "", `${r.g.away} @ ${r.g.home}`, r.g.phase,
+            r.c.p == null ? "" : r.c.p.toFixed(4), r.c.base == null ? "" : r.c.base.toFixed(4), r.c.pts == null ? "" : r.c.pts.toFixed(1),
+            r.b.xpa == null ? "" : r.b.xpa.toFixed(2), f == null ? "" : f, rec && rec.result ? rec.result : ""];
+        });
+      } else if (m === "sp") {
+        head = ["starter", "team", "opponent", "game_time", ...this.STARTER_MARKETS.map(([k]) => `${k}_line`), ...this.STARTER_MARKETS.map(([k]) => `${k}_p_over`)];
+        rows = this.predStarterRows().map((r) => {
+          const props = this.starterProps(r.g.gamePk, r.id) || {};
+          return [r.name, r.team, r.opp, this.clockOf(r.g.startTs) || "",
+            ...this.STARTER_MARKETS.map(([k]) => (props[k] ? props[k].line : "")),
+            ...this.STARTER_MARKETS.map(([k]) => (props[k] ? props[k].probability : ""))];
+        });
+      } else {
+        head = ["game", "status", "pregame_favourite", "pregame_win_prob", "now_favourite", "now_win_prob", "projected_runs", "total_pick", "total_prob"];
+        rows = this.predGameRows().map(({ g, w, pw, t }) => [`${g.away} @ ${g.home}`, g.phase, pw.team, pw.prob == null ? "" : pw.prob.toFixed(4),
+          g.phase === "pregame" ? "" : w.team, w.prob == null ? "" : w.prob.toFixed(4), t.proj == null ? "" : t.proj.toFixed(1), t.pick, t.prob == null ? "" : t.prob]);
+      }
+      return [head, ...rows].map((r) => r.map(q).join(",")).join("\n");
+    }
+    predExport() {
+      try {
+        const blob = new Blob([this.predCsv()], { type: "text/csv" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `pitchhawk-${this.state.pMarket}-${slateDate()}.csv`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      } catch (_e) { /* a browser without Blob downloads: nothing to do */ }
     }
 
     // ── rows ─────────────────────────────────────────────────────────────
@@ -1171,8 +1505,12 @@
     homeHtml() {
       const games = this.todayGames();
       const head = this.homeTitleHtml() + this.statusBarHtml();
-      if (!games.length) return head + this.homeEmptyHtml();
-      return head + this.decisionStripHtml() + this.homeGroupsHtml();
+      const hint = this.state.hintSeen ? "" : `<div class="ph-hint" role="note">
+          <span><b>${esc(COPY.hintTitle)}</b> ${esc(COPY.hintBody)}</span>
+          <span class="ph-hint-act"><button class="ph-chip is-on" data-act="ovOpen" data-arg="help">How to read the board</button><button class="ph-link" data-act="hintDone">Got it</button></span>
+        </div>`;
+      if (!games.length) return head + hint + this.homeEmptyHtml();
+      return head + hint + this.decisionStripHtml() + this.scorecardHtml() + this.homeGroupsHtml() + this.nextSlateHtml();
     }
 
     // ── league baselines ─────────────────────────────────────────────────
@@ -1578,7 +1916,7 @@
       const next = !SLATE_IS_TODAY;
       return `<div class="ph-titlerow">
         <h1 class="ph-h1">${esc(next ? COPY.homeTitleNext : COPY.homeTitle)}</h1>
-        <span class="ph-mono ph-titlerow-date">${esc(date)} · all times ET${next ? ` · ${esc(COPY.homeNextSub)}` : ""}</span>
+        <span class="ph-mono ph-titlerow-date">${esc(date)} · all times ${esc(this.tzLabel())} <button class="ph-link ph-tzbtn" data-act="tz">${this.state.tzLocal ? "use ET" : "use my time"}</button>${next ? ` · ${esc(COPY.homeNextSub)}` : ""}</span>
         <div class="ph-titlerow-right">
           <span class="ph-kicker ph-kicker--mut">Rank reads for</span>
           ${this.segHtml("mode", this.effectiveMode(), [["pregame", "Pregame"], ["live", "Live"]], anyLive)}
@@ -1596,7 +1934,7 @@
         <span class="ph-statusbar-up"><b>${n("pregame")}</b> upcoming</span>
         <span><b>${n("final")}</b> final</span>
         <span>lineups confirmed <b>${lu && lu.n ? `${lu.ok}/${lu.n}` : "—"}</b></span>
-        <span class="ph-statusbar-upd">updated <b class="${this.flashIf("statusbar", upd)}">${esc(upd || "—")}</b> · polls every 8s</span>
+        <span class="ph-statusbar-upd">updated <b class="${this.flashIf("statusbar", upd)}" data-clock>${esc(upd || "—")}</b> · polls every 8s</span>
       </div>`;
     }
     homeEmptyHtml() {
@@ -1607,9 +1945,95 @@
       return `<div class="ph-empty">${esc(msg)}</div>`;
     }
 
+    // ── scorecard ────────────────────────────────────────────────────────
+    // How the reads did: today's finished games, and yesterday's slate. The
+    // board graded every read all along; nothing summed them where a reader
+    // checking in after the games would look.
+    dayScore(projRows, games) {
+      const tally = (mk) => {
+        let n = 0, hits = 0, sumP = 0;
+        (projRows || []).forEach((r) => {
+          if (r.market !== mk || (r.result !== "hit" && r.result !== "miss")) return;
+          n += 1; sumP += Number(r.probability); if (r.result === "hit") hits += 1;
+        });
+        return { n, hits, exp: n ? sumP / n : null };
+      };
+      let fw = 0, fl = 0, th = 0, tn = 0;
+      (games || []).filter((g) => g.phase === "final").forEach((g) => {
+        const w = this.gameResult(g, "wp"), t = this.gameResult(g, "tot");
+        if (w.r === "hit") fw += 1; else if (w.r === "miss") fl += 1;
+        if (t.r) { tn += 1; if (t.r === "hit") th += 1; }
+      });
+      return { hit: tally("batter_hit"), hr: tally("batter_hr"), fav: { w: fw, l: fl }, tot: { h: th, n: tn } };
+    }
+    async loadYesterday() {
+      const date = PH.mlbDate(-1);
+      if (this._ydayAt && this._ydayDate === date && Date.now() - this._ydayAt < 600000) return;
+      this._ydayAt = Date.now(); this._ydayDate = date;
+      const [hit, hr, board] = await Promise.all([
+        fetchJson(`/projections?date=${date}&market=batter_hit`),
+        fetchJson(`/projections?date=${date}&market=batter_hr`),
+        PH.loadBoard(API_BASE, null, date).catch(() => null),
+      ]);
+      const rows = [].concat((hit && hit.rows) || [], (hr && hr.rows) || []);
+      const games = board ? [].concat(board.live || [], board.upcoming || [], board.final || []) : [];
+      this.setState({ yday: { date, score: rows.length || games.length ? this.dayScore(rows, games) : null } });
+    }
+    scorecardHtml() {
+      this.loadYesterday();
+      const todayFinal = this.todayGames().some((g) => g.phase === "final");
+      const today = todayFinal ? this.dayScore(this.state.proj.rows, this.todayGames()) : null;
+      const yday = this.state.yday && this.state.yday.score;
+      if (!today && !yday) return "";
+      const col = (label, sc) => {
+        if (!sc) return "";
+        const line = (k, t) => t.n
+          ? `<span class="ph-score-row"><span class="ph-meta-k">${k}</span><b class="ph-mono">${t.hits}/${t.n} · ${this.pct(t.hits / t.n)}</b><span class="ph-mono ph-mut">model said ${this.pct(t.exp)}</span></span>` : "";
+        return `<div class="ph-score-col">
+          <span class="ph-kicker ph-kicker--mut">${esc(label)}</span>
+          ${line("1+ HIT READS", sc.hit)}${line("1+ HR READS", sc.hr)}
+          ${sc.fav.w + sc.fav.l ? `<span class="ph-score-row"><span class="ph-meta-k">PREGAME FAVOURITES</span><b class="ph-mono">${sc.fav.w}–${sc.fav.l}</b></span>` : ""}
+          ${sc.tot.n ? `<span class="ph-score-row"><span class="ph-meta-k">TOTALS CALLED</span><b class="ph-mono">${sc.tot.h}/${sc.tot.n}</b></span>` : ""}
+        </div>`;
+      };
+      return `<div class="ph-strip-head"><span class="ph-kicker">Scorecard</span><span class="ph-strip-sub">how the reads landed · graded after the final out</span></div>
+        <div class="ph-score">${col("Today · finished games", today)}${col("Yesterday", yday)}</div>`;
+    }
+    // Once tonight's games are all over, what is next: tomorrow's games and
+    // when their reads post.
+    nextSlateHtml() {
+      const games = this.todayGames();
+      if (!games.length || games.some((g) => g.phase !== "final") || !SLATE_IS_TODAY) return "";
+      const date = PH.mlbDate(1);
+      if (!this._tmrwAt || Date.now() - this._tmrwAt > 600000) {
+        this._tmrwAt = Date.now();
+        PH.loadBoard(API_BASE, null, date).then((b) => {
+          this.setState({ tmrw: { date, games: [].concat(b.upcoming || [], b.live || [], b.final || []) } });
+        }).catch(() => {});
+      }
+      const t = this.state.tmrw;
+      if (!t || t.date !== date || !t.games.length) return "";
+      const label = new Date(`${date}T12:00:00Z`).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric", timeZone: ET });
+      const list = t.games.slice().sort((a, b) => Date.parse(a.startTs || 0) - Date.parse(b.startTs || 0)).map((g) => `<div class="ph-nextrow">
+          <span class="ph-mono">${esc(this.clockOf(g.startTs) || "TBD")}</span>
+          <b>${esc(g.away)} @ ${esc(g.home)}</b>
+          <span class="ph-ellip ph-mut">${esc(this.startersLine(g))}</span>
+          <span class="ph-mono">${esc(this.gameWp(g).team)} ${esc(this.gameWp(g).val)}</span>
+        </div>`).join("");
+      return `<div class="ph-group">
+          <div class="ph-group-head"><span class="ph-kicker is-pre">NEXT UP · ${esc(label.toUpperCase())}</span>
+            <span class="ph-mono ph-group-n">${t.games.length} game${t.games.length === 1 ? "" : "s"}</span><span class="ph-rule"></span>
+            <span class="ph-group-hint">${esc(COPY.readsTiming)}</span></div>
+          <div class="ph-panel">${list}</div>
+        </div>`;
+    }
+
     // ── decision strip ───────────────────────────────────────────────────
     decisionStripHtml() {
       const live = this.effectiveMode() === "live";
+      // Every game over: there is nothing left to decide, and an empty
+      // "no pregame reads yet" box would read as data that never arrived.
+      if (!live && !this.todayGames().some((g) => g.phase !== "final")) return "";
       const cards = (live ? this.liveCards() : this.pregameCards()).filter(Boolean);
       const notFinal = this.todayGames().filter((g) => g.phase !== "final").length;
       const sub = live ? COPY.stripSubLive
@@ -1622,11 +2046,22 @@
           <span class="ph-strip-sub">${this.numHtml(sub)}</span>
         </div>${body}`;
     }
+    // What each decision card is, in a sentence, for its tooltip.
+    CARD_TIPS = {
+      "STRONGEST 1+ HIT": "The batter whose 1+ hit read sits furthest above the league rate for his spot in the order.",
+      "STRONGEST 1+ HR": "The batter whose 1+ home run read sits furthest above the league rate for his spot.",
+      "BIGGEST PREGAME FAVOURITE": "The largest pregame win probability on the slate.",
+      "HIGHEST PROJECTED TOTAL": "The game the model expects the most combined runs in.",
+      "BIGGEST SWING": "The live game whose win probability has moved furthest since first pitch.",
+      "TOP CALL NOW": "Across every live at-bat, the outcome the model leans toward most compared with the league rate.",
+      "DUE UP": "The strongest home-run read among the next three batters due up in a live game.",
+      "CLOSEST GAME": "The live game nearest a 50/50 coin flip.",
+    };
     phaseChip(kind, text) { return `<span class="ph-phase ph-phase--${kind}">${this.numHtml(text)}</span>`; }
     decisionCardHtml(c) {
       const viz = c.sparkG ? this.sparkHtml(c.sparkG, 26)
         : c.bar ? this.barHtml(c.bar.w, c.bar.tick, c.bar.cls) : "";
-      return `<button class="ph-card${c.live ? " is-live" : ""}" data-act="${c.act}" data-arg="${esc(c.arg)}">
+      return `<button class="ph-card${c.live ? " is-live" : ""}" data-act="${c.act}" data-arg="${esc(c.arg)}" title="${esc(this.CARD_TIPS[c.kicker.split(" · ")[0]] || "")}">
         <span class="ph-card-head">
           <span class="ph-kicker${c.live ? " is-live" : ""}">${esc(c.kicker)}</span>
           ${this.phaseChip(c.phaseKind, c.phase)}
@@ -1646,7 +2081,7 @@
           <span class="ph-card-why2">${c.why2}</span>
         </span>
         <span class="ph-card-foot">
-          <span class="ph-mono ph-card-fresh ${c.flash || ""}">${esc(c.fresh)}</span>
+          <span class="ph-mono ph-card-fresh ${c.flash || ""}"${c.clock ? ` data-clock data-clock-prefix="updated "` : ""}>${esc(c.fresh)}</span>
           <span class="ph-status ph-status--${c.statusKind || "solid"}">${this.numHtml(c.status)}</span>
         </span>
       </button>`;
@@ -1734,7 +2169,7 @@
       const inn = (g) => `${g.half === "▼" ? "Bot" : "Top"} ${g.inning == null ? "—" : g.inning}`;
       const sit = (g) => `${inn(g)} · ${g.count || "—"} · ${g.outs == null ? "—" : g.outs} out`;
       const at = (g) => `${g.away} @ ${g.home} · ${g.score.away}–${g.score.home}`;
-      const liveCard = (o) => Object.assign({ live: true, phase: "● LIVE", phaseKind: "live", fresh: updated }, o);
+      const liveCard = (o) => Object.assign({ live: true, phase: "● LIVE", phaseKind: "live", fresh: updated, clock: true }, o);
 
       const wps = live.map((g) => ({ g, w: this.gameWp(g) })).filter((x) => x.w.prob != null);
       const sw = wps.slice().sort((a, b) => b.w.swing - a.w.swing)[0];
@@ -1938,7 +2373,7 @@
       return `<div class="ph-meta-grid">
         ${cell("STADIUM", (ok && c.venue_name) || g.venue || null)}
         ${cell("ROOF", roof)}
-        ${cell("FIRST PITCH", start ? `${start} ET` : null)}
+        ${cell("FIRST PITCH", start ? `${start} ${this.tzLabel()}` : null)}
         ${cell("PROBABLE STARTERS", sps)}
         ${cell(wxKey, weather)}
         ${cell("WIND", wind)}
@@ -2222,7 +2657,7 @@
     clockOf(ts) {
       const t = Date.parse(ts || "");
       return isFinite(t)
-        ? new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: ET })
+        ? new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", timeZone: this.tz() })
         : null;
     }
     untilText(ts) {
@@ -2248,7 +2683,7 @@
       } else {
         text = this.clockOf(g.startTs) || "TBD"; fg = C.blue; bg = "#16294a";
       }
-      return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:${mobile ? 9.5 : 10}px;font-weight:800;letter-spacing:.05em;padding:${mobile ? "2px 6px" : "3px 7px"};border-radius:${mobile ? 5 : 6}px;justify-self:start;white-space:nowrap;color:${fg};background:${bg};">${this.numHtml(text)}</span>`;
+      return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:800;letter-spacing:.05em;padding:${mobile ? "2px 6px" : "3px 7px"};border-radius:${mobile ? 5 : 6}px;justify-self:start;white-space:nowrap;color:${fg};background:${bg};">${this.numHtml(text)}</span>`;
     }
 
     // The bases diamond, for a game in progress only — a game not yet started
@@ -2754,6 +3189,7 @@
             ${this.liveHeroHtml(sel.g, sel.top, live.length)}
             ${this.railPlateHtml(sel.g)}
             ${this.pitchLogHtml(sel.g)}
+            ${this.earlierAbsHtml(sel.g)}
             ${this.railPitchingHtml(sel.g)}
             ${this.railGameHtml(sel.g)}
           </div>
@@ -2764,6 +3200,7 @@
           <div class="ph-live-main">
             ${this.liveHeroHtml(sel.g, sel.top, live.length)}
             ${this.pitchLogHtml(sel.g)}
+            ${this.earlierAbsHtml(sel.g)}
           </div>
           <div class="ph-live-rail">
             ${this.railPlateHtml(sel.g)}
@@ -2871,7 +3308,7 @@
         <div class="ph-hero-head">
           <span class="ph-hero-badge"><span class="ph-dot is-live ph-dot-sm"></span>${top ? "TOP CALL NOW · ALL GAMES" : "SELECTED GAME"}</span>
           <span class="ph-mono ph-hero-sit">${esc(sit)}</span>
-          <span class="ph-mono ph-hero-upd">updated <span class="${this.flashIf(`live:${g.gamePk}`, g.lastPitch)}">${esc(upd || "—")}</span></span>
+          <span class="ph-mono ph-hero-upd">updated <span class="${this.flashIf(`live:${g.gamePk}`, g.lastPitch)}" data-clock>${esc(upd || "—")}</span></span>
         </div>
         <div class="ph-hero-who">
           <b class="ph-hero-bat">${esc(g.batter.name)}</b><span class="ph-mono">${this.numHtml(bMeta)}</span>
@@ -2962,6 +3399,45 @@
         </div>
         ${this.mob() ? "" : `<div class="ph-plog-row ph-btable-head"><span>#</span><span>COUNT</span><span>TYPE</span><span>VELO CALLED → ACTUAL</span><span>Δ</span><span>CALL</span><span>RESULT</span><span>GRADE</span></div>`}
         ${body}
+      </div>`;
+    }
+
+    // ── earlier at-bats ──────────────────────────────────────────────────
+    // Every at-bat already played in this game, newest first: the call the
+    // model made on how it would end, what happened, and the pitch count.
+    // Built from the game's prediction rows (loadDayRows), which the tab has
+    // been fetching all along for its accuracy tiles.
+    earlierAbsHtml(g) {
+      const m = this.models().find((x) => String(x.pk) === String(g.gamePk));
+      const dr = this.dayState(PH.mlbDate(0));
+      if (!m) {
+        return `<div class="ph-panel"><div class="ph-panel-head"><span class="ph-kicker">Earlier at-bats · this game</span></div>
+          <div class="ph-note">${esc(dr.pending ? "Loading this game's at-bats…" : "No earlier at-bats recorded for this game yet.")}</div></div>`;
+      }
+      const done = m.abs.filter((ab) => ab.actual != null).slice().reverse();
+      if (!done.length) return "";
+      const key = `abs:${g.gamePk}`;
+      const all = !!this.state.mOpen[key];
+      const shown = all ? done : done.slice(0, 8);
+      const rows = shown.map((ab) => {
+        const grade = ab.ok === true ? `<span class="ph-res ph-res--good">✓</span>` : ab.ok === false ? `<span class="ph-res ph-res--bad">✗</span>` : `<span class="ph-missing-dash">—</span>`;
+        return `<div class="ph-abrow">
+          <span class="ph-mono ph-dim">${esc(ab.inn)}</span>
+          <span class="ph-ellip"><b>${esc(this.shortName(ab.batter))}</b> <span class="ph-mut">vs ${esc(this.lastName(ab.pitcher))}</span></span>
+          <span class="ph-ellip">called <b>${esc(this.outLabel(ab.predLabel) || "—")}</b> <span class="ph-mono ph-dim">${this.pct(ab.predProb)}</span></span>
+          <span class="ph-ellip">${esc(this.outLabel(ab.actual) || "—")}</span>
+          <span class="ph-mono ph-dim">${ab.actPitches} p</span>
+          ${grade}
+        </div>`;
+      }).join("");
+      const st = this.gameStats(m.abs);
+      return `<div class="ph-panel">
+        <div class="ph-panel-head">
+          <span class="ph-kicker">Earlier at-bats · this game</span>
+          <span class="ph-mono ph-panel-note">${esc(`at-bat calls ${this.ratioPct(st.abC, st.abN)}`)}</span>
+        </div>
+        ${rows}
+        ${done.length > 8 ? `<button class="ph-more" data-act="mToggle" data-arg="${esc(key)}">${all ? "Show the last 8" : `Show all <span class="ph-mono">${done.length}</span> ▾`}</button>` : ""}
       </div>`;
     }
 
@@ -3088,7 +3564,7 @@
         <span class="ph-kicker ph-kicker--mut">Top call now · all games</span>
         <b>${esc(COPY.liveNothingTitle)}</b>
         <span>${esc(COPY.liveNothingBody)}</span>
-        ${next ? `<span class="ph-mut">${this.numHtml(`Next first pitch: ${next.away} @ ${next.home} · ${this.clockOf(next.startTs) || "TBD"} ET`)}</span>` : ""}
+        ${next ? `<span class="ph-mut">${this.numHtml(`Next first pitch: ${next.away} @ ${next.home} · ${this.clockOf(next.startTs) || "TBD"} ${this.tzLabel()}`)}</span>` : ""}
       </div>`;
     }
 
@@ -3125,6 +3601,10 @@
       ["pitch_result", "Pitch", "Next pitch", "PITCH"],
     ];
     D_DEFAULTS = { dTf: 30, dMk: "all", dTeam: "", dPark: "", dHand: "any", dSide: "any", dFeedN: 40 };
+    // "Season": the widest window the graded routes serve. Pitch and at-bat
+    // reads only reach back 35 days (the predictions hot window); batter and
+    // game reads go back to when grading began.
+    D_SEASON = 120;
     D_PAGE = 40;
     // Home parks, for the "Stadium · TEAM · City, ST" label. The venue name
     // always comes from the data; a city is only attached when that name is
@@ -3170,10 +3650,11 @@
         ? `${this.dKpiTilesHtml(sum)}
            ${this.calibrationChartHtml(sum)}
            ${this.dailyGapChartHtml(sum)}
+           ${this.accuracyTrendHtml()}
            ${this.byMarketTableHtml(sum)}
            ${this.byTeamGridHtml(sum)}
            ${this.splitsHtml(sum)}`
-        : this.dEmptyHtml();
+        : this.dEmptyHtml() + this.accuracyTrendHtml();
       if (this.mob()) {
         const feed = s.mOpen["d:view"] === "feed";
         return `${head}
@@ -3193,7 +3674,10 @@
       const to = PH.mlbDate(0);
       return { from: tf === "today" ? to : PH.mlbDate(-(Number(tf) - 1)), to };
     }
-    dTfName() { return this.state.dTf === "today" ? "Today" : `Last ${this.state.dTf} days`; }
+    dTfName() {
+      const tf = this.state.dTf;
+      return tf === "today" ? "Today" : tf === this.D_SEASON ? "Season" : `Last ${tf} days`;
+    }
     dMarketName(k, i) { const m = this.D_MARKETS.find((x) => x[0] === k); return m ? m[i || 1] : k; }
     dQuery() {
       const s = this.state, w = this.dWindow();
@@ -3402,7 +3886,7 @@
         const k = (s.dTeam ? 1 : 0) + (s.dPark ? 1 : 0) + (s.dHand !== "any" ? 1 : 0) + (s.dSide !== "any" ? 1 : 0);
         return `<div class="ph-fbar ph-fbar--d">
           <div class="ph-fbar-line">
-            ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"]])}
+            ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"], [String(this.D_SEASON), "Season"]])}
             <button class="ph-chip${k ? " is-on" : ""}" data-act="mToggle" data-arg="f:data" aria-expanded="${open}">Filters${k ? ` <span class="ph-mono">${k}</span>` : ""} ${open ? "▴" : "▾"}</button>
           </div>
           <div class="ph-fscroll">${chip("all", "All")}${this.D_MARKETS.map((m) => chip(m[0], m[1])).join("")}</div>
@@ -3424,7 +3908,7 @@
       }
       return `<div class="ph-fbar ph-fbar--d">
         <div class="ph-fbar-line">
-          ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"]])}
+          ${this.segHtml("dTf", String(s.dTf), [["today", "Today"], ["7", "7D"], ["14", "14D"], ["30", "30D"], [String(this.D_SEASON), "Season"]])}
           <span class="ph-vrule"></span>
           <span class="ph-fgroup">${chip("all", "All")}${this.D_MARKETS.map((m) => chip(m[0], m[1])).join("")}</span>
         </div>
@@ -3500,7 +3984,9 @@
     }
     dailyGapChartHtml(sum) {
       const s = this.state, w = this.dWindow();
-      const days = s.dTf === "today" ? 7 : Number(s.dTf);
+      // At most 60 bars: a season of one-pixel bars says nothing.
+      const days = s.dTf === "today" ? 7 : Math.min(60, Number(s.dTf));
+      const outage = this.outageDays();
       const by = {};
       (sum.daily || []).forEach((d) => { by[d.date] = this.derive(d); });
       const bars = [];
@@ -3510,20 +3996,103 @@
         const date = PH.mlbDate(-i);
         const t = by[date];
         const v = t && t.n ? Math.max(-10, Math.min(10, t.gap * 100)) : 0;
-        const tip = `${i === 0 ? "Today" : date} · ${t && t.n ? `${t.n} reads · ${this.gapTxt(t.gap)}` : "no reads"}`;
+        const out = !(t && t.n) && outage.has(date);
+        const tip = `${i === 0 ? "Today" : date} · ${t && t.n ? `${t.n} reads · ${this.gapTxt(t.gap)}` : out ? "not graded — grading was paused" : "no reads"}`;
         const on = mob && sel === date;
         if (on) selTip = tip;
-        bars.push(`<div class="ph-gap-col${date < w.from ? " is-out" : ""}${on ? " is-sel" : ""}" title="${esc(tip)}"${mob ? ` data-act="mSel" data-arg="d:gap|${date}"` : ""}>
+        bars.push(`<div class="ph-gap-col${date < w.from ? " is-out" : ""}${on ? " is-sel" : ""}${out ? " is-ungraded" : ""}" title="${esc(tip)}"${mob ? ` data-act="mSel" data-arg="d:gap|${date}"` : ""}>
           <span class="ph-gap-up">${v > 0 ? `<span class="ph-gb--${this.gapBand(t.gap)}" style="height:${(v * 10).toFixed(1)}%"></span>` : ""}</span>
           <span class="ph-gap-dn">${v < 0 ? `<span class="ph-gb--${this.gapBand(t.gap)}" style="height:${(-v * 10).toFixed(1)}%"></span>` : ""}</span>
         </div>`);
       }
       const sub = s.dTf === "today" ? "last 7 days for context · today highlighted"
-        : `each bar is one day · ${mob ? "tap" : "hover"} for counts`;
+        : `each bar is one day${Number(s.dTf) > 60 ? " · last 60 shown" : ""} · ${mob ? "tap" : "hover"} for counts`;
       return this.dCard("Daily gap · landed − predicted", sub, `
         <div class="ph-gap">${bars.join("")}</div>
         <div class="ph-gap-axis ph-mono"><span>${days > 1 ? esc(PH.mlbDate(-(days - 1))) : ""}</span><span>±10 pts</span><span>TODAY</span></div>
+        ${this.outageNoteHtml(PH.mlbDate(-(days - 1)), PH.mlbDate(0))}
         ${mob ? `<div class="ph-mono ph-chart-sel">${esc(selTip || "tap a day for its counts")}</div>` : ""}`);
+    }
+    // Days the model made calls but nothing was graded: the settle job was
+    // stalled (2026-09-13..24 in production). Read off /accuracy, where such
+    // a day has n > 0 and n_graded = 0 — it must not read as "no games".
+    outageDays() {
+      const out = new Set();
+      ((this.state.accuracy && this.state.accuracy.days) || []).forEach((d) => {
+        if ((d.n || 0) > 0 && !(d.n_graded || 0)) out.add(d.day);
+      });
+      return out;
+    }
+    outageNoteHtml(from, to) {
+      const days = [...this.outageDays()].filter((d) => d >= from && d <= to).sort();
+      if (!days.length) return "";
+      // Collapse consecutive days into ranges for the sentence.
+      const ranges = [];
+      days.forEach((d) => {
+        const last = ranges[ranges.length - 1];
+        const prev = last && new Date(Date.parse(`${last[1]}T12:00:00Z`) + 86400000).toISOString().slice(0, 10);
+        if (last && prev === d) last[1] = d; else ranges.push([d, d]);
+      });
+      const fmt = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString([], { month: "short", day: "numeric", timeZone: "UTC" });
+      const txt = ranges.map(([a, b]) => (a === b ? fmt(a) : `${fmt(a)}–${fmt(b)}`)).join(", ");
+      return `<p class="ph-caption ph-caption--warn">${esc(COPY.dOutage.replace("{days}", txt))}</p>`;
+    }
+    // Accuracy by day for the per-pitch and per-at-bat markets, from the
+    // permanent nightly rollup (/accuracy) — including the two regression
+    // markets, pitch speed and pitches per at-bat, which graded_read does
+    // not carry. Hatched days are days with calls and no grades.
+    ACC_MARKETS = [
+      ["ab_result", "At-bat result", "rate"], ["pitch_result", "Next pitch", "rate"],
+      ["ab_pitches_ou", "Pitches in the at-bat (O/U)", "rate"], ["pitch_speed_ou", "Next-pitch speed · avg miss", "mae"],
+      ["game_moneyline", "Live win prob · favourite won", "rate"],
+    ];
+    accuracyTrendHtml() {
+      const acc = this.state.accuracy;
+      if (!acc || !acc.loaded) return this.dCard("Accuracy over time", "per day", `<div class="ph-note">${esc(COPY.dLoading)}</div>`);
+      if (acc.err) return this.dCard("Accuracy over time", "per day", `<div class="ph-note">${esc(COPY.dLoadError)}</div>`);
+      const s = this.state, w = this.dWindow();
+      const span = s.dTf === "today" ? 14 : Math.max(7, Number(s.dTf));
+      const dates = [];
+      for (let i = span - 1; i >= 0; i -= 1) dates.push(PH.mlbDate(-i));
+      const by = {};
+      (acc.days || []).forEach((d) => { (by[d.market] = by[d.market] || {})[d.day] = d; });
+      const rows = this.ACC_MARKETS.map(([mk, label, kind]) => {
+        const series = dates.map((day) => {
+          const d = (by[mk] || {})[day];
+          if (!d || !(d.n || 0)) return { day, v: null };
+          if (!(d.n_graded || 0)) return { day, v: null, ungraded: true };
+          const dec = (d.wins || 0) + (d.losses || 0);
+          const v = kind === "mae" ? (d.mean_abs_error == null ? null : Number(d.mean_abs_error)) : dec ? d.wins / dec : null;
+          return { day, v, n: d.n_graded };
+        });
+        const vals = series.filter((x) => x.v != null);
+        if (!vals.length && !series.some((x) => x.ungraded)) return "";
+        const lo = kind === "mae" ? 0 : Math.max(0, Math.min(...vals.map((x) => x.v)) - 0.05);
+        const hi = kind === "mae" ? Math.max(8, ...vals.map((x) => x.v)) : Math.min(1, Math.max(...vals.map((x) => x.v)) + 0.05);
+        const X = (i) => (dates.length === 1 ? 50 : (i / (dates.length - 1)) * 100);
+        const Y = (v) => 30 - ((v - lo) / ((hi - lo) || 1)) * 28 - 1;
+        let path = "", pen = false;
+        series.forEach((x, i) => {
+          if (x.v == null) { pen = false; return; }
+          path += `${pen ? "L" : "M"}${X(i).toFixed(2)},${Y(x.v).toFixed(2)} `; pen = true;
+        });
+        const holes = series.map((x, i) => x.ungraded
+          ? `<rect x="${(X(i) - 50 / dates.length).toFixed(2)}" y="0" width="${(100 / dates.length).toFixed(2)}" height="30" class="ph-acc-hole"/>` : "").join("");
+        const tot = vals.reduce((a, x) => ({ v: a.v + x.v * (x.n || 1), n: a.n + (x.n || 1) }), { v: 0, n: 0 });
+        const avg = tot.n ? tot.v / tot.n : null;
+        const fmt = (v) => (v == null ? "—" : kind === "mae" ? `${v.toFixed(1)} mph` : this.pct1(v));
+        const last = vals.length ? vals[vals.length - 1] : null;
+        return `<div class="ph-acc-row">
+          <span class="ph-acc-lbl">${esc(label)}</span>
+          <svg viewBox="0 0 100 30" preserveAspectRatio="none" class="ph-acc-svg" role="img" aria-label="${esc(`${label}, ${fmt(avg)} over the window`)}">${holes}<path d="${path}" class="ph-acc-line" vector-effect="non-scaling-stroke"/></svg>
+          <span class="ph-mono ph-acc-v" title="weighted by graded calls over the window">${fmt(avg)}</span>
+          <span class="ph-mono ph-mut ph-acc-last">last ${last ? fmt(last.v) : "—"}</span>
+        </div>`;
+      }).join("");
+      return this.dCard("Accuracy over time", `per day · ${span} days · ignores the filters above`, `
+        <div class="ph-acc">${rows || `<div class="ph-note">${esc(COPY.dFeedEmpty)}</div>`}</div>
+        <div class="ph-legend"><span><i class="ph-acc-hole-key"></i>calls made, not graded</span></div>
+        <p class="ph-caption">${esc(COPY.dAccNote)}</p>`);
     }
     byMarketTableHtml(sum) {
       const by = {};
@@ -3702,6 +4271,191 @@
       </div>`;
     }
 
+    // ══ OVERLAYS: search, player / team drawer, guide ═══════════════════
+    TEAM_NAMES = {
+      AZ: "Arizona Diamondbacks", ATL: "Atlanta Braves", BAL: "Baltimore Orioles", BOS: "Boston Red Sox",
+      CHC: "Chicago Cubs", CWS: "Chicago White Sox", CIN: "Cincinnati Reds", CLE: "Cleveland Guardians",
+      COL: "Colorado Rockies", DET: "Detroit Tigers", HOU: "Houston Astros", KC: "Kansas City Royals",
+      LAA: "Los Angeles Angels", LAD: "Los Angeles Dodgers", MIA: "Miami Marlins", MIL: "Milwaukee Brewers",
+      MIN: "Minnesota Twins", NYM: "New York Mets", NYY: "New York Yankees", ATH: "Athletics",
+      PHI: "Philadelphia Phillies", PIT: "Pittsburgh Pirates", SD: "San Diego Padres", SF: "San Francisco Giants",
+      SEA: "Seattle Mariners", STL: "St. Louis Cardinals", TB: "Tampa Bay Rays", TEX: "Texas Rangers",
+      TOR: "Toronto Blue Jays", WSH: "Washington Nationals",
+    };
+    fold(t) { return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase(); }
+    searchResultsHtml(q) {
+      const n = this.fold(q).trim();
+      if (!n) return `<p class="ph-ov-note">${esc(COPY.searchHint)}</p>`;
+      const hit = (t) => this.fold(t).includes(n);
+      const bats = (this.batters() || []).filter((b) => hit(b.name)).slice(0, 8);
+      const sps = [];
+      this.todayGames().forEach((g) => [["away", g.probables.away, g.probables.awayId, g.away], ["home", g.probables.home, g.probables.homeId, g.home]]
+        .forEach(([side, name, id, team]) => { if (name && id && hit(name)) sps.push({ g, side, name, id, team }); }));
+      const teams = Object.keys(this.TEAM_NAMES).filter((t) => hit(t) || hit(this.TEAM_NAMES[t])).slice(0, 6);
+      const row = (act, arg, title, sub) => `<button class="ph-ov-row" data-act="${act}" data-arg="${esc(arg)}"><b>${esc(title)}</b><span>${this.numHtml(sub)}</span></button>`;
+      const parts = [];
+      if (bats.length) {
+        parts.push(`<span class="ph-kicker ph-kicker--mut">Batters</span>`);
+        bats.forEach((b) => { const g = this.gameByPk(b.pk); parts.push(row("ovPlayer", `${b.id}|${b.pk}`, b.name, `${this.teamOf(b)} · ${g ? `${g.away} @ ${g.home}` : ""}`)); });
+      }
+      if (sps.length) {
+        parts.push(`<span class="ph-kicker ph-kicker--mut">Starting pitchers</span>`);
+        sps.slice(0, 5).forEach((x) => parts.push(row("ovStarter", `${x.g.gamePk}|${x.side}`, x.name, `${x.team} · ${x.g.away} @ ${x.g.home}`)));
+      }
+      if (teams.length) {
+        parts.push(`<span class="ph-kicker ph-kicker--mut">Teams</span>`);
+        teams.forEach((t) => parts.push(row("ovTeam", t, this.TEAM_NAMES[t], t)));
+      }
+      return parts.length ? parts.join("") : `<p class="ph-ov-note">${esc(COPY.searchNone)}</p>`;
+    }
+    overlayHtml() {
+      const o = this.state.overlay;
+      if (!o) return "";
+      let title = "", body = "";
+      if (o.kind === "search") {
+        title = "Search";
+        body = `<input id="ph-search" class="ph-ov-input" type="search" data-search placeholder="Player or team" autocomplete="off" aria-label="Search players and teams" value="${esc(this.state.searchQ || "")}">
+          <div id="ph-search-results" class="ph-ov-results" aria-live="polite">${this.searchResultsHtml(this.state.searchQ || "")}</div>`;
+      } else if (o.kind === "help") {
+        title = "How to read Pitch Hawk";
+        body = `<p class="ph-ov-note">${esc(COPY.guideIntro)}</p>
+          <dl class="ph-gloss">${COPY.glossary.map(([t, d]) => `<dt>${esc(t)}</dt><dd>${esc(d)}</dd>`).join("")}</dl>`;
+      } else if (o.kind === "player") {
+        const b = (this.batters() || []).find((x) => x.id === String(o.id) && (!o.pk || x.pk === String(o.pk)));
+        title = b ? b.name : "Player";
+        body = b ? this.playerPanelHtml(b) : `<p class="ph-ov-note">${esc(COPY.playerNone)}</p>`;
+      } else if (o.kind === "starter") {
+        const g = this.gameByPk(o.pk);
+        const name = g ? g.probables[o.side] : null, id = g ? g.probables[`${o.side}Id`] : null;
+        title = name || "Starter";
+        body = g && id ? `<div class="ph-ov-grid">
+            ${this.mPairHtml("MATCHUP", `<span class="ph-meta-v">${this.numHtml(`${o.side === "home" ? g.home : g.away} vs ${o.side === "home" ? g.away : g.home} · ${this.clockOf(g.startTs) || "TBD"}`)}</span>`)}
+            ${this.starterStatPairs(id, g.gamePk).map(([k, v]) => this.mPairHtml(k, v)).join("")}
+          </div>
+          <div class="ph-ov-act">${this.openGameBtnHtml(g.gamePk, "sp")}</div>` : `<p class="ph-ov-note">${esc(COPY.playerNone)}</p>`;
+      } else if (o.kind === "team") {
+        title = this.TEAM_NAMES[o.abbr] || o.abbr;
+        body = this.teamPanelHtml(o.abbr);
+      }
+      return `<div class="ph-ov" role="dialog" aria-modal="true" aria-label="${esc(title)}">
+        <div class="ph-ov-scrim" data-act="ovClose"></div>
+        <div class="ph-ov-panel">
+          <div class="ph-ov-head">
+            ${o.kind !== "search" && o.back ? `<button class="ph-iconbtn" data-act="ovOpen" data-arg="search" aria-label="Back to search">‹</button>` : ""}
+            <b>${esc(title)}</b>
+            <button class="ph-iconbtn ph-ov-x" data-act="ovClose" aria-label="Close">✕</button>
+          </div>
+          <div class="ph-ov-body">${body}</div>
+        </div>
+      </div>`;
+    }
+    // One batter on today's slate: every read the model has on him, the form
+    // behind it, and the game it is in.
+    playerPanelHtml(b) {
+      const g = this.gameByPk(b.pk);
+      const atBat = g && g.phase === "live" && g.batter && String(g.batter.id) === b.id;
+      const rog = g && g.phase === "live" ? this.rogOf(g, b.id) : null;
+      const h = this.h2hOf(b);
+      const h2h = !h || h.pending ? "—" : !h.found ? "fewer than 3 PA" : `${h.h_count}-for-${h.pa_count}, ${h.hr_count} HR`;
+      return `<div class="ph-ov-sub">${this.numHtml(`${this.teamOf(b)} · ${b.slot ? `batting #${b.slot}` : "lineup pending"} · vs ${b.spName || "TBD"}`)}${atBat ? ` <span class="ph-phase ph-phase--live">● AT THE PLATE</span>` : ""}</div>
+        <div class="ph-ov-grid">
+          ${this.mPairHtml("1+ HIT", this.probCellHtml(b, "hit"))}
+          ${this.mPairHtml("1+ HR", this.probCellHtml(b, "hr"))}
+          ${this.mPairHtml("H+R+RBI 1+", this.baseBatterCellHtml(b.hrr, "hrr"))}
+          ${this.mPairHtml("TB 1.5+", this.baseBatterCellHtml(b.tb15, "tb"))}
+          ${this.mPairHtml("30D H · HR /PA", this.formCellHtml(b.form))}
+          ${this.mPairHtml(`${esc(this.lastName(b.spName)).toUpperCase()} ALLOWS · 30D`, this.formCellHtml(b.oppForm))}
+          ${this.mPairHtml("VS THIS STARTER", `<span class="ph-mono">${esc(h2h)}</span>`)}
+          ${rog ? this.mPairHtml("REST OF GAME · HIT / HR", this.baseCellHtml(`${this.pct(rog.hit)} / ${this.pct(rog.hr)}`, `${Number(rog.remaining_pa).toFixed(1)} PA left`)) : ""}
+          ${g && g.phase === "final" ? this.mPairHtml("RESULT", `<span class="ph-mono">${esc(this.resultLine(b.hit, "hit") || "—")} · ${esc(this.resultLine(b.hr, "hr") || "")}</span>`) : ""}
+          ${g ? this.mPairHtml("GAME", `<span class="ph-meta-v">${this.numHtml(`${g.away} @ ${g.home} · ${g.phase === "pregame" ? this.clockOf(g.startTs) || "TBD" : g.phase === "live" ? `${g.score.away}–${g.score.home} · ${this.halfWord(g.half)} ${g.inning || ""}` : `final ${g.score.away}–${g.score.home}`}`)}</span>`) : ""}
+        </div>
+        <div class="ph-ov-act">${this.pinBtnHtml("b:" + b.id, "Watch this batter")}<span class="ph-mut">watch</span>
+          ${atBat ? `<button class="ph-chip" data-act="liveGo" data-arg="${esc(String(g.gamePk))}">Watch live ›</button>` : ""}
+          ${this.openGameBtnHtml(b.pk, b.side)}</div>`;
+    }
+    teamPanelHtml(abbr) {
+      const games = this.todayGames().filter((g) => g.away === abbr || g.home === abbr);
+      if (games.length) {
+        return games.map((g) => {
+          const side = g.home === abbr ? "home" : "away";
+          const top = this.battersOf(g.gamePk).filter((b) => b.side === side)
+            .map((b) => ({ b, c: this.probCell(b, "hit") })).filter((x) => x.c.pts != null)
+            .sort((a, z) => z.c.pts - a.c.pts).slice(0, 3);
+          const w = this.gameWp(g);
+          return `<div class="ph-ov-sub">${this.numHtml(`${g.away} @ ${g.home} · ${g.phase === "pregame" ? `first pitch ${this.clockOf(g.startTs) || "TBD"} ${this.tzLabel()}` : g.phase === "live" ? `live · ${g.score.away}–${g.score.home}` : `final · ${g.score.away}–${g.score.home}`}`)}</div>
+            <div class="ph-ov-grid">
+              ${this.mPairHtml(w.caption, `<span class="ph-mono">${esc(`${w.team} ${w.val}`)}</span>`)}
+              ${top.map(({ b, c }) => this.mPairHtml(esc(b.name), `<span class="ph-mono ph-band-${c.band}">1+ hit ${this.pct(c.p)} · ${esc(c.lift)}</span>`)).join("")}
+            </div>
+            <div class="ph-ov-act">${this.pinBtnHtml("g:" + g.gamePk, "Watch this game")}<span class="ph-mut">watch</span>${this.openGameBtnHtml(g.gamePk, side)}</div>`;
+        }).join("");
+      }
+      const nx = this.state.teamNext[abbr];
+      if (!nx) { this.loadTeamNext(abbr); return `<p class="ph-ov-note">${esc(COPY.teamNotToday.replace("{team}", abbr))} Looking up the next game…</p>`; }
+      if (!nx.found) return `<p class="ph-ov-note">${esc(COPY.teamNoNext.replace("{team}", abbr))}</p>`;
+      const g = nx.game;
+      const when = new Date(g.start_ts).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: this.tz() });
+      return `<p class="ph-ov-note">${esc(COPY.teamNotToday.replace("{team}", abbr))}</p>
+        <div class="ph-ov-grid">${this.mPairHtml("NEXT GAME", `<span class="ph-meta-v">${this.numHtml(`${g.away_abbr} @ ${g.home_abbr} · ${when} ${this.tzLabel()}`)}</span>`)}
+          ${this.mPairHtml("BALLPARK", `<span class="ph-meta-v">${esc(g.venue_name || "—")}</span>`)}</div>
+        <p class="ph-ov-note">${esc(COPY.readsTiming)}</p>`;
+    }
+    async loadTeamNext(abbr) {
+      if (this._teamAsked && this._teamAsked[abbr]) return;
+      (this._teamAsked || (this._teamAsked = {}))[abbr] = true;
+      const body = await fetchJson(`/team/${abbr}/next`);
+      this.setState({ teamNext: Object.assign({}, this.state.teamNext, { [abbr]: body || { found: false } }) });
+    }
+    openOverlay(o) {
+      this._ovReturn = document.activeElement;
+      this.setState({ overlay: o });
+      requestAnimationFrame(() => {
+        const el = this.root.querySelector(o.kind === "search" ? "#ph-search" : ".ph-ov-x");
+        if (el) el.focus();
+        // A reopened search keeps its last query, selected, so typing replaces it.
+        if (el && el.select) el.select();
+      });
+    }
+    closeOverlay() {
+      this.setState({ overlay: null });
+      // Back to whatever opened it, if it still exists after the re-render.
+      const ret = this._ovReturn;
+      const sel = ret && ret.getAttribute && ret.getAttribute("data-act")
+        ? `[data-act="${ret.getAttribute("data-act")}"][data-arg="${ret.getAttribute("data-arg") || ""}"]` : null;
+      const el = sel ? this.root.querySelector(sel) : null;
+      if (el) el.focus();
+    }
+
+    patchClocks() {
+      const t = this.clockSec(this.state.api.updatedAt) || "—";
+      this.root.querySelectorAll("[data-clock]").forEach((el) => {
+        el.textContent = (el.getAttribute("data-clock-prefix") || "") + t;
+      });
+    }
+    // Screen readers hear the selected live game move (score, inning, outs,
+    // batter) — not every pitch, which would be noise. The region sits
+    // outside #ph-root so the re-render never replaces it.
+    announce(text) {
+      let el = document.getElementById("ph-announce");
+      if (!el) {
+        el = document.createElement("div");
+        el.id = "ph-announce"; el.className = "ph-sr";
+        el.setAttribute("aria-live", "polite"); el.setAttribute("role", "status");
+        document.body.appendChild(el);
+      }
+      if (el.textContent !== text) el.textContent = text;
+    }
+    announceLive() {
+      if (this.state.view !== "live") return;
+      const live = this.liveGames();
+      if (!live.length) return;
+      const g = this.liveSelGame().g;
+      const msg = `${g.away} ${g.score.away}, ${g.home} ${g.score.home}. ${this.halfWord(g.half) === "TOP" ? "Top" : "Bottom"} of the ${g.inning || ""}, ${g.outs == null ? "" : `${g.outs} out`}. ${g.batter ? `${g.batter.name} batting.` : ""}`;
+      const key = `${g.gamePk}|${g.score.away}|${g.score.home}|${g.inning}|${g.half}|${g.outs}|${g.batter && g.batter.id}`;
+      if (key !== this._announced) { this._announced = key; this.announce(msg); }
+    }
+
     render() {
       // The whole UI is rebuilt with innerHTML, which destroys focus and
       // selection. Skip a render while the user is in a filter control —
@@ -3710,12 +4464,20 @@
       // the next render after blur.
       const ae = document.activeElement;
       const busy = ae && ae.hasAttribute
-        && ae.hasAttribute("data-pfilter");
+        && (ae.hasAttribute("data-pfilter") || ae.hasAttribute("data-search"));
       if (busy && this.root.contains(ae)) {
         this._renderDeferred = true;
         return;
       }
       this._renderDeferred = false;
+      this._lastFull = Date.now();
+      // Remember what had focus so it survives the rebuild: a keyboard user
+      // who pressed Enter on a tab or chip was otherwise thrown back to the
+      // top of the document on every render.
+      const fa = ae && ae !== document.body && this.root.contains(ae) ? {
+        act: ae.getAttribute("data-act"), arg: ae.getAttribute("data-arg"),
+        pf: ae.getAttribute("data-pfilter"), id: ae.id,
+      } : null;
       this.root.setAttribute("data-theme", this.dk() ? "dark" : "light");
       const view = this.state.view;
       // A view is built to a string BEFORE it is assigned, so anything that
@@ -3737,16 +4499,29 @@
       this._bindMq();
       // Shell rows above the view. The banner shows on every tab; Watching on
       // Home and Live only.
-      const watch = view === "home" || view === "live" ? this.watchRowHtml() : "";
+      // Watching follows the reader to every tab.
+      const watch = this.watchRowHtml();
       const top = this.apiBannerHtml() + this.staleBannerHtml() + watch;
       this.root.innerHTML = `
         ${this.headerHtml()}
         <main class="ph-main ph-shell">${top}${main}</main>
-        ${this.footerHtml()}`;
+        ${this.footerHtml()}
+        ${this.overlayHtml()}
+        ${this.toastHtml()}`;
       // Lazy lookups the views asked for while rendering (head-to-head,
       // starter profiles). One batch per render; each lookup is cached, so a
       // re-render never asks twice.
       this._flushWants();
+      this.syncUrl();
+      if (fa) {
+        const q = (v) => String(v).replace(/["\\]/g, "\\$&");
+        const sel = fa.id ? `#${fa.id}`
+          : fa.act ? `[data-act="${q(fa.act)}"]${fa.arg != null ? `[data-arg="${q(fa.arg)}"]` : ""}`
+            : fa.pf ? `[data-pfilter="${q(fa.pf)}"]` : null;
+        const el = sel ? this.root.querySelector(sel) : null;
+        if (el) { try { el.focus({ preventScroll: true }); } catch (_e) { el.focus(); } }
+      }
+      this.announceLive();
     }
 
 
@@ -3784,9 +4559,24 @@
         }
         this._failStreak = 0;
         const now = Date.now();
+        const wasDown = this.state.api.down;
         this.state.api = { down: false, lastGood: now, updatedAt: now };
         if (Array.isArray(games)) {
+          // Only rebuild the page when the slate actually moved. A full
+          // innerHTML render every 8s threw away taps that landed mid-rebuild
+          // and churned the DOM for nothing; an unchanged poll now just
+          // re-stamps the "updated" clocks in place. Countdowns ("in 3h 12m")
+          // still need a full render now and then, hence the minute cap.
+          const sig = JSON.stringify(games);
+          const same = !wasDown && sig === this._gamesSig && Date.now() - (this._lastFull || 0) < 60000;
+          this._gamesSig = sig;
           PH.games = games;
+          if (same) {
+            this.refreshLiveRows().then((changed) => { if (changed) this.render(); }).catch(() => {});
+            this.patchClocks();
+            this.checkAlerts();
+            return;
+          }
           // Not awaited: the board must never wait on at-bat history. It
           // re-renders itself when the rows land, and no-ops unless a live
           // game's situation actually moved.
@@ -3794,6 +4584,7 @@
             .then((changed) => { if (changed) this.render(); })
             .catch(() => {});
           this.render();
+          this.checkAlerts();
         }
         // loadLive throws on network error → keep last-good board.
       } catch (_e) { console.warn("[pitchhawk] live poll failed; keeping last data"); }
