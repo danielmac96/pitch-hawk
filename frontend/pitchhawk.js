@@ -1739,7 +1739,13 @@
     // container; the SVG is stretched, the stroke is not.
     sparkHtml(g, h) {
       const v = this.wpOf(g);
-      if (!v) return `<span class="ph-spark ph-spark--empty" style="height:${h || 28}px">${g && g.phase === "pregame" ? "" : "win-prob history loading…"}</span>`;
+      if (!v) {
+        // Answered with nothing (no at-bats yet, or a backend without the
+        // route) reads differently from still on its way.
+        const raw = g ? this.state.wp[String(g.gamePk)] : null;
+        const msg = !g || g.phase === "pregame" ? "" : raw && raw.at ? "no win-prob history yet" : "win-prob history loading…";
+        return `<span class="ph-spark ph-spark--empty" style="height:${h || 28}px">${msg}</span>`;
+      }
       const pts = (v.pregame_home != null ? [{ home: v.pregame_home }] : []).concat(v.points);
       const n = pts.length;
       const xy = pts.map((p, i) => `${n === 1 ? 50 : ((i / (n - 1)) * 100).toFixed(2)},${((1 - p.home) * 40).toFixed(2)}`).join(" ");
