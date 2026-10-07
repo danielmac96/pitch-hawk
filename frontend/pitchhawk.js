@@ -177,6 +177,8 @@
         // Head-to-head per "pitcherId:batterId" from GET /matchup. Absent =
         // not asked yet; { pending } in flight; otherwise the route's body.
         h2h: {},
+        // Per-at-bat win-probability history per game_pk (GET /game/{pk}/winprob).
+        wp: {},
         // Predictions filters (see PRED_DEFAULTS) and the trust tiles.
         ...this.PRED_DEFAULTS,
         trust: null,
@@ -310,8 +312,11 @@
         }
         case "pAll": return this.setState({ pAll: !this.state.pAll });
         case "pClear": { this.predClear(); return this.render(); }
-        // A Predictions row: its Home pill, on the right side tab.
-        case "predRow": {
+        // A Predictions row opens in place (see predBatterDetailHtml).
+        case "pOpen":
+          return this.setState({ pOpen: Object.assign({}, this.state.pOpen, { [arg]: !this.state.pOpen[arg] }) });
+        // Explicitly leave for a game's Home pill. arg "pk" or "pk|side".
+        case "openGame": {
           const [pk, side] = String(arg).split("|");
           return this.openPill(pk, side || null);
         }
@@ -424,14 +429,19 @@
     // beside it — never 0, never a guess. One primitive so every tab says it
     // the same way.
     MISSING = {
-      notserved: "Not served", notmodeled: "Not modeled", needsroute: "Needs route",
+      notserved: "Not available yet", notmodeled: "Not modeled", needsroute: "Not available yet",
+      fewpa: "Too few plate appearances in the last 30 days",
     };
     tagHtml(kind) {
       const label = this.MISSING[kind];
       return label ? `<span class="ph-tag ph-tag--${kind}">${esc(label)}</span>` : "";
     }
+    // The reason rides in a tooltip rather than a badge. Badging every gap
+    // ("NOT SERVED", "NEEDS ROUTE") put build-status vocabulary in front of
+    // readers, at ten badges a screen on Predictions.
     missingHtml(kind) {
-      return `<span class="ph-missing"><span class="ph-missing-dash">—</span>${this.tagHtml(kind)}</span>`;
+      const label = this.MISSING[kind] || "Not available";
+      return `<span class="ph-missing-dash" title="${esc(label)}" aria-label="${esc(label)}">—</span>`;
     }
 
     // ── freshness flash ──────────────────────────────────────────────────
@@ -563,7 +573,7 @@
     // Every probability on today's slate in one table, switchable by market.
     // Filters live in state (p*), never in the DOM, so they survive the poll.
     PRED_MARKETS = [["hit", "1+ Hit"], ["hr", "1+ HR"], ["wp", "Win prob"], ["tot", "Totals"], ["sp", "Starters"]];
-    PRED_DEFAULTS = { pMarket: "hit", pTeam: "", pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false };
+    PRED_DEFAULTS = { pMarket: "hit", pTeam: "", pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false, pOpen: {} };
     PRED_PAGE = 25;
 
     // What the batter and starter tables are waiting on, if anything. These
@@ -785,7 +795,7 @@
             key: `pr:${m}:${b.key}`,
             head: `<span class="ph-mono ph-dim ph-mcard-slot">${i + 1}</span>
               ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
-              <button class="ph-rowlink" data-act="predRow" data-arg="${esc(b.pk)}|${b.side}">
+              <button class="ph-rowlink" data-act="mToggle" data-arg="pr:${m}:${esc(b.key)}" aria-expanded="${!!s.mOpen[`pr:${m}:${b.key}`]}">
                 <span class="ph-rowlink-top"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-mono">${esc(this.teamOf(b))} · #${b.slot || "—"}</span></span>
                 <span class="ph-ellip">${this.numHtml(`vs ${b.spName || "TBD"} · ${g.away} @ ${g.home} ${when(g)}`)}</span>
               </button>
@@ -796,7 +806,8 @@
               ${this.mPairHtml("LINEUP", `<span class="ph-status ph-status--${b.slot ? "solid" : "dashed"} ph-status--left">${b.slot ? "LINEUP ✓" : "LINEUP PENDING"}</span>`)}
               ${this.mPairHtml("REST OF GAME", rogP != null ? this.baseCellHtml(this.pct(rogP), `${Number(live.remaining_pa).toFixed(1)} PA left`) : `<span class="ph-missing-dash">—</span>`)}
               ${this.mPairHtml("FRESH", `<span class="ph-mono ph-small">${esc(g.phase === "final" ? "graded" : `updated ${this.clockOf(b.updatedAt) || "—"}`)}</span>`)}
-              <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WHY</span><span class="ph-card-why ph-mono"><span>${w[0]}</span><span class="ph-card-why2">${w[1]}</span></span></span>`,
+              <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WHY</span><span class="ph-card-why ph-mono"><span>${w[0]}</span><span class="ph-card-why2">${w[1]}</span></span></span>
+              ${this.openGameBtnHtml(b.pk, b.side)}`,
           });
         }).join("");
         const sorts = [["lift", "Lift"], ["prob", "Prob"], ["time", "Time"], ["name", "Name"]]
@@ -818,7 +829,7 @@
         return `<div class="ph-ptable-row ph-ptable-bat">
           <span class="ph-mono ph-dim">${i + 1}</span>
           ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
-          <button class="ph-rowlink" data-act="predRow" data-arg="${esc(b.pk)}|${b.side}">
+          <button class="ph-rowlink" data-act="pOpen" data-arg="b:${esc(b.key)}" aria-expanded="${!!s.pOpen[`b:${b.key}`]}">
             <span class="ph-rowlink-top"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-mono">${esc(this.teamOf(b))} · #${b.slot || "—"}</span></span>
             <span class="ph-ellip">${this.numHtml(`vs ${b.spName || "TBD"} · ${g.away} @ ${g.home} ${when(g)}`)}</span>
           </button>
@@ -835,7 +846,7 @@
           <span class="ph-card-why ph-mono"><span>${w[0]}</span><span class="ph-card-why2">${w[1]}</span></span>
           ${rog}
           ${this.resultChipHtml(rec ? rec.result : null, g)}
-        </div>`;
+        </div>${s.pOpen[`b:${b.key}`] ? this.predBatterDetailHtml(b, g) : ""}`;
       }).join("");
       return `<div class="ph-ptable">
         <div class="ph-ptable-row ph-ptable-bat ph-ptable-head">
@@ -856,18 +867,18 @@
           const pk = String(g.gamePk);
           const score = g.phase === "pregame" ? "" : `${g.score.away}–${g.score.home}`;
           const now = g.phase === "pregame" ? "—" : `${w.team} ${w.val}`;
-          const cap = g.phase === "pregame" ? ["is-pre", "PREGAME · log5_v1"]
-            : g.phase === "live" ? ["is-live", "● LIVE · mlb_winprob_v1"] : ["", "AT FINAL"];
+          const cap = g.phase === "pregame" ? ["is-pre", "PREGAME"]
+            : g.phase === "live" ? ["is-live", "● LIVE"] : ["", "AT FINAL"];
           return this.mCardHtml({
             key: `pg:${pk}`,
             head: `${this.pinBtnHtml("g:" + pk, "Watch this game")}
               ${this.slateChipHtml(g, true)}
-              <button class="ph-rowlink" data-act="predRow" data-arg="${esc(pk)}">
+              <button class="ph-rowlink" data-act="mToggle" data-arg="pg:${esc(pk)}" aria-expanded="${!!this.state.mOpen[`pg:${pk}`]}">
                 <span class="ph-rowlink-top"><b>${esc(g.away)} @ ${esc(g.home)}</b><span class="ph-mono ph-rowlink-score">${esc(score)}</span></span>
               </button>`,
             stats: `${this.mPairHtml("WIN PROB · PREGAME → NOW", `<span class="ph-stack"><span class="ph-gpill-line ph-mono">
                   <span class="ph-dim">${pw.prob == null ? "—" : esc(`${pw.team} ${pw.val}`)}</span><span class="ph-mut">→</span>
-                  <b class="ph-gpill-num">${esc(now)}</b>${this.deltaHtml(w.delta)}</span><span class="ph-cap ${cap[0]}">${cap[1]}</span></span>`)}
+                  <b class="ph-gpill-num">${esc(now)}</b>${this.deltaHtml(w.delta)}</span><span class="ph-cap ${cap[0]}" title="${esc(this.wpModelTip(g))}">${cap[1]}</span></span>`)}
               ${this.mPairHtml("TOTAL · PREGAME", `<span class="ph-gpill-line"><b>${this.numHtml(t.pick)}</b><span class="ph-mono ph-gpill-num is-dim">${this.pct(t.prob)}</span></span>`)}`,
             more: `${this.mPairHtml("STARTERS", `<span class="ph-meta-v">${esc(this.startersLine(g))}</span>`)}
               ${this.mPairHtml("PROJ RUNS", `<span class="ph-mono">${t.proj == null ? "—" : t.proj.toFixed(1)}</span>`)}
@@ -877,7 +888,8 @@
               ${this.mPairHtml("RESULT", `<span class="ph-res2">
                 <span><span class="ph-res-k ph-res-k--w">WP</span>${this.gameResultChipHtml(this.gameResult(g, "wp"))}</span>
                 <span><span class="ph-res-k ph-res-k--w">TOT</span>${this.gameResultChipHtml(this.gameResult(g, "tot"))}</span></span>`)}
-              ${this.mPairHtml("WIN-PROB SPARKLINE", this.tagHtml("needsroute"))}`,
+              ${g.phase === "pregame" ? "" : `<span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WIN PROB BY AT-BAT</span>${this.sparkHtml(g, 32)}</span>`}
+              ${this.openGameBtnHtml(pk)}`,
           });
         }).join("")}</div>`;
       }
@@ -885,12 +897,12 @@
         const pk = String(g.gamePk);
         const score = g.phase === "pregame" ? "" : `${g.score.away}–${g.score.home}`;
         const now = g.phase === "pregame" ? "—" : g.phase === "final" ? `${w.team} ${w.val}` : `${w.team} ${w.val}`;
-        const cap = g.phase === "pregame" ? ["is-pre", "PREGAME · log5_v1"]
-          : g.phase === "live" ? ["is-live", "● LIVE · mlb_winprob_v1"] : ["", "AT FINAL"];
+        const cap = g.phase === "pregame" ? ["is-pre", "PREGAME"]
+          : g.phase === "live" ? ["is-live", "● LIVE"] : ["", "AT FINAL"];
         return `<div class="ph-ptable-row ph-ptable-game">
           ${this.pinBtnHtml("g:" + pk, "Watch this game")}
           ${this.slateChipHtml(g, false)}
-          <button class="ph-rowlink" data-act="predRow" data-arg="${esc(pk)}">
+          <button class="ph-rowlink" data-act="pOpen" data-arg="g:${esc(pk)}" aria-expanded="${!!this.state.pOpen[`g:${pk}`]}">
             <span class="ph-rowlink-top"><b>${esc(g.away)} @ ${esc(g.home)}</b><span class="ph-mono ph-rowlink-score">${esc(score)}</span></span>
             <span class="ph-ellip">${esc(this.startersLine(g))}</span>
           </button>
@@ -899,7 +911,8 @@
               <span class="ph-dim">${pw.prob == null ? "—" : esc(`${pw.team} ${pw.val}`)}</span><span class="ph-mut">→</span>
               <b class="ph-gpill-num">${esc(now)}</b>${this.deltaHtml(w.delta)}
             </span>
-            <span class="ph-cap ${cap[0]}">${cap[1]}</span>
+            <span class="ph-cap ${cap[0]}" title="${esc(this.wpModelTip(g))}">${cap[1]}</span>
+            ${g.phase === "pregame" ? "" : this.sparkHtml(g, 22)}
           </span>
           <span class="ph-mono">${t.proj == null ? "—" : t.proj.toFixed(1)}</span>
           <span class="ph-gpill-line"><b>${this.numHtml(t.pick)}</b><span class="ph-mono ph-gpill-num is-dim">${this.pct(t.prob)}</span></span>
@@ -911,12 +924,12 @@
             <span><span class="ph-res-k ph-res-k--w">WP</span>${this.gameResultChipHtml(this.gameResult(g, "wp"))}</span>
             <span><span class="ph-res-k ph-res-k--w">TOT</span>${this.gameResultChipHtml(this.gameResult(g, "tot"))}</span>
           </span>
-        </div>`;
+        </div>${this.state.pOpen[`g:${pk}`] ? this.predGameDetailHtml(g) : ""}`;
       }).join("");
       return `<div class="ph-ptable">
         <div class="ph-ptable-row ph-ptable-game ph-ptable-head">
           <span></span><span>STATUS</span><span>MATCHUP · STARTERS</span>
-          <span class="ph-headtag">WIN PROB · PREGAME → NOW ${this.tagHtml("needsroute")}<span class="ph-mut">sparkline</span></span>
+          <span>WIN PROB · PREGAME → NOW</span>
           <span>PROJ RUNS</span><span>TOTAL · PREGAME</span><span>LIVE TOTAL</span><span>RESULT</span>
         </div>
         ${body}
@@ -925,21 +938,21 @@
     predStarterTableHtml(rows) {
       if (this.mob()) {
         return `<div class="ph-mlist">${rows.map((r) => this.starterCardHtml(`pp:${r.g.gamePk}:${r.side}`,
-          `<button class="ph-rowlink" data-act="predRow" data-arg="${esc(String(r.g.gamePk))}|sp">
+          `<button class="ph-rowlink" data-act="mToggle" data-arg="pp:${r.g.gamePk}:${r.side}" aria-expanded="${!!this.state.mOpen[`pp:${r.g.gamePk}:${r.side}`]}">
             <span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(r.name)}</b></span>
             <span class="ph-ellip">${this.numHtml(`${r.team} vs ${r.opp} · ${this.clockOf(r.g.startTs) || "TBD"}`)}</span>
-          </button>`, r.id, r.g.gamePk, this.slateChipHtml(r.g, true))).join("")}
+          </button>`, r.id, r.g.gamePk, this.slateChipHtml(r.g, true), this.openGameBtnHtml(r.g.gamePk, "sp"))).join("")}
           <div class="ph-btable-foot"><span>${this.numHtml(COPY.startersNote)}</span></div>
         </div>`;
       }
       const body = rows.map((r) => `<div class="ph-ptable-row ph-ptable-sp">
-          <button class="ph-rowlink" data-act="predRow" data-arg="${esc(String(r.g.gamePk))}|sp">
+          <button class="ph-rowlink" data-act="pOpen" data-arg="s:${r.g.gamePk}:${r.side}" aria-expanded="${!!this.state.pOpen[`s:${r.g.gamePk}:${r.side}`]}">
             <span class="ph-spname"><span class="ph-sp-tag">SP</span><b class="ph-ellip">${esc(r.name)}</b></span>
             <span class="ph-ellip">${this.numHtml(`${r.team} vs ${r.opp} · ${this.clockOf(r.g.startTs) || "TBD"}`)}</span>
           </button>
           ${this.slateChipHtml(r.g, false)}
           ${this.starterCellsHtml(r.id, r.g.gamePk)}
-        </div>`).join("");
+        </div>${this.state.pOpen[`s:${r.g.gamePk}:${r.side}`] ? this.predStarterDetailHtml(r) : ""}`).join("");
       const hd = ["STARTER · MATCHUP", "STATUS", "STRIKEOUTS", "OUTS REC.", "HITS ALLOWED", "EARNED RUNS", "WALKS", "30D K%", "WHIFF", "HR/PA", "FB VELO", "FATIGUE"];
       return `<div class="ph-ptable">
         <div class="ph-ptable-row ph-ptable-sp ph-ptable-head">${hd.map((h) => `<span>${h}</span>`).join("")}</div>
@@ -953,6 +966,41 @@
       const none = g.phase === "pregame" ? "TBD" : "—";
       if (!g.probables.away && !g.probables.home && none === "—") return "starters —";
       return `${g.probables.away || none} vs ${g.probables.home || none}`;
+    }
+    // ── inline row detail ────────────────────────────────────────────────
+    // A Predictions row opens in place. It used to jump to the Home tab's
+    // game pill, which threw away the reader's filters and scroll with no way
+    // back; leaving the tab is now an explicit "Open game" button.
+    openGameBtnHtml(pk, side) {
+      return `<button class="ph-chip ph-opengame" data-act="openGame" data-arg="${esc(String(pk))}${side ? `|${side}` : ""}">Open game ›</button>`;
+    }
+    predDetailWrap(inner) { return `<div class="ph-pdetail">${inner}</div>`; }
+    predBatterDetailHtml(b, g) {
+      const h = this.h2hOf(b);
+      const h2h = !h || h.pending ? "—" : !h.found ? "fewer than 3 PA" : `${h.h_count}-for-${h.pa_count}, ${h.hr_count} HR`;
+      const opp = b.oppForm;
+      return this.predDetailWrap(`
+        ${this.mPairHtml("1+ HIT", this.probCellHtml(b, "hit"))}
+        ${this.mPairHtml("1+ HR", this.probCellHtml(b, "hr"))}
+        ${this.mPairHtml("H+R+RBI 1+", this.baseBatterCellHtml(b.hrr, "hrr"))}
+        ${this.mPairHtml("TB 1.5+", this.baseBatterCellHtml(b.tb15, "tb"))}
+        ${this.mPairHtml("30D H · HR /PA", this.formCellHtml(b.form))}
+        ${this.mPairHtml(`${esc(this.lastName(b.spName)).toUpperCase()} ALLOWS · 30D`, this.formCellHtml(opp))}
+        ${this.mPairHtml("VS THIS STARTER", `<span class="ph-mono">${esc(h2h)}</span>`)}
+        ${this.mPairHtml("GAME", `<span class="ph-meta-v">${this.numHtml(`${g.away} @ ${g.home} · ${g.venue || "—"} · ${this.clockOf(g.startTs) || "TBD"}`)}</span>`)}
+        <span class="ph-pdetail-act">${this.pinBtnHtml("b:" + b.id, "Watch this batter")}${this.openGameBtnHtml(b.pk, b.side)}</span>`);
+    }
+    predGameDetailHtml(g) {
+      if (!this.state.gameCtx[String(g.gamePk)]) this.loadGameContext(g.gamePk);
+      return this.predDetailWrap(`${this.pillMetaGridHtml(g)}
+        ${g.phase === "pregame" ? "" : `<span class="ph-meta ph-pdetail-wide"><span class="ph-meta-k">WIN PROB BY AT-BAT</span>${this.sparkHtml(g, 40)}</span>`}
+        <span class="ph-pdetail-act">${this.openGameBtnHtml(g.gamePk)}</span>`);
+    }
+    predStarterDetailHtml(r) {
+      return this.predDetailWrap(`
+        ${this.mPairHtml("MATCHUP", `<span class="ph-meta-v">${this.numHtml(`${r.team} vs ${r.opp} · ${r.g.venue || "—"} · ${this.clockOf(r.g.startTs) || "TBD"}`)}</span>`)}
+        <span class="ph-note ph-pdetail-wide">${this.numHtml(COPY.startersNote)}</span>
+        <span class="ph-pdetail-act">${this.openGameBtnHtml(r.g.gamePk, "sp")}</span>`);
     }
     predEmptyHtml() {
       const has = this.todayGames().length > 0;
@@ -1018,38 +1066,73 @@
       });
       return { w, l, mae: maeN ? mae / maeN : null, maeServed: served, versions: [...versions] };
     }
+    // How a call rate compares with the naive baseline for its market:
+    // always picking the league's most common outcome. A four-way at-bat call
+    // right 43% of the time is ordinary, not a failure — the naive "out" pick
+    // is right ~45% — and the old fixed 50% / 66% bands painted it red. Under
+    // MIN_GRADED graded calls there is no colour at all: a handful of results
+    // is noise, not a verdict.
+    MIN_GRADED = 50;
+    skillBand(c, n, base) {
+      if (!n || n < this.MIN_GRADED || base == null) return null;
+      const d = c / n - base;
+      return d >= 0.02 ? "good" : d >= -0.02 ? "amber" : "bad";
+    }
     trustTilesHtml() {
       const t = this.state.trust;
-      const tile = (label, valHtml, sub, tone) => `<div class="ph-kpi">
+      const tile = (label, valHtml, sub, tone, tip) => `<div class="ph-kpi" title="${esc(tip || "")}">
           <span class="ph-kpi-k">${esc(label)}</span>
           <b class="ph-mono ph-kpi-v ${tone ? `ph-tone-${tone}` : ""}">${valHtml}</b>
           <span class="ph-kpi-sub">${sub}</span>
         </div>`;
-      const acc = (w, l) => this.accBand(w + l ? w / (w + l) : null);
+      const small = (n) => n < this.MIN_GRADED ? ` · small sample` : "";
       const calTile = (label, key) => {
         if (!t) return tile(label, "—", "loading…");
-        if (t.served === false) return tile(label, this.missingHtml("notserved"), "graded result not in /projections yet");
+        if (t.served === false) return tile(label, "—", "grading not available yet");
         const c = t.calib[key];
-        if (!c || !c.n) return tile(label, "—", this.numHtml(`0 graded · ${key}${c && c.version ? " " + c.version : ""}`));
+        const tip = `How often the read landed vs the probability the model gave it, over the last 7 days.${c && c.version ? ` Model ${c.version}.` : ""}`;
+        if (!c || !c.n) return tile(label, "—", "nothing graded yet", null, tip);
         const exp = c.sumP / c.n, act = c.hits / c.n, gap = Math.abs(act - exp) * 100;
         return tile(label, this.numHtml(`${this.pct(act)} / ${this.pct(exp)}`),
-          this.numHtml(`landed / predicted · ${c.n} graded${c.voids ? ` · ${c.voids} DNP` : ""}`),
-          gap < 2 ? "good" : gap < 4 ? "amber" : "bad");
+          this.numHtml(`landed / predicted · ${c.n} graded${c.voids ? ` · ${c.voids} DNP` : ""}${small(c.n)}`),
+          c.n < this.MIN_GRADED ? null : gap < 2 ? "good" : gap < 4 ? "amber" : "bad", tip);
       };
       const wp = t && t.wp;
       const ab = this.trustRollup("ab_result");
       const velo = this.trustRollup("pitch_speed_ou");
-      return `<div class="ph-kpis">
-        ${calTile("1+ HIT CALIBRATION · 7 DAYS", "batter_hit")}
-        ${calTile("1+ HR CALIBRATION · 7 DAYS", "batter_hr")}
-        ${!wp ? tile("WIN PROB · 7 DAYS", "—", t ? "couldn't load" : "loading…")
-          : tile("WIN PROB · 7 DAYS", this.numHtml(this.ratioPct(wp.w, wp.l + wp.w)), wp.w + wp.l ? "pregame favourite won" : "0 graded", acc(wp.w, wp.l))}
-        ${!ab ? tile("AT-BAT CALLS · 7 DAYS", "—", "loading…")
-          : tile("AT-BAT CALLS · 7 DAYS", this.numHtml(this.ratioPct(ab.w, ab.w + ab.l)), this.numHtml(`${ab.w + ab.l ? "" : "0 graded · "}ab_result ${ab.versions.join(", ")}`), acc(ab.w, ab.l))}
-        ${!velo ? tile("VELO MAE · 7 DAYS", "—", "loading…")
-          : !velo.maeServed ? tile("VELO MAE · 7 DAYS", this.missingHtml("notserved"), "mean_abs_error not in /accuracy yet")
-            : tile("VELO MAE · 7 DAYS", velo.mae == null ? "—" : this.numHtml(`${velo.mae.toFixed(1)} mph`), this.numHtml("pitch_speed_ou · σ 5.4"))}
-      </div>`;
+      const abBase = Math.max(...Object.values(this.LEAGUE_AB));
+      const tiles = [
+        calTile("1+ HIT CALIBRATION · 7 DAYS", "batter_hit"),
+        calTile("1+ HR CALIBRATION · 7 DAYS", "batter_hr"),
+        !wp ? tile("WIN PROB · 7 DAYS", "—", t ? "couldn't load" : "loading…")
+          : tile("WIN PROB · 7 DAYS", this.numHtml(this.ratioPct(wp.w, wp.l + wp.w)),
+            wp.w + wp.l ? this.numHtml(`pregame favourite won${small(wp.w + wp.l)}`) : "nothing graded yet",
+            this.skillBand(wp.w, wp.w + wp.l, 0.5), "Games where the model's pregame favourite won. A coin flip is 50%."),
+        !ab ? tile("AT-BAT CALLS · 7 DAYS", "—", "loading…")
+          : tile("AT-BAT CALLS · 7 DAYS", this.numHtml(this.ratioPct(ab.w, ab.w + ab.l)),
+            ab.w + ab.l ? this.numHtml(`vs ${this.pct(abBase)} always calling "out"`) : "nothing graded yet",
+            this.skillBand(ab.w, ab.w + ab.l, abBase),
+            `Calls on how each at-bat ends (out / hit / strikeout / walk). Always calling the most common result, an out, is right about ${this.pct(abBase)} of the time.${ab.versions.length ? ` Model ${ab.versions.join(", ")}.` : ""}`),
+        !velo ? tile("VELO MISS · 7 DAYS", "—", "loading…")
+          : !velo.maeServed || velo.mae == null ? tile("VELO MISS · 7 DAYS", "—", "nothing graded yet")
+            : tile("VELO MISS · 7 DAYS", this.numHtml(`${velo.mae.toFixed(1)} mph`), "average miss on next-pitch speed", null,
+              "Mean absolute error of the next-pitch speed call: how far, on average, the pitch came in from the number called."),
+      ];
+      if (this.mob()) {
+        // Phone: one line, tiles behind a tap. Five tiles stacked ran to more
+        // than a screen before the first batter.
+        const open = !!this.state.mOpen["trust"];
+        const hit = t && t.calib.batter_hit && t.calib.batter_hit.n ? `Hit ${this.pct(t.calib.batter_hit.hits / t.calib.batter_hit.n)}/${this.pct(t.calib.batter_hit.sumP / t.calib.batter_hit.n)}` : null;
+        const wpS = wp && wp.w + wp.l ? `Fav ${this.pct(wp.w / (wp.w + wp.l))}` : null;
+        const abS = ab && ab.w + ab.l ? `AB ${this.pct(ab.w / (ab.w + ab.l))}` : null;
+        const summary = [hit, wpS, abS].filter(Boolean).join(" · ") || (t ? "—" : "loading…");
+        return `<button class="ph-trust-sum" data-act="mToggle" data-arg="trust" aria-expanded="${open}">
+            <span class="ph-kicker ph-kicker--mut">Model record · 7 days</span>
+            <span class="ph-mono ph-ellip">${this.numHtml(summary)}</span>
+            <span class="ph-chev" aria-hidden="true">${open ? "▾" : "▸"}</span>
+          </button>${open ? `<div class="ph-kpis">${tiles.join("")}</div>` : ""}`;
+      }
+      return `<div class="ph-kpis">${tiles.join("")}</div>`;
     }
 
     // ── today's batter projections ───────────────────────────────────────
@@ -1113,9 +1196,16 @@
     gameByPk(pk) {
       return this.todayGames().find((g) => String(g.gamePk) === String(pk)) || null;
     }
+    // "Vladimir Guerrero Jr." is Guerrero, not "Jr.". Generational suffixes
+    // are dropped before the last word is taken, in both name helpers.
+    nameParts(n) {
+      const parts = String(n || "").trim().split(/\s+/).filter(Boolean);
+      while (parts.length > 2 && /^(jr|sr|ii|iii|iv|v)\.?$/i.test(parts[parts.length - 1])) parts.pop();
+      return parts;
+    }
     lastName(n) {
-      const parts = String(n || "").trim().split(/\s+/);
-      return parts.length ? parts[parts.length - 1] || "—" : "—";
+      const parts = this.nameParts(n);
+      return parts.length ? parts[parts.length - 1] : "—";
     }
     r3(v) { return v == null ? "—" : Number(v).toFixed(3).replace(/^0/, ""); }
     pct1(v) { return v == null ? "—" : (Number(v) * 100).toFixed(1) + "%"; }
@@ -1151,12 +1241,17 @@
             spId: r.opposing_pitcher_id == null ? null : String(r.opposing_pitcher_id),
             spName: r.opposing_pitcher || null, updatedAt: null,
             hit: null, hr: null, tb15: null, hrr: null,
+            // 30-day per-PA form, the batter's own and the opposing
+            // starter's rates allowed (see /projections form_30d).
+            form: null, oppForm: null,
           };
           by.set(key, b);
         }
         b[mk] = r;
         if (b.slot == null && r.lineup_slot != null) b.slot = Number(r.lineup_slot);
         if (b.xpa == null && r.expected_pa != null) b.xpa = Number(r.expected_pa);
+        if (!b.form && r.form_30d) b.form = r.form_30d;
+        if (!b.oppForm && r.opp_form_30d) b.oppForm = r.opp_form_30d;
         if (r.updated_at && (!b.updatedAt || r.updated_at > b.updatedAt)) b.updatedAt = r.updated_at;
       });
       const list = [...by.values()];
@@ -1229,22 +1324,31 @@
       return `<span class="ph-bar"><span class="ph-bar-fill ${cls || ""}" style="width:${w.toFixed(1)}%"></span>${tick == null ? "" : `<span class="ph-bar-tick" style="left:${tick.toFixed(1)}%"></span>`}</span>`;
     }
 
-    // The two "why" lines under a batter read (port of why()). Rolling 30-day
-    // rates are not routed per slate, so those parts are a dash with a tag;
-    // H2H, slot and xPA are real. Returns HTML.
+    // The two "why" lines under a batter read: the batter's 30-day per-PA
+    // rate and what the opposing starter has allowed over the same window —
+    // the same rolling rows the model reads — then head-to-head, slot and xPA.
+    // Returns HTML.
     whyLines(b, m) {
       const sp = esc(this.lastName(b.spName));
       const h = this.h2hOf(b);
       const slot = b.slot ? `slot ${b.slot}` : "slot pending";
       const xpa = b.xpa == null ? "—" : b.xpa.toFixed(2);
-      const ns = this.tagHtml("notserved");
       let h2h;
       if (!h || h.pending) h2h = "—";
       else if (!h.found) h2h = "— (&lt;3 PA)";
       else h2h = m === "hit" ? `${h.h_count}-${h.pa_count}` : `${h.hr_count} HR in ${h.pa_count} PA`;
+      const key = m === "hit" ? "hit_rate" : "hr_rate";
+      const fmt = (v) => (v == null ? "—" : m === "hit" ? this.r3(v) : this.pct1(v));
+      const own = b.form && b.form[key] != null ? `${fmt(b.form[key])} <span class="ph-dim">(${b.form.pa} PA)</span>` : "— <span class=\"ph-dim\">(few PA)</span>";
+      const opp = b.oppForm && b.oppForm[key] != null ? fmt(b.oppForm[key]) : "—";
       return m === "hit"
-        ? [`30d H/PA — · ${sp} H/PA — ${ns}`, `H2H ${h2h} · ${slot} → ${xpa} xPA`]
-        : [`30d HR/PA — · ${sp} HR/PA — ${ns}`, `H2H ${h2h} · ${slot} → ${xpa} xPA`];
+        ? [`30d H/PA ${own} · ${sp} allows ${opp}`, `H2H ${h2h} · ${slot} → ${xpa} xPA`]
+        : [`30d HR/PA ${own} · ${sp} allows ${opp}`, `H2H ${h2h} · ${slot} → ${xpa} xPA`];
+    }
+    // 30-day H/PA · HR/PA, for the tables' form column.
+    formCellHtml(f) {
+      if (!f || (f.hit_rate == null && f.hr_rate == null)) return this.missingHtml("fewpa");
+      return `<span class="ph-stack"><span class="ph-mono">${this.r3(f.hit_rate)} · ${this.pct1(f.hr_rate)}</span><span class="ph-mono ph-small ph-mut">${f.pa} PA</span></span>`;
     }
 
     // ── head-to-head (lazy) ──────────────────────────────────────────────
@@ -1260,6 +1364,34 @@
       if (!v || stale) (this._wantH2H || (this._wantH2H = new Set())).add(k);
       return v && !v.err ? v : null;
     }
+    // Per-at-bat win-probability history (GET /game/{pk}/winprob), lazily per
+    // game and refreshed while the game is live. null until it lands.
+    wpOf(g) {
+      if (!g || g.phase === "pregame") return null;
+      const pk = String(g.gamePk);
+      const v = this.state.wp[pk];
+      const ttl = g.phase === "live" ? 20000 : 600000;
+      if (!v || (!v.pending && Date.now() - (v.at || 0) > ttl)) (this._wantWP || (this._wantWP = new Set())).add(pk);
+      return v && v.points && v.points.length ? v : null;
+    }
+    // Home win probability across the game, 50% marked. Width follows the
+    // container; the SVG is stretched, the stroke is not.
+    sparkHtml(g, h) {
+      const v = this.wpOf(g);
+      if (!v) return `<span class="ph-spark ph-spark--empty" style="height:${h || 28}px">${g && g.phase === "pregame" ? "" : "win-prob history loading…"}</span>`;
+      const pts = (v.pregame_home != null ? [{ home: v.pregame_home }] : []).concat(v.points);
+      const n = pts.length;
+      const xy = pts.map((p, i) => `${n === 1 ? 50 : ((i / (n - 1)) * 100).toFixed(2)},${((1 - p.home) * 40).toFixed(2)}`).join(" ");
+      const last = pts[n - 1].home;
+      const tip = `${g.home} win probability by at-bat · now ${this.pct(last)}${v.pregame_home != null ? ` · opened ${this.pct(v.pregame_home)}` : ""}`;
+      return `<span class="ph-spark" title="${esc(tip)}" role="img" aria-label="${esc(tip)}" style="height:${h || 28}px">
+        <span class="ph-spark-lbl ph-spark-lbl--top">${esc(g.home)}</span><span class="ph-spark-lbl ph-spark-lbl--bot">${esc(g.away)}</span>
+        <svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+          <line x1="0" y1="20" x2="100" y2="20" class="ph-spark-mid" vector-effect="non-scaling-stroke"/>
+          <polyline points="${xy}" class="ph-spark-line" vector-effect="non-scaling-stroke"/>
+        </svg>
+      </span>`;
+    }
     // Starter profile + fatigue, through loadEntityProfile's per-player cache.
     starterOf(id) {
       if (!id) return null;
@@ -1270,7 +1402,21 @@
     _flushWants() {
       const pairs = this._wantH2H ? [...this._wantH2H] : [];
       const sps = this._wantSP ? [...this._wantSP] : [];
-      this._wantH2H = null; this._wantSP = null;
+      const wps = this._wantWP ? [...this._wantWP] : [];
+      this._wantH2H = null; this._wantSP = null; this._wantWP = null;
+      if (wps.length) {
+        const pend = {};
+        wps.forEach((pk) => { pend[pk] = Object.assign({}, this.state.wp[pk] || {}, { pending: true }); });
+        this.state.wp = Object.assign({}, this.state.wp, pend);
+        wps.forEach((pk) => fetchJson(`/game/${pk}/winprob`).then((body) => {
+          const prev = this.state.wp[pk] || {};
+          const next = body ? { points: body.points || [], pregame_home: body.pregame_home, at: Date.now() }
+            : Object.assign({}, prev, { pending: false, at: Date.now() });
+          const changed = JSON.stringify(next.points) !== JSON.stringify(prev.points);
+          this.state.wp = Object.assign({}, this.state.wp, { [pk]: next });
+          if (changed) this.render();
+        }));
+      }
       sps.forEach((id) => this.loadEntityProfile(id, "PITCHER"));
       if (!pairs.length) return;
       const pend = {};
@@ -1323,6 +1469,13 @@
         caption, capCls, swing: delta == null ? 0 : Math.abs(delta),
       };
     }
+    // Which model a win probability came from, for a tooltip — model ids are
+    // for the curious, not for the cell.
+    wpModelTip(g) {
+      return g.phase === "pregame" ? "Pregame model (log5_v1): team strength and the probable starters"
+        : g.phase === "live" ? "Live win probability (mlb_winprob_v1), updated every at-bat"
+          : "Final result; the pregame call is shown for comparison";
+    }
     deltaHtml(d) {
       if (d == null) return "";
       const cls = d > 0 ? "is-up" : d < 0 ? "is-down" : "";
@@ -1348,21 +1501,34 @@
       }));
       return best;
     }
-    // Port of topCall(): the more confident of the live next-pitch and
-    // at-bat-result calls, with its league rate.
+    // The strongest live lean: across the next-pitch and at-bat-result
+    // distributions, the outcome furthest ABOVE its league rate.
+    //
+    // This used to take the most probable outcome. That is nearly always the
+    // league's own most common one — strike/foul on the next pitch (~46%), an
+    // out on the at-bat (~45%) — so "top call" was a league average dressed as
+    // a call, often below league (-1 pts) and painted green regardless.
     topCallOf(g) {
       const pick = (mk, lg, label) => {
         const probs = mk && mk.probs;
         if (!probs) return null;
-        const k = Object.keys(probs).reduce((a, b) => (probs[a] >= probs[b] ? a : b), Object.keys(probs)[0]);
-        return k == null || lg[k] == null ? null : { k, p: Number(probs[k]), lg: lg[k], mkt: label };
+        let best = null;
+        Object.keys(probs).forEach((k) => {
+          if (probs[k] == null || lg[k] == null) return;
+          const p = Number(probs[k]), lift = p - lg[k];
+          if (!best || lift > best.lift || (lift === best.lift && p > best.p)) best = { k, p, lg: lg[k], lift, mkt: label };
+        });
+        return best;
       };
       const a = pick(g.m && g.m.pitch_result, this.LEAGUE_PITCH, "Next pitch");
       const b = pick(g.m && g.m.ab_result, this.LEAGUE_AB, "At-bat result");
-      if (!a) return b;
-      if (!b) return a;
-      return a.p >= b.p ? a : b;
+      const c = !a ? b : !b ? a : a.lift >= b.lift ? a : b;
+      if (c) c.band = this.leanBand(c.lift);
+      return c;
     }
+    // A lean of 3+ points over league is a real lean; within 3 is league
+    // average; below is the model leaning against.
+    leanBand(lift) { return lift == null ? "avg" : lift >= 0.03 ? "good" : lift <= -0.03 ? "low" : "avg"; }
     // "game at-bat calls 14/19 · 74%" from today's graded rows, if loaded.
     gameAbRecord(pk) {
       const m = this.models().find((x) => String(x.pk) === String(pk));
@@ -1458,7 +1624,7 @@
     }
     phaseChip(kind, text) { return `<span class="ph-phase ph-phase--${kind}">${this.numHtml(text)}</span>`; }
     decisionCardHtml(c) {
-      const viz = c.spark ? `<span class="ph-card-spark">${this.missingHtml("needsroute")}<span class="ph-card-spark-note">win-prob sparkline</span></span>`
+      const viz = c.sparkG ? this.sparkHtml(c.sparkG, 26)
         : c.bar ? this.barHtml(c.bar.w, c.bar.tick, c.bar.cls) : "";
       return `<button class="ph-card${c.live ? " is-live" : ""}" data-act="${c.act}" data-arg="${esc(c.arg)}">
         <span class="ph-card-head">
@@ -1534,7 +1700,7 @@
         phase: "PREGAME", phaseKind: "pre",
         val: fav.w.val, lift: `+${Math.round((fav.w.prob - 0.5) * 100)} pts`, base: "vs 50%",
         bar: { w: fav.w.prob * 100, tick: 50, cls: "ph-band-bg-avg" },
-        why1: "pregame win prob · log5_v1",
+        why1: "pregame win probability · team strength + starters",
         why2: `starters ${esc(sps(fav.g))}`,
         fresh: fav.g.phase === "live" ? "frozen at first pitch" : "set by game-predict",
         status: fav.g.phase === "live" ? "LIVE NOW" : "PREGAME", statusKind: "solid",
@@ -1551,7 +1717,7 @@
         val: hi.t.proj.toFixed(1), lift: `${hi.t.pick} · ${this.pct(hi.t.prob)}`,
         base: avg == null ? "" : `slate avg ${avg.toFixed(1)}`,
         why1: "team run rates · park factor · starter profiles",
-        why2: `weather used in the model ${this.tagHtml("notserved")}`,
+        why2: "pregame weather and wind are in the model",
         fresh: "frozen at first pitch", status: "RUNS", statusKind: "solid",
         act: "openPill", arg: String(hi.g.gamePk),
       };
@@ -1576,20 +1742,20 @@
         kicker: "BIGGEST SWING", title: at(sw.g), sub: `${inn(sw.g)} · ${sw.w.team} win prob since first pitch`,
         val: sw.w.val, lift: sw.w.delta == null ? "" : `${sw.w.delta > 0 ? "+" : sw.w.delta < 0 ? "−" : "±"}${Math.abs(sw.w.delta)} pts`,
         liftBand: sw.w.delta > 0 ? "good" : "avg", base: sw.w.pre == null ? "" : `opened ${this.pct(sw.w.pre)}`,
-        spark: true, why1: "live − pregame win prob · mlb_winprob_v1", why2: "win-prob history needs a route",
+        sparkG: sw.g, why1: "live win probability minus where it opened", why2: "line: win probability after every at-bat",
         flash: this.flashIf("card:swing", `${sw.g.gamePk}:${sw.w.val}`),
-        status: "NEEDS ROUTE", statusKind: "route", act: "liveGo", arg: String(sw.g.gamePk),
+        status: "WIN PROB", statusKind: "solid", act: "liveGo", arg: String(sw.g.gamePk),
       });
 
       const tcs = live.map((g) => ({ g, c: this.topCallOf(g) })).filter((x) => x.c);
-      const tc = tcs.sort((a, b) => b.c.p - a.c.p)[0];
+      const tc = tcs.sort((a, b) => b.c.lift - a.c.lift)[0];
       const top = tc && liveCard({
         kicker: "TOP CALL NOW", title: `${this.outLabel(tc.c.k)} · ${tc.c.mkt}`,
         sub: `${tc.g.away} @ ${tc.g.home} · ${this.shortName(tc.g.batter.name)} vs ${this.shortName(tc.g.pitcher.name)}`,
-        val: this.pct(tc.c.p), valCls: "ph-band-good",
-        lift: `${tc.c.p >= tc.c.lg ? "+" : "−"}${Math.abs(Math.round((tc.c.p - tc.c.lg) * 100))} pts`,
-        liftBand: tc.c.p >= tc.c.lg ? "good" : "avg", base: `league ${this.pct(tc.c.lg)}`,
-        bar: { w: tc.c.p * 100, tick: tc.c.lg * 100, cls: "ph-band-bg-good" },
+        val: this.pct(tc.c.p), valCls: `ph-band-${tc.c.band}`,
+        lift: `${tc.c.lift >= 0 ? "+" : "−"}${Math.abs(Math.round(tc.c.lift * 100))} pts`,
+        liftBand: tc.c.band, base: `league ${this.pct(tc.c.lg)}`,
+        bar: { w: tc.c.p * 100, tick: tc.c.lg * 100, cls: `ph-band-bg-${tc.c.band}` },
         why1: esc(sit(tc.g)), why2: `game at-bat calls ${esc(this.gameAbRecord(tc.g.gamePk))}`,
         flash: this.flashIf("card:top", `${tc.g.gamePk}:${tc.c.k}:${tc.c.p}`),
         status: "LIVE CALL", statusKind: "solid", act: "liveGo", arg: String(tc.g.gamePk),
@@ -1599,8 +1765,8 @@
       const dueCard = due && Object.assign(this.batterCard(
         `DUE UP · ${due.k === 1 ? "ON DECK" : due.k === 2 ? "IN THE HOLE" : "3RD UP"}`, due.b, "hr"), {
         sub: `${this.teamOf(due.b)} #${due.b.slot} · 1+ HR · vs ${due.b.spName || "TBD"} · ${due.g.away} @ ${due.g.home}`,
-        why2: "who bats next: derived from lineup slot + current batter",
-        status: "DERIVED", statusKind: "dashed",
+        why2: "who bats next, worked out from the batting order",
+        status: "FROM ORDER", statusKind: "dashed",
       });
 
       const cl = wps.slice().sort((a, b) => a.w.prob - b.w.prob)[0];
@@ -1670,7 +1836,7 @@
               <button class="ph-chev" ${toggle} aria-expanded="${open}">${open ? "▾" : "▸"}</button>
             </div>
             <div class="ph-gpill-m2">
-              ${this.basesHtml(true)}
+              ${this.basesHtml(g, true)}
               <span class="ph-mono">${esc(sit)}</span>
               <span class="ph-mono ph-ellip ph-gpill-mvenue">${esc(sub)}</span>
             </div>
@@ -1696,7 +1862,7 @@
             <span>${esc(scoreSub)}</span>
           </span>
           <span class="ph-gpill-sit">
-            ${this.basesHtml(false)}
+            ${this.basesHtml(g, false)}
             <span class="ph-mono"><b>${esc(live ? g.count || "—" : "—")}</b><span>${esc(live && g.outs != null ? `${g.outs} out` : "—")}</span></span>
           </span>
           <span class="ph-gpill-cell">
@@ -1709,7 +1875,7 @@
           </span>
           <span class="ph-gpill-cell">
             <span class="ph-gpill-line"><b>${this.numHtml(t.pick)}</b><span class="ph-mono ph-gpill-num is-dim">${this.pct(t.prob)}</span></span>
-            <span class="ph-cap">TOTAL · PREGAME${t.proj == null ? "" : ` · <span class="ph-mono">${t.proj.toFixed(1)}</span> R`}</span>
+            <span class="ph-cap" title="Pregame total pick and projected runs">TOTAL${t.proj == null ? "" : ` · <span class="ph-mono">${t.proj.toFixed(1)}</span> R PROJ`}</span>
           </span>
           <span class="ph-gpill-cell">
             ${sr ? `<span class="ph-gpill-line">
@@ -1759,18 +1925,25 @@
       const weather = ok && c.weather_condition
         ? `${c.weather_condition}${c.temp_f == null ? "" : ` · ${c.temp_f}°F`}` : null;
       const wind = ok && c.wind_mph != null ? `${c.wind_mph} mph ${c.wind_direction || ""}`.trim() : null;
+      // MLB's pregame reading before a game is final, the boxscore after.
+      const wxKey = c.source === "schedule" ? "WEATHER · FORECAST" : "WEATHER";
+      const roof = ok && c.roof_closed != null ? (c.roof_closed ? "Closed" : "Open") : null;
+      // A factor of 1.00 is a league-average park for home runs; shown as
+      // the percentage it moves HR rate, for the season it was measured.
+      const pf = c.park_hr_factor != null
+        ? `${c.park_hr_factor >= 1 ? "+" : "−"}${Math.abs(Math.round((c.park_hr_factor - 1) * 100))}% HR${c.park_hr_factor_season ? ` · ${c.park_hr_factor_season}` : ""}` : null;
       const start = this.clockOf(g.startTs);
       const sps = g.probables.away || g.probables.home
         ? `${this.lastName(g.probables.away)} · ${this.lastName(g.probables.home)}` : null;
       return `<div class="ph-meta-grid">
         ${cell("STADIUM", (ok && c.venue_name) || g.venue || null)}
-        ${cell("ROOF", null)}
+        ${cell("ROOF", roof)}
         ${cell("FIRST PITCH", start ? `${start} ET` : null)}
         ${cell("PROBABLE STARTERS", sps)}
-        ${cell("WEATHER", weather)}
+        ${cell(wxKey, weather)}
         ${cell("WIND", wind)}
         ${cell("HP UMPIRE", ok && c.hp_umpire ? c.hp_umpire : null)}
-        ${cell("PARK HR FACTOR", null)}
+        ${cell("PARK HR FACTOR", pf)}
       </div>`;
     }
     // ── base-model cells ──────────────────────────────────────────────────
@@ -1800,6 +1973,11 @@
       const list = g && g.liveModels && g.liveModels.rest_of_game;
       if (!list || playerId == null) return null;
       return list.find((x) => String(x.player_id) === String(playerId)) || null;
+    }
+    // Settled reads carry what happened: hits (or HRs) and plate appearances.
+    resultLine(rec, m) {
+      if (!rec || rec.actual_count == null || rec.plate_appearances == null) return "";
+      return m === "hr" ? `${rec.actual_count} HR in ${rec.plate_appearances} PA` : `${rec.actual_count}-for-${rec.plate_appearances}`;
     }
     resultChipHtml(r, g) {
       // `result` absent from the row means the route predates the field;
@@ -1831,7 +2009,10 @@
           <span>${this.numHtml((rows.length ? COPY.lineupPending : COPY.noProjections).replace("{team}", team))}</span>
         </div>` : "";
       if (!rows.length) return pendNote;
-      const res = (b, m) => this.resultChipHtml(b[m] ? b[m].result : null, g);
+      const res = (b, m) => {
+        const line = this.resultLine(b[m], m);
+        return `<span title="${esc(line)}">${this.resultChipHtml(b[m] ? b[m].result : null, g)}</span>`;
+      };
       const upd = rows.reduce((a, b) => (b.updatedAt && (!a || b.updatedAt > a) ? b.updatedAt : a), null);
       const fresh = g.phase === "pregame"
         ? `PREGAME · updated ${this.clockOf(upd) || "—"} · re-scores until ${pending ? "the lineup locks" : "first pitch"}`
@@ -1853,16 +2034,16 @@
           more: [
             this.mPairHtml("H+R+RBI 1+", this.baseBatterCellHtml(b.hrr, "hrr")),
             this.mPairHtml("TB 1.5+", this.baseBatterCellHtml(b.tb15, "tb")),
-            this.mPairHtml("30D H · HR /PA", this.missingHtml("notserved")),
+            this.mPairHtml("30D H · HR /PA", this.formCellHtml(b.form)),
             this.mPairHtml("H2H", `<span class="ph-mono ph-dim">${h2hTxt(b)}</span>`),
-            this.mPairHtml("TODAY", this.missingHtml("notserved")),
+            g.phase === "final" ? this.mPairHtml("RESULT", `<span class="ph-mono ph-small">${esc(this.resultLine(b.hit, "hit") || "—")}</span>`) : "",
           ].join(""),
         })).join("");
         return `${pendNote}<div class="ph-mlist">${cards}
           <div class="ph-btable-foot"><span>${this.numHtml(fresh)}</span><span>${esc(COPY.tickLegend)}</span></div>
         </div>`;
       }
-      const hd = ["", "#", "BATTER · VS STARTER", "1+ HIT", "1+ HR", "H+R+RBI 1+", "TB 1.5+", "30D H · HR /PA", "H2H", "TODAY", "RESULT"];
+      const hd = ["", "#", "BATTER · VS STARTER", "1+ HIT", "1+ HR", "H+R+RBI 1+", "TB 1.5+", "30D H · HR /PA", "H2H", "RESULT"];
       return `${pendNote}<div class="ph-btable">
         <div class="ph-btable-row ph-btable-head">${hd.map((h) => `<span>${h}</span>`).join("")}</div>
         ${rows.map((b) => {
@@ -1874,9 +2055,8 @@
             ${this.probCellHtml(b, "hit")}
             ${this.probCellHtml(b, "hr")}
             ${this.baseBatterCellHtml(b.hrr, "hrr")}${this.baseBatterCellHtml(b.tb15, "tb")}
-            ${this.missingHtml("notserved")}
+            ${this.formCellHtml(b.form)}
             <span class="ph-mono ph-dim">${h2h}</span>
-            ${this.missingHtml("notserved")}
             ${resHtml(b)}
           </div>`;
         }).join("")}
@@ -1908,7 +2088,12 @@
       return this.STARTER_MARKETS.map(([m]) => [PROP_LABEL[m], this.propCellHtml(props[m])]).concat([
         ["30D K%", `<span class="ph-mono">${this.pct(s.k)}</span>`],
         ["WHIFF", `<span class="ph-mono">${this.pct(s.whiff)}</span>`],
-        ["HR/PA", this.missingHtml("notserved")],
+        ["HR/PA", (() => {
+          const f = Object.values(props).map((r) => r && r.form_30d).find(Boolean);
+          return f && f.hr_rate != null
+            ? `<span class="ph-mono" title="${esc(`home runs allowed per PA, last 30 days (${f.pa} PA)`)}">${this.pct1(f.hr_rate)}</span>`
+            : this.missingHtml("fewpa");
+        })()],
         ["FB VELO", `<span class="ph-mono">${s.velo == null ? "—" : s.velo.toFixed(1)}</span>`],
         ["FATIGUE", `<span class="ph-mono ph-dim">${s.fat == null ? "—" : `${this.signed(s.fat)} mph`}</span>`],
       ]);
@@ -1918,13 +2103,13 @@
     }
     // Phone: a starter as a card — strikeouts and outs up front, the rest of
     // the props and form behind the chevron.
-    starterCardHtml(key, nameHtml, id, pk, extra) {
+    starterCardHtml(key, nameHtml, id, pk, extra, moreExtra) {
       const pairs = this.starterStatPairs(id, pk);
       return this.mCardHtml({
         key,
         head: `${nameHtml}${extra || ""}`,
         stats: pairs.slice(0, 2).map(([k, v]) => this.mPairHtml(k, v)).join(""),
-        more: pairs.slice(2).map(([k, v]) => this.mPairHtml(k, v)).join(""),
+        more: pairs.slice(2).map(([k, v]) => this.mPairHtml(k, v)).join("") + (moreExtra || ""),
       });
     }
     pillStartersTableHtml(g) {
@@ -2005,7 +2190,7 @@
 
     // ── small shared pieces ──────────────────────────────────────────────
     shortName(n) {
-      const parts = String(n || "").trim().split(/\s+/);
+      const parts = String(n || "").trim().split(/\s+/).filter(Boolean);
       if (parts.length < 2) return n || "—";
       return `${parts[0][0]}. ${parts.slice(1).join(" ")}`;
     }
@@ -2066,17 +2251,29 @@
       return `<span style="display:inline-flex;align-items:center;gap:5px;font-size:${mobile ? 9.5 : 10}px;font-weight:800;letter-spacing:.05em;padding:${mobile ? "2px 6px" : "3px 7px"};border-radius:${mobile ? 5 : 6}px;justify-self:start;white-space:nowrap;color:${fg};background:${bg};">${this.numHtml(text)}</span>`;
     }
 
-    // The bases diamond. Every base renders empty, and says why: /live carries
-    // no runners (pitchhawk-data.js hard-codes all three false), so a filled
-    // base would be an invention and an unmarked empty one a false claim.
-    basesHtml(mobile) {
+    // The bases diamond, for a game in progress only — a game not yet started
+    // or already over has nobody on base to draw. Runners come from live-poll
+    // (situation.bases); a state stored before that field existed has
+    // `runners` null, and then the diamond is drawn faint and says so rather
+    // than claiming the bases are clear.
+    basesHtml(g, mobile) {
+      if (!g || g.phase !== "live") return mobile ? "" : `<span class="ph-bases-none"></span>`;
       const C = this.C;
+      const r = g.runners;
       const box = mobile ? { w: 28, h: 21, s: 9, o: 10, l: 18, m: 9 } : { w: 32, h: 24, s: 10, o: 11, l: 21, m: 11 };
-      const base = (top, left) =>
-        `<span style="position:absolute;top:${top}px;left:${left}px;width:${box.s}px;height:${box.s}px;transform:rotate(45deg);border:1px solid ${C.bd2};border-radius:2px;background:transparent;"></span>`;
-      return `<span title="${esc(COPY.runnersNote)}" style="position:relative;width:${box.w}px;height:${box.h}px;flex:none;display:block;">
-        ${base(0, box.m)}${base(box.o, mobile ? 0 : 1)}${base(box.o, box.l)}
+      const base = (top, left, on) =>
+        `<span style="position:absolute;top:${top}px;left:${left}px;width:${box.s}px;height:${box.s}px;transform:rotate(45deg);border:1px solid ${on ? C.amb : C.bd2};border-radius:2px;background:${on ? C.amb : "transparent"};"></span>`;
+      const tip = r ? this.basesText(r) : COPY.runnersNote;
+      return `<span title="${esc(tip)}" aria-label="${esc(tip)}" role="img" style="position:relative;width:${box.w}px;height:${box.h}px;flex:none;display:block;${r ? "" : "opacity:.45;"}">
+        ${base(0, box.m, r && r.second)}${base(box.o, mobile ? 0 : 1, r && r.third)}${base(box.o, box.l, r && r.first)}
       </span>`;
+    }
+    basesText(r) {
+      if (!r) return null;
+      const on = [["first", "1st"], ["second", "2nd"], ["third", "3rd"]].filter(([k]) => r[k]).map(([, l]) => l);
+      if (!on.length) return "bases empty";
+      if (on.length === 3) return "bases loaded";
+      return `runner${on.length > 1 ? "s" : ""} on ${on.join(" & ")}`;
     }
 
     totPickOf(mkt) {
@@ -2525,7 +2722,6 @@
       if (!n) return "—";
       return `${c}/${n} · ${Math.round((c / n) * 100)}%`;
     }
-    accBand(r) { return r == null ? null : r >= 0.66 ? "good" : r >= 0.5 ? "amber" : "bad"; }
     outLabel(k) { return k == null ? null : (PH.OUTCOME_LABEL[k] || k); }
     signed(v, d) {
       if (v == null) return "—";
@@ -2591,7 +2787,7 @@
       let best = null;
       live.forEach((g) => {
         const c = this.topCallOf(g);
-        if (c && (!best || c.p > best.p)) best = { g, p: c.p };
+        if (c && (!best || c.lift > best.lift)) best = { g, lift: c.lift };
       });
       return { g: best ? best.g : live[0], top: true };
     }
@@ -2626,9 +2822,17 @@
           <span class="ph-hero-note">${esc(COPY.heroNoCallInGame)}</span></div>`;
       }
       const top = d.rows[0];
+      // The headline is the most likely outcome; its colour says whether that
+      // is a lean over league or just the league's usual answer. The biggest
+      // lean is named separately when it is a different outcome.
+      const band = top.lg == null ? "avg" : this.leanBand(top.p - top.lg);
+      const lean = d.rows.filter((r) => r.lg != null).sort((a, b) => (b.p - b.lg) - (a.p - a.lg))[0];
+      const leanTxt = lean && lean.k !== top.k && lean.p - lean.lg >= 0.02
+        ? `<span class="ph-hero-note">biggest lean: <b>${esc(this.outLabel(lean.k))}</b> <span class="ph-mono">+${Math.round((lean.p - lean.lg) * 100)} pts</span> vs league</span>` : "";
       return `<div class="ph-dist">
         <span class="ph-hero-k">${esc(title)}</span>
-        <span class="ph-dist-call"><b>${esc(this.outLabel(top.k))}</b><span class="ph-mono">${this.pct(top.p)}</span></span>
+        <span class="ph-dist-call ph-dist-call--${band}" title="most likely outcome · ${band === "good" ? "above" : band === "low" ? "below" : "about"} the league rate"><b>${esc(this.outLabel(top.k))}</b><span class="ph-mono">${this.pct(top.p)}</span></span>
+        ${leanTxt}
         ${d.rows.map((r) => `<div class="ph-dist-row">
             <span>${esc(this.outLabel(r.k))}</span>
             <span class="ph-dist-track"><span class="ph-dist-fill${r.rec ? " is-rec" : ""}" style="width:${(r.p * 100).toFixed(1)}%"></span></span>
@@ -2648,13 +2852,15 @@
       return m ? this.gameStats(m.abs) : null;
     }
     liveHeroHtml(g, top, nLive) {
-      const sit = `${g.away} ${g.score.away} @ ${g.home} ${g.score.home} · ${g.half}${g.inning == null ? "—" : g.inning} · ${g.count || "—"} · ${g.outs == null ? "—" : g.outs} out · bases —`;
+      const sit = [`${g.away} ${g.score.away} @ ${g.home} ${g.score.home}`, `${g.half}${g.inning == null ? "—" : g.inning}`,
+        g.count || "—", `${g.outs == null ? "—" : g.outs} out`, this.basesText(g.runners)].filter(Boolean).join(" · ");
       const side = g.half === "▲" ? "away" : "home";
       const b = this.battersOf(g.gamePk).find((x) => g.batter && x.id === String(g.batter.id));
       const bMeta = [g.batter.hand ? `(${g.batter.hand})` : null, side === "home" ? g.home : g.away, b && b.slot ? `#${b.slot}` : null].filter(Boolean).join(" · ");
       const spd = g.m && g.m.pitch_speed_ou, abp = g.m && g.m.ab_pitches_ou;
       const st = this.gameCallStats(g);
-      const tone = (c, n) => (n ? `ph-tone-${this.accBand(c / n)}` : "");
+      // Toned against each market's naive baseline (see skillBand).
+      const tone = (c, n, base) => { const b = this.skillBand(c, n, base); return b ? `ph-tone-${b}` : ""; };
       const tile = (v, s, l, cls) => `<div class="ph-hero-tile">
           <span class="ph-mono ph-hero-tile-v ${cls || ""}">${v}</span>
           <span class="ph-mono ph-hero-tile-s">${s}</span>
@@ -2664,14 +2870,14 @@
       return `<div class="ph-hero">
         <div class="ph-hero-head">
           <span class="ph-hero-badge"><span class="ph-dot is-live ph-dot-sm"></span>${top ? "TOP CALL NOW · ALL GAMES" : "SELECTED GAME"}</span>
-          <span class="ph-mono ph-hero-sit">${esc(sit)} ${this.tagHtml("notserved")}</span>
+          <span class="ph-mono ph-hero-sit">${esc(sit)}</span>
           <span class="ph-mono ph-hero-upd">updated <span class="${this.flashIf(`live:${g.gamePk}`, g.lastPitch)}">${esc(upd || "—")}</span></span>
         </div>
         <div class="ph-hero-who">
           <b class="ph-hero-bat">${esc(g.batter.name)}</b><span class="ph-mono">${this.numHtml(bMeta)}</span>
           <span class="ph-hero-vs">vs</span>
           <b class="ph-hero-pit">${esc(g.pitcher.name)}</b><span class="ph-mono">${g.pitcher.hand ? `(${esc(g.pitcher.hand)})` : ""}</span>
-          <span class="ph-hero-note">${top ? this.numHtml(`highest call of ${nLive} live at-bat${nLive === 1 ? "" : "s"}`) : "the open at-bat in this game"}</span>
+          <span class="ph-hero-note">${top ? this.numHtml(`strongest lean over league of ${nLive} live at-bat${nLive === 1 ? "" : "s"}`) : "the open at-bat in this game"}</span>
         </div>
         <div class="ph-hero-dists">
           ${this.distHtml("NEXT PITCH", this.distRows(g.m && g.m.pitch_result && g.m.pitch_result.probs, this.LEAGUE_PITCH))}
@@ -2680,8 +2886,8 @@
         <div class="ph-hero-tiles">
           ${tile(spd && spd.predictedValue != null ? `${Number(spd.predictedValue).toFixed(1)} mph` : "—", esc(this.ouLine(spd)), "VELO CALL · NEXT PITCH")}
           ${tile(abp && abp.predictedValue != null ? Number(abp.predictedValue).toFixed(1) : "—", esc(this.ouLine(abp)), "PITCHES IN THIS AT-BAT")}
-          ${tile(st ? esc(this.ratioPct(st.abC, st.abN)) : "—", "graded at-bats", "AT-BAT CALLS THIS GAME", st && tone(st.abC, st.abN))}
-          ${tile(st ? esc(this.ratioPct(st.pC, st.pN)) : "—", `velo MAE ${st && st.mae != null ? `${st.mae.toFixed(1)} mph` : "—"}`, "PITCH CALLS THIS GAME", st && tone(st.pC, st.pN))}
+          ${tile(st ? esc(this.ratioPct(st.abC, st.abN)) : "—", `graded at-bats · naive ${this.pct(Math.max(...Object.values(this.LEAGUE_AB)))}`, "AT-BAT CALLS THIS GAME", st && tone(st.abC, st.abN, Math.max(...Object.values(this.LEAGUE_AB))))}
+          ${tile(st ? esc(this.ratioPct(st.pC, st.pN)) : "—", `naive ${this.pct(Math.max(...Object.values(this.LEAGUE_PITCH)))} · velo miss ${st && st.mae != null ? `${st.mae.toFixed(1)} mph` : "—"}`, "PITCH CALLS THIS GAME", st && tone(st.pC, st.pN, Math.max(...Object.values(this.LEAGUE_PITCH))))}
         </div>
       </div>`;
     }
@@ -2785,7 +2991,12 @@
               ? `<span class="ph-nm ph-nm--solid"><span class="ph-meta-k">REST OF GAME · 1+ HIT / HR</span><b class="ph-mono">${this.pct(e.hit)} / ${this.pct(e.hr)}</b><span class="ph-base-top">${this.baseTagHtml()}<span class="ph-mono ph-base-sub">${Number(e.remaining_pa).toFixed(1)} PA left</span></span></span>`
               : `<span class="ph-nm"><span class="ph-meta-k">REST OF GAME · 1+ HIT / HR</span><b class="ph-mono ph-mut">— / —</b></span>`;
           })()}
-          <span class="ph-nm"><span class="ph-meta-k">TODAY SO FAR · H / HR / PA</span><b class="ph-mono ph-mut">—</b>${this.tagHtml("notserved")}</span>
+          ${(() => {
+            const t = g.batterToday;
+            return t
+              ? `<span class="ph-nm ph-nm--solid"><span class="ph-meta-k">TODAY SO FAR · H / HR / PA</span><b class="ph-mono">${t.h} / ${t.hr} / ${t.pa}</b><span class="ph-mono ph-base-sub">${t.bb} BB · ${t.k} K</span></span>`
+              : `<span class="ph-nm"><span class="ph-meta-k">TODAY SO FAR · H / HR / PA</span><b class="ph-mono ph-mut">—</b></span>`;
+          })()}
         </div>
       </div>`;
     }
@@ -2806,7 +3017,7 @@
         <div class="ph-rail-5">${props}</div>
         <span class="ph-rail-note">${sp ? this.baseTagHtml() : ""} ${esc(sp ? COPY.railPropsNote : COPY.railPropsNone)}</span>
         <div class="ph-rail-3">
-          <span class="ph-meta"><span class="ph-meta-k">PITCH COUNT</span>${this.missingHtml("notserved")}</span>
+          <span class="ph-meta"><span class="ph-meta-k">PITCH COUNT</span>${g.pitchCountGame == null ? this.missingHtml("notserved") : `<b class="ph-mono">${g.pitchCountGame}</b>`}</span>
           <span class="ph-meta"><span class="ph-meta-k">30D K%</span><b class="ph-mono">${this.pct(s.k)}</b></span>
           <span class="ph-meta"><span class="ph-meta-k">WHIFF · FB VELO</span><b class="ph-mono">${this.pct(s.whiff)} · ${s.velo == null ? "—" : s.velo.toFixed(1)}</b></span>
         </div>
@@ -2824,7 +3035,7 @@
           <b>${esc(w.team)}</b><b class="ph-mono ph-rail-wp-v">${esc(w.val)}</b>${this.deltaHtml(w.delta)}
           <span class="ph-mono ph-mut ph-rail-wp-open">opened ${this.pct(w.pre)}</span>
         </div>
-        <div class="ph-card-spark">${this.missingHtml("needsroute")}<span class="ph-card-spark-note">per-pitch win-prob history</span></div>
+        ${this.sparkHtml(g, 40)}
         <div class="ph-rail-tot">
           <span class="ph-meta-k">TOTAL · PREGAME</span><b>${this.numHtml(t.pick)}</b>
           <span class="ph-mono ph-dim">${this.pct(t.prob)}${t.proj == null ? "" : ` · ${t.proj.toFixed(1)} R`}</span>
@@ -2842,7 +3053,7 @@
         const tc = this.topCallOf(x);
         const st = this.gameCallStats(x);
         const r = st && st.abN ? st.abC / st.abN : null;
-        const band = this.accBand(r);
+        const band = st ? this.skillBand(st.abC, st.abN, Math.max(...Object.values(this.LEAGUE_AB))) : null;
         return `<button class="ph-olive" data-act="liveSel" data-arg="${esc(String(x.gamePk))}">
           <span class="ph-olive-top">
             <span class="ph-phase ph-phase--live">● ${this.numHtml(`${this.halfWord(x.half)} ${x.inning == null ? "" : x.inning}`)}</span>

@@ -426,7 +426,7 @@ body { margin: 0; }
 .ph-gpill.is-live { border-color: var(--grn-edge); }
 .ph-gpill-row {
   display: grid;
-  grid-template-columns: 24px 84px minmax(140px,1fr) 100px 104px 176px 118px minmax(220px,1.35fr) 24px;
+  grid-template-columns: 24px 84px minmax(140px,1fr) 100px 104px 176px 132px minmax(220px,1.35fr) 24px;
   gap: 12px; align-items: center; padding: 10px 14px;
 }
 .ph-pin { border: 0; background: transparent; cursor: pointer; font-size: 14px; padding: 0; color: var(--muted); font-family: inherit; }
@@ -489,7 +489,7 @@ body { margin: 0; }
 .ph-btable, .ph-stable { display: flex; flex-direction: column; }
 .ph-btable-row {
   display: grid;
-  grid-template-columns: 22px 24px minmax(150px,1.1fr) minmax(190px,1.35fr) minmax(190px,1.35fr) 88px 88px 92px 58px 84px 86px;
+  grid-template-columns: 22px 24px minmax(150px,1.1fr) minmax(190px,1.35fr) minmax(190px,1.35fr) 88px 88px 100px 58px 86px;
   gap: 10px; align-items: center; padding: 8px; border-top: 1px solid var(--row-border);
 }
 .ph-stable-row {
@@ -1029,3 +1029,46 @@ body { margin: 0; }
 
 /* An empty state that is a failure, not an absence. */
 .ph-empty--err { border-color: var(--err-bd); color: var(--err-fg); }
+/* The hero's headline outcome: green only when it is a lean over league. */
+.ph-dist-call--avg .ph-mono { color: var(--text); }
+.ph-dist-call--low .ph-mono { color: var(--muted); }
+
+/* Phone: the 7-day model record as one tappable line above the table. */
+.ph-trust-sum {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px;
+  border: 1px solid var(--border); background: var(--surface); color: var(--text);
+  border-radius: 12px; padding: 8px 12px; margin-bottom: 12px; font: inherit; text-align: left; cursor: pointer;
+}
+.ph-trust-sum .ph-mono { font-size: 12px; color: var(--text-2); flex: 1; min-width: 0; }
+
+/* Win-probability sparkline: home team's win probability by at-bat, 50%
+   marked. The SVG stretches to its box; strokes stay hairline. */
+.ph-spark { position: relative; display: block; width: 100%; min-width: 80px; margin-top: 4px; }
+.ph-spark svg { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; }
+.ph-spark-line { fill: none; stroke: var(--grn); stroke-width: 1.6; stroke-linejoin: round; }
+.ph-spark-mid { stroke: var(--border-2); stroke-width: 1; stroke-dasharray: 3 3; }
+.ph-spark-lbl { position: absolute; left: 0; font-size: 10px; font-weight: 700; color: var(--muted); line-height: 1; z-index: 1; }
+.ph-spark-lbl--top { top: 0; }
+.ph-spark-lbl--bot { bottom: 0; }
+.ph-spark--empty { font-size: 11px; color: var(--muted); display: flex; align-items: center; }
+.ph-card .ph-spark { margin: 2px 0; }
+
+/* Pill: a game not in progress has no bases to draw; keep the grid cell. */
+.ph-bases-none { display: block; width: 32px; height: 24px; }
+
+/* Pill captions truncate inside their own column. They were nowrap with no
+   overflow rule, so a long total caption ran into the next column
+   ("8.1 RSTRONGEST READ"). */
+.ph-gpill-cell { overflow: hidden; }
+.ph-gpill-cell .ph-cap { overflow: hidden; text-overflow: ellipsis; max-width: 100%; display: block; }
+
+/* Predictions: a row's detail, opened in place under it. */
+.ph-pdetail {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px 18px;
+  padding: 12px 16px 14px 56px; border-top: 1px dashed var(--row-border); background: var(--surface-2);
+}
+.ph-pdetail .ph-meta-grid { grid-column: 1 / -1; }
+.ph-pdetail-wide { grid-column: 1 / -1; }
+.ph-pdetail-act { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; justify-content: flex-end; }
+.ph-opengame { margin-left: auto; }
+.ph-mcard-more .ph-opengame { grid-column: 1 / -1; justify-self: end; }
