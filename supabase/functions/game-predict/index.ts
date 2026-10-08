@@ -164,20 +164,20 @@ async function projectBatters(
       samplePa: Number(bat?.sample_pas ?? 0),
     };
     const pa = expectedPa(w.slot);
-    if (models["batter_tb15"]) {
+    if (models["batter_tb15"] && !isV3Row(models["batter_tb15"])) {
       const r = batterTb15(inputs, pa, models["batter_tb15"]);
       out.push({ ...rowBase, market: "batter_tb15", probability: r.probability,
         expected_pa: pa, per_pa_probability: null, expected_value: r.expected_value, line: 1.5,
         model_version: models["batter_tb15"].version ?? BASE_VERSION });
     }
-    if (models["batter_hrr"]) {
+    if (models["batter_hrr"] && !isV3Row(models["batter_hrr"])) {
       const r = batterHrr(inputs, pa, models["batter_hrr"]);
       out.push({ ...rowBase, market: "batter_hrr", probability: r.probability,
         expected_pa: pa, per_pa_probability: r.per_pa, expected_value: null, line: 0.5,
         model_version: models["batter_hrr"].version ?? BASE_VERSION });
     }
 
-    for (const market of ["batter_hit", "batter_hr"]) {
+    for (const market of ["batter_hit", "batter_hr"].filter((m) => !isV3Row(models[m]))) {
       const p = projectBatter(market, models, ctx, w.slot);
       if (!p) continue;
       if (!isPlausible(market, p.probability)) { summary.implausible += 1; continue; }
@@ -216,6 +216,11 @@ async function projectBatters(
   return summary;
 }
 
+/** True for a model_params row written by the v3 pipeline (modeling/markets.py). */
+function isV3Row(row: any): boolean {
+  return row?.type === "batter_game" || row?.type === "starter_count";
+}
+
 const STARTER_MARKETS: StarterMarket[] = [
   "pitcher_k", "pitcher_bb", "pitcher_hits", "pitcher_outs", "pitcher_er",
 ];
@@ -234,7 +239,7 @@ async function projectStarters(
   models: Record<string, any>,
 ): Promise<Record<string, number>> {
   const summary = { starters: 0, rows: 0, no_probable: 0 };
-  const live = STARTER_MARKETS.filter((m) => models[m]);
+  const live = STARTER_MARKETS.filter((m) => models[m] && !isV3Row(models[m]));
   if (!live.length) return summary;
   const out: Record<string, unknown>[] = [];
   for (const g of slate) {
@@ -318,7 +323,7 @@ async function writeV3Projections(
         ["batter_hit", null, null], ["batter_hr", null, null],
         ["batter_tb15", 1.5, Math.round(b.e_tb * 1e4) / 1e4], ["batter_hrr", 0.5, null],
       ] as Array<[string, number | null, number | null]>) {
-        if (!models[m]) continue;
+        if (!isV3Row(models[m])) continue;
         const ppa = (b.per_pa as Record<string, number>)[m];
         out.push({ ...base, market: m, probability: Math.round(b.probs[m] * 1e4) / 1e4,
                    line, expected_value: ev, model_version: ver(m),
@@ -328,7 +333,7 @@ async function writeV3Projections(
     for (const s of r.starters) {
       ids.add(s.player_id);
       for (const [m, p] of Object.entries(s.props)) {
-        if (!models[m]) continue;
+        if (!isV3Row(models[m])) continue;
         out.push({
           game_pk: g.game_pk, player_id: s.player_id, market: m, official_date: date,
           team_id: s.team_id, opponent_id: s.opp_team, is_home: s.is_home, role: "pitcher",
@@ -670,7 +675,12 @@ Deno.serve(async (req) => {
     // try: a failure to project batters must not cost the slate its moneyline
     // and total, which is the part the board actually depends on.
     // Games v3 scored get v3 projections; the rest keep the previous models.
-    const legacySlate = slate.filter((g: any) => !v3.has(g.game_pk));
+    // v3 writes the markets whose active row is a v3 row, for the games it
+    // scored; the previous writers keep every other market on every game
+    // (e.g. pitcher_bb stays on base_v1 until a v3 version beats it). A v3
+    // market on a game v3 could not score is left unwritten rather than
+    // being fed v3 params by a formula that does not understand them.
+    const legacySlate = slate;
     try {
       detail.v3_projections = await writeV3Projections(db, date, slate, v3, models);
     } catch (e) {
