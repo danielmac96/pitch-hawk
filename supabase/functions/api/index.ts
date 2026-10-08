@@ -801,7 +801,7 @@ async function rollingForm(batterIds: number[], pitcherIds: number[]) {
 // Both routes take the same filters. hand and side exist only for batter,
 // at-bat and pitch reads; filtering on them drops win prob and totals.
 const GRADED_MARKETS = [
-  "batter_hit", "batter_hr", "game_moneyline", "game_total", "ab_result", "pitch_result",
+  "batter_hit", "batter_hr", "batter_hrr", "game_moneyline", "game_total", "ab_result", "pitch_result",
 ];
 // The widest window a graded request may ask for. Pitch and at-bat reads
 // only go back as far as the predictions hot window (35 days); batter and

@@ -71,10 +71,13 @@ window.PH_GRADED_FIXTURE = (function () {
             const common = { team_abbrs: [team], subject: name, opp_pitcher_hand: hand, batting_side: side,
               lineup_slot: slot, batter_team: team, batter_name: name, pitcher_name: sp, actual_label: null };
             const pH = 1 - Math.pow(1 - ppaH, xpa), pR = 1 - Math.pow(1 - ppaR, xpa);
+            const pHrr = 1 - Math.pow(1 - (ppaH + 0.06 * (1 - ppaH)), xpa);
             push(Object.assign({ id: `p:hit:${gamePk}:${team}${slot}`, market: "batter_hit", probability: +pH.toFixed(4),
               result: void_ ? "void" : rnd() < pH + (hand === "L" ? 0.04 : -0.01) ? "hit" : "miss" }, common), 3.1);
             push(Object.assign({ id: `p:hr:${gamePk}:${team}${slot}`, market: "batter_hr", probability: +pR.toFixed(4),
               result: void_ ? "void" : rnd() < pR ? "hit" : "miss" }, common), 3.1);
+            push(Object.assign({ id: `p:hrr:${gamePk}:${team}${slot}`, market: "batter_hrr", probability: +pHrr.toFixed(4),
+              result: void_ ? "void" : rnd() < pHrr - 0.03 ? "hit" : "miss" }, common), 3.1);
           }
         });
 

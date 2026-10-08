@@ -49,7 +49,7 @@ window.PH_COPY = (function () {
     predTitle: "Predictions",
     predSub: "Every model-fair probability on today's slate, ranked by lift over the league rate.",
     predTableTitle: {
-      hit: "1+ Hit · batter reads", hr: "1+ Home run · batter reads",
+      hit: "1+ Hit · batter reads", hr: "1+ Home run · batter reads", hrr: "1+ Hits + Runs + RBI · batter reads",
       wp: "Win probability · games", tot: "Totals · games", sp: "Starting pitchers",
     },
     predSubBatPre: "Pregame mode: sorted by lift over the league rate at the batter's xPA",

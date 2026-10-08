@@ -861,7 +861,12 @@
     // ── Predictions (phase 3) ────────────────────────────────────────────
     // Every probability on today's slate in one table, switchable by market.
     // Filters live in state (p*), never in the DOM, so they survive the poll.
-    PRED_MARKETS = [["hit", "1+ Hit"], ["hr", "1+ HR"], ["wp", "Win prob"], ["tot", "Totals"], ["sp", "Starters"]];
+    PRED_MARKETS = [["hit", "1+ Hit"], ["hr", "1+ HR"], ["hrr", "1+ HRR"], ["wp", "Win prob"], ["tot", "Totals"], ["sp", "Starters"]];
+    // The Predictions markets that rank batters (one row per batter-game).
+    PRED_BATTER = ["hit", "hr", "hrr"];
+    isBatMk(m) { return this.PRED_BATTER.includes(m); }
+    // Column head for a batter market's probability.
+    probHead(m) { return m === "hr" ? "P(1+ HR)" : m === "hrr" ? "P(1+ H+R+RBI)" : "P(1+ HIT)"; }
     PRED_DEFAULTS = { pMarket: "hit", pTeams: [], pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false, pOpen: {} };
     PRED_PAGE = 25;
 
@@ -887,7 +892,7 @@
       this.loadTrust();
       const mk = this.state.pMarket;
       let table, count;
-      const projMk = mk === "hit" || mk === "hr" || mk === "sp";
+      const projMk = this.isBatMk(mk) || mk === "sp";
       const ps = projMk ? this.projStatus() : "ok";
       const gamesPending = !projMk && !this.todayGames().length && this.state.api.lastGood == null;
       if (ps !== "ok" || gamesPending) {
@@ -900,7 +905,7 @@
           ${this.trustTilesHtml()}
           <div class="ph-empty${err ? " ph-empty--err" : ""}" role="status">${esc(err ? COPY.predLoadError : COPY.predLoading)}</div>`;
       }
-      if (mk === "hit" || mk === "hr") {
+      if (this.isBatMk(mk)) {
         const rows = this.predBatterRows();
         count = rows.length;
         table = count ? this.predBatterTableHtml(rows, mk) : "";
@@ -914,7 +919,7 @@
         table = count ? this.predGameTableHtml(rows) : "";
       }
       const live = this.effectiveMode() === "live";
-      const sub = mk === "hit" || mk === "hr" ? (live ? COPY.predSubBatLive : COPY.predSubBatPre)
+      const sub = this.isBatMk(mk) ? (live ? COPY.predSubBatLive : COPY.predSubBatPre)
         : mk === "sp" ? COPY.predSubSp
           : live && mk === "wp" ? COPY.predSubWpLive : COPY.predSubGame;
       return `<div class="ph-titlerow">
@@ -956,7 +961,7 @@
       const chip = (act, k, label, on) =>
         `<button class="ph-chip${on ? " is-on" : ""}" data-act="${act}" data-arg="${esc(k)}">${esc(label)}</button>`;
       const minLabel = s.pMin <= -10 ? "any" : `${s.pMin >= 0 ? "+" : "−"}${Math.abs(s.pMin)} pts`;
-      const batter = s.pMarket === "hit" || s.pMarket === "hr";
+      const batter = this.isBatMk(s.pMarket);
       const tOpen = !!s.mOpen["f:teams"];
       const teamLbl = !s.pTeams.length ? "All teams" : s.pTeams.length <= 3 ? s.pTeams.join(", ") : `${s.pTeams.length} teams`;
       const teamSel = `<span class="ph-teampick">
@@ -1013,10 +1018,10 @@
       const m = this.state.pMarket;
       const q = (v) => { const t = v == null ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
       let head, rows;
-      if (m === "hit" || m === "hr") {
+      if (this.isBatMk(m)) {
         head = ["rank", "player", "team", "slot", "opposing_starter", "game", "status", "probability", "league_rate", "lift_pts", "xpa", "form_30d_rate", "result"];
         rows = this.predBatterRows().map((r, i) => {
-          const f = r.b.form ? r.b.form[m === "hit" ? "hit_rate" : "hr_rate"] : null;
+          const f = r.b.form ? r.b.form[m === "hr" ? "hr_rate" : "hit_rate"] : null;
           const rec = r.b[m];
           return [i + 1, r.b.name, this.teamOf(r.b), r.b.slot || "", r.b.spName || "", `${r.g.away} @ ${r.g.home}`, r.g.phase,
             r.c.p == null ? "" : r.c.p.toFixed(4), r.c.base == null ? "" : r.c.base.toFixed(4), r.c.pts == null ? "" : r.c.pts.toFixed(1),
@@ -1151,7 +1156,7 @@
                 <span class="ph-ellip">${this.numHtml(`vs ${b.spName || "TBD"} · ${g.away} @ ${g.home} ${when(g)}`)}</span>
               </button>
               ${this.resultChipHtml(rec ? rec.result : null, g)}`,
-            stats: `${this.mPairHtml(m === "hit" ? "P(1+ HIT)" : "P(1+ HR)", this.probCellHtml(b, m, true))}
+            stats: `${this.mPairHtml(this.probHead(m), this.probCellHtml(b, m, true))}
               ${this.mPairHtml("LIFT", `<span class="ph-stack"><span class="ph-mono ph-lift ph-lift--${c.band || "avg"}">${esc(c.lift || "—")}</span><span class="ph-mono ph-small ph-mut">${c.rel == null ? "" : `${c.rel.toFixed(2)}× league`}</span></span>`)}
               <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WHY</span><span class="ph-card-why ph-mono"><span>${w[0]}</span></span></span>`,
             more: `${this.mPairHtml("PHASE", this.phaseChip(pk, pt))}
@@ -1206,7 +1211,7 @@
           ${this.sortHeadHtml("name", "PLAYER · TEAM · SLOT")}
           ${this.sortHeadHtml("time", "PHASE · FRESH")}
           <span>LINEUP</span>
-          ${this.sortHeadHtml("prob", m === "hit" ? "P(1+ HIT)" : "P(1+ HR)")}
+          ${this.sortHeadHtml("prob", this.probHead(m))}
           ${this.sortHeadHtml("lift", "LIFT")}
           <span>WHY</span><span>REST OF GAME</span><span>RESULT</span>
         </div>
@@ -1334,7 +1339,7 @@
       return this.predDetailWrap(`
         ${this.mPairHtml("1+ HIT", this.probCellHtml(b, "hit"))}
         ${this.mPairHtml("1+ HR", this.probCellHtml(b, "hr"))}
-        ${this.mPairHtml("H+R+RBI 1+", this.baseBatterCellHtml(b.hrr, "hrr"))}
+        ${this.mPairHtml("1+ H+R+RBI", this.probCellHtml(b, "hrr"))}
         ${this.mPairHtml("TB 1.5+", this.baseBatterCellHtml(b.tb15, "tb"))}
         ${this.mPairHtml("30D H · HR /PA", this.formCellHtml(b.form))}
         ${this.mPairHtml(`${esc(this.lastName(b.spName)).toUpperCase()} ALLOWS · 30D`, this.formCellHtml(opp))}
@@ -1380,7 +1385,7 @@
         PH.loadFeed(API_BASE, { from, to, market: "game_moneyline", phase: "pregame", limit: 1000 }).catch(() => null),
       ]);
       // Calibration, per market: the same sums as projection_calibration().
-      const calib = { batter_hit: null, batter_hr: null };
+      const calib = { batter_hit: null, batter_hr: null, batter_hrr: null };
       let served = null, failed = false;
       projDays.forEach((res) => {
         if (!res) { failed = true; return; }
@@ -1456,6 +1461,7 @@
       const tiles = [
         calTile("1+ HIT CALIBRATION · 7 DAYS", "batter_hit"),
         calTile("1+ HR CALIBRATION · 7 DAYS", "batter_hr"),
+        calTile("1+ HRR CALIBRATION · 7 DAYS", "batter_hrr"),
         !wp ? tile("WIN PROB · 7 DAYS", "—", t ? "couldn't load" : "loading…")
           : tile("WIN PROB · 7 DAYS", this.numHtml(this.ratioPct(wp.w, wp.l + wp.w)),
             wp.w + wp.l ? this.numHtml(`pregame favourite won${small(wp.w + wp.l)}`) : "nothing graded yet",
@@ -1535,7 +1541,9 @@
     // Per-PA rates, mirrored from LEAGUE in supabase/functions/_shared/
     // model.ts. They must agree: a lift measured against a different centre
     // than the model's is a lift the model did not claim.
-    LEAGUE_PA = { hit: 0.239, hr: 0.032 };
+    // hrr is P(hit or run or RBI) per PA, the base model's centre
+    // (basemodels.ts batterHrr: hit + run_or_rbi_without_hit x (1 - hit)).
+    LEAGUE_PA = { hit: 0.239, hr: 0.032, hrr: 0.239 + 0.06 * (1 - 0.239) };
     LEAGUE_PITCH = { strike_foul: 0.455, ball: 0.352, in_play: 0.193 };
     LEAGUE_AB = { strikeout: 0.221, walk: 0.087, hit: 0.239, out: 0.453 };
     // The velo call's typical miss (LEAGUE.speed_sigma in model.ts). The
@@ -1544,7 +1552,7 @@
     // shown with its spread rather than as a point that red-grades most rows.
     SPEED_SIGMA = 5.4;
 
-    // The league chance of 1+ hit (or HR) for a batter getting `xpa` plate
+    // The league chance of 1+ hit (or HR, or H+R+RBI) for a batter getting `xpa` plate
     // appearances. Per batter rather than one constant, so a leadoff hitter
     // is not flattered by batting more often than the ninth.
     leagueBase(m, xpa) {
@@ -1642,7 +1650,7 @@
     }
 
     // ── the probability cell ─────────────────────────────────────────────
-    // Port of the prototype's cell(). `m` is "hit" or "hr". Band is relative
+    // Port of the prototype's cell(). `m` is "hit", "hr" or "hrr". Band is relative
     // to the league rate at the batter's own xPA: ≥1.10× good, <0.95× low.
     // The HR bar is drawn on a 40% scale, or every HR bar would be a sliver.
     probCell(b, m) {
@@ -1670,7 +1678,7 @@
       if (c.band == null) {
         return `<span class="ph-pc"><b class="ph-mono ph-pc-val">${this.pct(c.p)}</b></span>`;
       }
-      const ppa = m === "hit" ? this.r3(c.ppa) : this.pct1(c.ppa);
+      const ppa = m === "hr" ? this.pct1(c.ppa) : this.r3(c.ppa);
       return `<span class="ph-pc">
         <span class="ph-pc-top">
           <b class="ph-mono ph-pc-val ph-band-${c.band}">${this.pct(c.p)}</b>
@@ -1678,7 +1686,7 @@
           <span class="ph-mono ph-pc-base">league ${this.pct(c.base)}</span>
         </span>
         ${this.barHtml(c.w, c.tick, `ph-band-bg-${c.band}`)}
-        <span class="ph-mono ph-pc-foot">per-PA ${ppa} · ${c.xpa.toFixed(2)} xPA</span>
+        <span class="ph-mono ph-pc-foot">${c.ppa == null ? "" : `per-PA ${ppa} · `}${c.xpa.toFixed(2)} xPA</span>
       </span>`;
     }
     barHtml(w, tick, cls) {
@@ -1697,12 +1705,13 @@
       let h2h;
       if (!h || h.pending) h2h = "—";
       else if (!h.found) h2h = "— (&lt;3 PA)";
-      else h2h = m === "hit" ? `${h.h_count}-${h.pa_count}` : `${h.hr_count} HR in ${h.pa_count} PA`;
-      const key = m === "hit" ? "hit_rate" : "hr_rate";
-      const fmt = (v) => (v == null ? "—" : m === "hit" ? this.r3(v) : this.pct1(v));
+      else h2h = m === "hr" ? `${h.hr_count} HR in ${h.pa_count} PA` : `${h.h_count}-${h.pa_count}`;
+      // H+R+RBI is driven by the hit rate, so it shows the hit form.
+      const key = m === "hr" ? "hr_rate" : "hit_rate";
+      const fmt = (v) => (v == null ? "—" : m === "hr" ? this.pct1(v) : this.r3(v));
       const own = b.form && b.form[key] != null ? `${fmt(b.form[key])} <span class="ph-dim">(${b.form.pa} PA)</span>` : "— <span class=\"ph-dim\">(few PA)</span>";
       const opp = b.oppForm && b.oppForm[key] != null ? fmt(b.oppForm[key]) : "—";
-      return m === "hit"
+      return m !== "hr"
         ? [`30d H/PA ${own} · ${sp} allows ${opp}`, `H2H ${h2h} · ${slot} → ${xpa} xPA`]
         : [`30d HR/PA ${own} · ${sp} allows ${opp}`, `H2H ${h2h} · ${slot} → ${xpa} xPA`];
     }
@@ -3632,6 +3641,7 @@
       // key, chip label, table label, feed tag
       ["batter_hit", "1+ Hit", "1+ Hit", "1+ HIT"],
       ["batter_hr", "1+ HR", "1+ HR", "1+ HR"],
+      ["batter_hrr", "1+ HRR", "1+ H+R+RBI", "1+ HRR"],
       ["game_moneyline", "Win prob", "Win prob", "WIN"],
       ["game_total", "Totals", "Totals", "TOTAL"],
       ["ab_result", "At-bat", "At-bat result", "AT-BAT"],
@@ -4214,7 +4224,7 @@
     feedMeta(r) {
       const hand = r.opp_pitcher_hand ? ` (${r.opp_pitcher_hand})` : "";
       const game = `${r.away_abbr} @ ${r.home_abbr}`;
-      if (r.market === "batter_hit" || r.market === "batter_hr") {
+      if (r.market === "batter_hit" || r.market === "batter_hr" || r.market === "batter_hrr") {
         return `${r.batter_team || "—"} · #${r.lineup_slot || "—"} vs ${this.lastName(r.pitcher_name)}${hand} · ${game}`;
       }
       if (r.market === "game_moneyline" || r.market === "game_total") return `${game} · ${r.venue_name || "—"}`;
