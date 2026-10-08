@@ -52,6 +52,6 @@ jobs:
       - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements-modeling.txt
+          pip install -r requirements-modeling.txt -r requirements.txt
       - name: Run the request
         run: python scripts/lab_run.py modeling/lab/request.json
