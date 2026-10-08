@@ -15,7 +15,8 @@ FEATURES (pa_features below; mirrored exactly in _shared/props.ts):
     bat_c   = logit(batter rating_c)  - logit(league_c)
     pit_c   = logit(pitcher rating_c) - logit(league_c)
     park_c  = log(park factor_c)
-    lg_c    = logit(league_c)
+  for each class c except OUT:
+    l5_c    = log(p5_c / p5_OUT), p5 = log5(batter, pitcher, league)
   context:
     same_hand   batter and pitcher throw/bat from the same side (switch -> 0)
     pit_left    left-handed pitcher
@@ -23,11 +24,18 @@ FEATURES (pa_features below; mirrored exactly in _shared/props.ts):
     reliever    the pitcher did not start the game
     tto2, tto3  second / third-or-later time through the order
 
-The log5 identity says that with coefficients of 1 on bat_c, pit_c and lg_c and
-0 elsewhere, this IS the classic odds-ratio matchup formula. Fitting lets the
-data say where log5 is wrong (it over-credits extreme pitchers against extreme
-hitters, and the classes interact: a high-strikeout hitter puts fewer balls in
-play to be outs).
+With a coefficient of 1 on l5_c and 0 elsewhere this IS the classic log5
+odds-ratio matchup formula; bat_c / pit_c let the data say where log5 is wrong
+(it over-credits extreme pitchers against extreme hitters, and the classes
+interact: a high-strikeout hitter puts fewer balls in play to be outs).
+
+WHY l5_c AND NOT logit(league_c). The first real-data run (2026-10-08) used
+seven raw league-logit features. League rates take roughly one value per
+season, so those columns fitted season effects: coefficients up to +/-13,
+L-BFGS at its iteration cap, home-run calibration swinging 0.99-1.06 between
+folds and 0.93 on the 2026 holdout. The log5 logit carries the league level
+inside a fixed structure (rb*rp/L), so the model no longer has a free knob per
+season to over-fit with.
 
 Ratings are as-of the game day, exclusive (modeling/ratings.py), so a training
 row sees what production would have read that morning.
@@ -49,7 +57,7 @@ NC = R.NC
 CONTEXT = ("same_hand", "pit_left", "bat_home", "reliever", "tto2", "tto3")
 FEATURES: tuple[str, ...] = tuple(
     [f"bat_{c}" for c in CLASSES] + [f"pit_{c}" for c in CLASSES]
-    + [f"park_{c}" for c in CLASSES] + [f"lg_{c}" for c in CLASSES]
+    + [f"park_{c}" for c in CLASSES] + [f"l5_{c}" for c in CLASSES[:-1]]
     + list(CONTEXT))
 
 # Seasons. 2015 is burn-in only: a rating needs history, and the warehouse
@@ -238,11 +246,13 @@ def pa_features(rb: np.ndarray, rp: np.ndarray, pk: np.ndarray, L: np.ndarray,
     """The design matrix, column order = FEATURES. Mirrored in props.ts."""
     lL = logit(L)
     tto = np.nan_to_num(np.asarray(tto, float), nan=1.0)
+    p5 = log5(np.clip(rb, 1e-6, 1), np.clip(rp, 1e-6, 1), np.clip(L, 1e-6, 1))
+    l5 = np.log(p5[:, :-1]) - np.log(p5[:, -1:])
     return np.column_stack([
         logit(rb) - lL,
         logit(rp) - lL,
         np.log(np.clip(pk, 0.2, 5.0)),
-        lL,
+        l5,
         same_hand, pit_left, bat_home, reliever,
         (tto == 2).astype(float), (tto >= 3).astype(float),
     ])
@@ -286,7 +296,7 @@ def fit(X: np.ndarray, y: np.ndarray, *, C: float = 1.0) -> dict:
     mu = X.mean(axis=0)
     sd = X.std(axis=0)
     sd[sd < 1e-9] = 1.0
-    clf = LogisticRegression(C=C, max_iter=1000, tol=1e-7)
+    clf = LogisticRegression(C=C, max_iter=3000, tol=1e-7)
     clf.fit((X - mu) / sd, y)
     coef = np.zeros((NC, X.shape[1]))
     icpt = np.zeros(NC)

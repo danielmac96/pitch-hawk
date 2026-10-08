@@ -30,7 +30,7 @@ const rate = (spread: number) => {
 };
 
 function bundle(): Bundle {
-  const nf = 34;
+  const nf = 33;
   const coef = Array.from({ length: 7 }, (_, k) =>
     Array.from({ length: nf }, (_, j) => k === 6 ? 0 : round((j % 7 === k ? 0.9 : 0.06) * (rnd() - 0.3), 6)));
   const residual = (lo: number, hi: number) => {

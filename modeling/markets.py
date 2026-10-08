@@ -334,7 +334,7 @@ def starter_markets(S_: pd.DataFrame, final: dict) -> dict:
         pv = np.array([D.over_prob(p, l) for p, l in zip(pm, lines)])
         yv = (S_[lab].to_numpy() > lines).astype(int)
         final[mkt] = {"type": "starter_count", "stat": lab,
-                      "cal": G.fit_calibrator(pv, yv)}
+                      "cal": _keep_cal(report[mkt]["oos"], G.fit_calibrator(pv, yv))}
         if glm:
             final[mkt]["er_glm"] = glm
     return report
@@ -388,7 +388,8 @@ def batter_markets(B: pd.DataFrame, final: dict) -> dict:
             _log(f"{mkt} {s}: {m}")
         report[mkt] = {"folds": folds, "oos": _agg(folds)}
         final[mkt] = {"type": "batter_game", "event": col[2:],
-                      "cal": G.fit_calibrator(B[col].to_numpy(), y, _extra(mkt, B))}
+                      "cal": _keep_cal(report[mkt]["oos"],
+                                       G.fit_calibrator(B[col].to_numpy(), y, _extra(mkt, B)))}
     return report
 
 
@@ -497,6 +498,7 @@ def team_markets(t: pd.DataFrame, final: dict) -> dict:
         cal = G.fit_calibrator(win_p(g_tr), y_tr)
         p_te = G.apply_calibrator(cal, win_p(g_te))
         mm = G.binary_metrics(p_te, y_te)
+        mm["uncalibrated_logloss"] = G.binary_metrics(win_p(g_te), y_te)["logloss"]
         mm["home_rate_baseline_logloss"] = G.binary_metrics(
             np.full(len(y_te), y_tr.mean()), y_te)["logloss"]
         mm["production_log5_logloss"] = G.binary_metrics(
@@ -531,11 +533,27 @@ def team_markets(t: pd.DataFrame, final: dict) -> dict:
                                    D.negbin_pmf(b, m["alpha"], 30), m["extra_home"])
                    for a, b in zip(g["mu_home"], g["mu_away"])])
     final["team_runs"] = m
-    final["game_moneyline"] = {"type": "moneyline_v3", "cal": G.fit_calibrator(
-        wp, (g["runs_home"] > g["runs_away"]).astype(int).to_numpy())}
+    final["game_moneyline"] = {"type": "moneyline_v3", "cal": _keep_cal(
+        _agg(ml_folds), G.fit_calibrator(
+            wp, (g["runs_home"] > g["runs_away"]).astype(int).to_numpy()))}
     final["game_total"] = {"type": "total_v3"}
     return {"game_moneyline": {"folds": ml_folds, "oos": _agg(ml_folds)},
             "game_total": {"folds": tot_folds, "oos": _agg(tot_folds)}}
+
+
+def _keep_cal(oos: dict, cal: dict) -> dict | None:
+    """Ship a calibrator only if it beat the raw structural probability.
+
+    A calibrator is fitted per fold; when the walk-forward says the calibrated
+    probabilities scored WORSE out of sample than the uncalibrated ones (it
+    happened for pitcher_outs on the first real run: 0.6950 vs 0.6930), the
+    layer is fitting noise and the market ships without it. None is the
+    identity in derive.calibrate and props.ts.
+    """
+    raw = oos.get("uncalibrated_logloss")
+    if raw is not None and oos.get("logloss", raw) >= raw:
+        return None
+    return cal
 
 
 # ── aggregation and recording ───────────────────────────────────────────────

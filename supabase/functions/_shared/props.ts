@@ -34,18 +34,24 @@ function logit(p: number): number {
   return Math.log(q / (1 - q));
 }
 
-/** pa_model.pa_features, column order = params.features. */
+/** pa_model.pa_features, column order = params.features (33 columns). */
 export function paFeatures(
   rb: Vec, rp: Vec, pk: Vec, L: Vec,
   ctx: { same: number; left: number; home: number; reliever: number; tto: number },
 ): number[] {
   const lL = L.map(logit);
   const tto = Number.isFinite(ctx.tto) ? ctx.tto : 1;
+  // log5 matchup logits vs OUT (pa_model.pa_features: l5_c).
+  const cl = (v: number) => Math.min(Math.max(v, 1e-6), 1);
+  const m = rb.map((v, c) => cl(v) * cl(rp[c]) / cl(L[c]));
+  const ms = m.reduce((a, v) => a + v, 0);
+  const p5 = m.map((v) => v / ms);
+  const l5 = p5.slice(0, NC - 1).map((v) => Math.log(v) - Math.log(p5[NC - 1]));
   return [
     ...rb.map((v, c) => logit(v) - lL[c]),
     ...rp.map((v, c) => logit(v) - lL[c]),
     ...pk.map((v) => Math.log(Math.min(Math.max(v, 0.2), 5.0))),
-    ...lL,
+    ...l5,
     ctx.same, ctx.left, ctx.home, ctx.reliever,
     tto === 2 ? 1 : 0, tto >= 3 ? 1 : 0,
   ];
