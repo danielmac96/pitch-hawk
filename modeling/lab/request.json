@@ -1,4 +1,4 @@
 {
-  "note": "probe warehouse shape for the ratings layer",
-  "steps": [["modeling", "research", "probe"]]
+  "note": "PA outcome model v1: tune ratings, walk-forward 2018-2025, 2026 holdout, record",
+  "steps": [["modeling", "pa", "--record"]]
 }
