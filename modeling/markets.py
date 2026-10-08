@@ -147,6 +147,8 @@ def run(store, *, record: bool = False, C: float = 1.0) -> dict:  # noqa: ANN001
                            for k, v in configs.items()}
     _log(f"PA model done in {time.time()-t0:.0f}s; holdout {pa_holdout}")
     bat_side, pit_hand = G.hands_from_pa(pa)
+    G.PEN_LEFT_SHARE = G.measure_pen_left_share(pa)
+    _log(f"bullpen left-handed PA share: {G.PEN_LEFT_SHARE}")
     del X
 
     box = G.load_box(store)

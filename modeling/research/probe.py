@@ -42,7 +42,7 @@ def main(store, args) -> None:  # noqa: ANN001
         select result, result_detail, count(*) n from at_bats
         group by 1,2 order by n desc""", 80)
     _show(con, "player_box by season", """
-        select year(game_date) season, count(*) rows,
+        select year(game_date) season, count(*) n_rows,
                count(distinct game_pk) games,
                sum(case when slot is not null then 1 else 0 end)
                  / count(distinct game_pk) starters_per_game,

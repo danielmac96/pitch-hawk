@@ -40,9 +40,15 @@ from modeling import ratings as R
 NC = R.NC
 
 # Share of relief PAs thrown by left-handers, for scoring a bullpen whose
-# individual arms are unknown pregame. Measured in the probe; mirrored in
-# props.ts.
+# individual arms are unknown pregame. A default only: markets.run measures it
+# from the training data (measure_pen_left_share) and ships the measured value
+# in the `workload` params, which is what props.ts reads.
 PEN_LEFT_SHARE = 0.29
+
+
+def measure_pen_left_share(pa: pd.DataFrame) -> float:
+    rel = pa[~pa["pit_started"].astype(bool)]
+    return round(float((rel["pitch_hand"] == "L").mean()), 4) if len(rel) else PEN_LEFT_SHARE
 
 # wOBA-style weights per class, for a lineup's expected offensive value. Only
 # the RATIOS matter: the team-runs GLM fits the scale. Order K BB 1B 2B 3B HR OUT.
