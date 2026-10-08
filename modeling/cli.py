@@ -149,6 +149,127 @@ def cmd_baseline(args) -> int:
     return 0
 
 
+def cmd_pa(args) -> int:
+    """Tune the ratings, walk-forward the PA outcome model, record the run.
+
+    Records a model_runs row (market `pa_outcome`) holding the fitted params
+    AND the rating configs -- the nightly ratings publish reads the configs
+    from the active `pa_outcome` row, so the hyperparameters a model was
+    validated with are the ones production rates players by. Never promotes.
+    """
+    import numpy as np
+
+    from modeling import pa_model as P
+    from modeling import runs as runs_mod
+
+    pa = P.load_pa(_store())
+    pa, configs = P.attach_ratings(pa, tune=True)
+    print("[pa] rating configs:", P.dumps(configs), flush=True)
+    X = P.design(pa)
+    y = pa["y"].to_numpy(int)
+    season = pa["season"].to_numpy(int)
+
+    folds = P.walk_forward(pa, X, C=args.C)
+    oos = P.aggregate(folds)
+    print("[pa] walk-forward aggregate:", oos, flush=True)
+
+    pre = (season >= P.FIRST_TRAIN_SEASON) & (season < P.HOLDOUT)
+    held = season == P.HOLDOUT
+    holdout = None
+    if held.any():
+        hp = P.fit(X[pre], y[pre], C=args.C)
+        holdout = P.metrics(P.predict(hp, X[held]), y[held])
+        L = pa[[f"L_{c}" for c in range(P.NC)]].to_numpy()
+        holdout["league_only"] = P.metrics(L[held], y[held])["logloss"]
+        print("[pa] 2026 holdout:", holdout, flush=True)
+
+    final = P.fit(X[season >= P.FIRST_TRAIN_SEASON],
+                  y[season >= P.FIRST_TRAIN_SEASON], C=args.C)
+    final["ratings"] = {k: (v.to_json() if hasattr(v, "to_json") else v)
+                        for k, v in configs.items()}
+    coef = np.asarray(final["coef"])
+    for i, f in enumerate(P.FEATURES):
+        print(f"  {f:>10} " + " ".join(f"{v:+.3f}" for v in coef[:, i]))
+
+    if args.record:
+        run = {
+            "run_id": runs_mod.new_run_id(), "market": "pa_outcome",
+            "spec_hash": "pa_multinomial_v1", "git_sha": runs_mod.git_sha(),
+            "data_through": f"{P.HOLDOUT}-12-31",
+            "train_seasons": list(range(P.FIRST_TRAIN_SEASON, P.HOLDOUT + 1)),
+            "config": {"family": "pa_multinomial", "C": args.C,
+                       "primary_metric": "logloss"},
+            "folds": folds, "oos_metrics": oos, "holdout_metrics": holdout,
+            "calibration": None, "params": final, "version": None,
+            "status": "completed",
+            "notes": "lab run: PA outcome model + rating configs",
+        }
+        runs_mod.record(run)
+    return 0
+
+
+def cmd_markets(args) -> int:
+    """Every player and game market, walk-forward, stacked on the PA model."""
+    from modeling import markets
+
+    markets.run(_store(), record=args.record, C=args.C)
+    return 0
+
+
+def cmd_publish_ratings(args) -> int:
+    """Nightly: today's ratings -> Supabase model_ratings (serving inputs)."""
+    from modeling import publish_ratings
+
+    return publish_ratings.main(_store(), dry_run=args.dry_run)
+
+
+V3_MARKETS = ("pa_outcome", "workload", "team_runs", "game_moneyline",
+              "batter_hit", "batter_hr", "batter_tb15", "batter_hrr",
+              "pitcher_k", "pitcher_bb", "pitcher_hits", "pitcher_outs",
+              "pitcher_er")
+
+
+def cmd_stage_v3(args) -> int:
+    """Copy the latest markets-v3 run per market into model_params, INACTIVE.
+
+    The lab and CI only record runs. This is the human step that turns a run
+    into a version, named v3_<YYYYMMDD> so the edge functions (and anyone
+    reading model_version on a row) can tell the families apart. Activation
+    is still a separate `python -m modeling activate <market> <version>`,
+    pa_outcome first: the nightly ratings publish reads its rating configs.
+    """
+    from datetime import date
+
+    from warehouse.config import supabase_client
+
+    version = args.version or f"v3_{date.today():%Y%m%d}"
+    client = supabase_client()
+    for market in V3_MARKETS:
+        rows = (client.table("model_runs")
+                .select("run_id, params, oos_metrics, config, created_at")
+                .eq("market", market).order("created_at", desc=True).limit(10)
+                .execute().data)
+        rows = [r for r in rows if (r.get("config") or {}).get("pipeline") == "markets_v3"]
+        if not rows:
+            print(f"[modeling] {market}: no markets_v3 run recorded; skipped")
+            continue
+        r = rows[0]
+        registry.insert_version(market, version, r["params"], r.get("oos_metrics") or {},
+                                notes=f"staged from model_runs {r['run_id']}")
+    print(f"\nActivate in this order (pa_outcome first -- publish-ratings reads it):\n"
+          + "\n".join(f"  python -m modeling activate {m} {version}" for m in V3_MARKETS))
+    return 0
+
+
+def cmd_research(args) -> int:
+    """Run a read-only lab diagnostic from modeling/research/."""
+    import importlib
+
+    mod = importlib.import_module(f"modeling.research.{args.name}")
+    mod.main(_store(), args)
+    return 0
+
+
 def cmd_list(args) -> int:
     from warehouse.config import supabase_client as get_client
     rows = (get_client().table("model_params")
@@ -223,6 +344,19 @@ def build_parser() -> argparse.ArgumentParser:
     bl = sub.add_parser("baseline", help="score active params for a comparable OOS number")
     bl.add_argument("--market")
 
+    pa = sub.add_parser("pa", help="PA outcome model: tune ratings, walk-forward, record")
+    pa.add_argument("--C", type=float, default=1.0)
+    pa.add_argument("--record", action="store_true")
+    mk = sub.add_parser("markets", help="all player/game markets: walk-forward, record")
+    mk.add_argument("--C", type=float, default=1.0)
+    mk.add_argument("--record", action="store_true")
+    pr = sub.add_parser("publish-ratings", help="today's ratings -> model_ratings")
+    pr.add_argument("--dry-run", action="store_true")
+    sv = sub.add_parser("stage-v3", help="latest markets-v3 runs -> model_params (inactive)")
+    sv.add_argument("--version", default=None)
+    rs = sub.add_parser("research", help="read-only lab diagnostic (modeling/research/)")
+    rs.add_argument("name")
+    rs.add_argument("--seasons", default=None)
     sub.add_parser("list", help="every version, per market")
     sub.add_parser("status", help="registry version vs what live scoring stamps")
 
@@ -241,6 +375,8 @@ _COMMANDS = {
     "build": cmd_build, "sweep": cmd_sweep, "train": cmd_train,
     "baseline": cmd_baseline, "list": cmd_list, "show": cmd_show,
     "status": cmd_status, "activate": cmd_activate, "rollback": cmd_rollback,
+    "research": cmd_research, "pa": cmd_pa, "markets": cmd_markets,
+    "publish-ratings": cmd_publish_ratings, "stage-v3": cmd_stage_v3,
 }
 
 

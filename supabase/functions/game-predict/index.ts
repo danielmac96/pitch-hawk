@@ -34,6 +34,9 @@ import {
   totalOverProb,
 } from "../_shared/model.ts";
 import { resolveSlate } from "../_shared/slate.ts";
+import {
+  dayIndex, type GameOut, lastLineups, loadRatings, scoreGame, totalOver, v3Bundle,
+} from "../_shared/v3.ts";
 import { probToAmerican } from "../_shared/vocab.ts";
 
 // A game that has started, finished, or been called is not something we can make
@@ -284,6 +287,68 @@ async function projectStarters(
   return summary;
 }
 
+/**
+ * v3 batter props (posted lineups only) and starter props, one upsert.
+ *
+ * Same table, keys and column shapes as the previous writers, so the board,
+ * the API and settle read v3 rows without knowing they changed; only
+ * model_version says which model made a row.
+ */
+async function writeV3Projections(
+  db: ReturnType<typeof svc>, date: string, slate: any[], v3: Map<number, GameOut>,
+  models: Record<string, any>,
+): Promise<Record<string, number>> {
+  const out: Record<string, unknown>[] = [];
+  const now = new Date().toISOString();
+  const ver = (m: string) => String(models[m]?.version ?? "v3");
+  const ids = new Set<number>();
+  for (const g of slate) {
+    const r = v3.get(g.game_pk);
+    if (!r) continue;
+    for (const b of r.batters) {
+      ids.add(b.player_id);
+      const base = {
+        game_pk: g.game_pk, player_id: b.player_id, official_date: date,
+        team_id: b.team_id, opponent_id: b.opp_team, is_home: b.is_home,
+        lineup_slot: b.slot, opposing_pitcher_id: b.opp_sp, role: "batter",
+        book: "model_fair", expected_pa: Math.round(b.expected_pa * 1e4) / 1e4,
+        per_pa_probability: null, updated_at: now,
+      };
+      for (const [m, line, ev] of [
+        ["batter_hit", null, null], ["batter_hr", null, null],
+        ["batter_tb15", 1.5, Math.round(b.e_tb * 1e4) / 1e4], ["batter_hrr", 0.5, null],
+      ] as Array<[string, number | null, number | null]>) {
+        if (!models[m]) continue;
+        const ppa = (b.per_pa as Record<string, number>)[m];
+        out.push({ ...base, market: m, probability: Math.round(b.probs[m] * 1e4) / 1e4,
+                   line, expected_value: ev, model_version: ver(m),
+                   per_pa_probability: ppa != null ? Math.round(ppa * 1e4) / 1e4 : null });
+      }
+    }
+    for (const s of r.starters) {
+      ids.add(s.player_id);
+      for (const [m, p] of Object.entries(s.props)) {
+        if (!models[m]) continue;
+        out.push({
+          game_pk: g.game_pk, player_id: s.player_id, market: m, official_date: date,
+          team_id: s.team_id, opponent_id: s.opp_team, is_home: s.is_home, role: "pitcher",
+          lineup_slot: null, opposing_pitcher_id: null,
+          probability: Math.round(p.p_over * 1e4) / 1e4, line: p.line,
+          expected_value: Math.round(p.expected * 1e4) / 1e4, expected_pa: null,
+          per_pa_probability: null, model_version: ver(m), book: "model_fair", updated_at: now,
+        });
+      }
+    }
+  }
+  if (ids.size) await ensurePlayers([...ids]);
+  if (out.length) {
+    const { error } = await db.from("player_game_projections")
+      .upsert(out, { onConflict: "game_pk,player_id,market" });
+    if (error) throw new Error(`v3 projections: ${error.message}`);
+  }
+  return { games: [...v3.keys()].length, rows: out.length };
+}
+
 Deno.serve(async (req) => {
   const denied = await requireCronSecret(req);
   if (denied) return denied;
@@ -364,6 +429,53 @@ Deno.serve(async (req) => {
     const parkBy = new Map<number, number>(
       (parkRows ?? []).map((r: any) => [r.venue_id, Number(r.factor)]),
     );
+
+    // ── v3: one PA model behind every player and game market ──────────────
+    // Active only when its model rows are; otherwise every market below keeps
+    // its previous formula. See _shared/v3.ts.
+    const bundle = v3Bundle(models);
+    const v3: Map<number, GameOut> = new Map();
+    if (bundle) {
+      try {
+        const teams = slate.flatMap((g: any) => [g.home_team_id, g.away_team_id]);
+        const fallback = await lastLineups(teams, date);
+        const lineupOf = (team: number, posted: number[]) =>
+          posted.length === 9 ? { lineup: posted, posted: true }
+            : { lineup: fallback.get(team) ?? [], posted: false };
+        const sides = slate.map((g: any) => {
+          const prob = probBy.get(g.game_pk);
+          return {
+            g, prob,
+            home: lineupOf(g.home_team_id, prob?.home_lineup ?? []),
+            away: lineupOf(g.away_team_id, prob?.away_lineup ?? []),
+          };
+        });
+        const ratings = await loadRatings({
+          bat: sides.flatMap((x) => [...x.home.lineup, ...x.away.lineup]),
+          pit: pitcherIds, teams, venues: slate.map((g: any) => g.venue_id),
+        });
+        if (ratings) {
+          const day = dayIndex(date);
+          for (const x of sides) {
+            // A team with no lineup at all (first game we have seen it) has
+            // no offence to build: leave that game on the previous formulas.
+            if (x.home.lineup.length !== 9 || x.away.lineup.length !== 9) continue;
+            v3.set(x.g.game_pk, scoreGame(bundle, ratings, {
+              gamePk: x.g.game_pk, dayIndex: day, venueId: x.g.venue_id,
+              home: { teamId: x.g.home_team_id, ...x.home, starterId: x.prob?.home_pitcher_id ?? null },
+              away: { teamId: x.g.away_team_id, ...x.away, starterId: x.prob?.away_pitcher_id ?? null },
+              temp_f: x.prob?.temp_f ?? null, wind_mph: x.prob?.wind_mph ?? null,
+              wind_direction: x.prob?.wind_direction ?? null, roof_closed: x.prob?.roof_closed ?? false,
+              batSide: (id) => ratings.extra("bat", id).bat_side ?? "R",
+              pitchHand: (id) => ratings.extra("pit", id).pitch_hand ?? "R",
+            }));
+          }
+        }
+        detail.v3_games = v3.size;
+      } catch (e) {
+        errors.push(`v3: ${String(e).slice(0, 200)}`);
+      }
+    }
 
     const rows: Record<string, unknown>[] = [];
     let skipped = 0;
@@ -452,10 +564,11 @@ Deno.serve(async (req) => {
         odds["ab_pitches_ou"], true,
       ));
 
-      // ── game_moneyline: log5 on season win% ──────────────────────────────
+      // ── game_moneyline: v3 team-runs model, else log5 on season win% ─────
       const homeRate: any = rateBy.get(g.home_team_id);
       const awayRate: any = rateBy.get(g.away_team_id);
-      const homeProb = log5HomeProb(
+      const gv3 = v3.get(g.game_pk);
+      const homeProb = gv3 ? gv3.p_home : log5HomeProb(
         homeRate?.win_pct != null ? Number(homeRate.win_pct) : null,
         awayRate?.win_pct != null ? Number(awayRate.win_pct) : null,
       );
@@ -477,7 +590,7 @@ Deno.serve(async (req) => {
         price: q?.price_american ?? probToAmerican(pSide),
         edge: implied != null ? Math.round((pSide - implied) * 10000) / 10000 : null,
         book: q?.source ?? "model_fair",
-        model_version: "log5_v1",
+        model_version: gv3 ? String(models["game_moneyline"]?.version ?? "v3") : "log5_v1",
       });
 
       // ── game_total: projected runs ───────────────────────────────────────
@@ -507,11 +620,29 @@ Deno.serve(async (req) => {
         roof_closed: prob?.roof_closed ?? false,
         sample_games: Number(homeRate?.games ?? 0),
       };
-      const tot = predictGameTotal(totalCtx);
-      marketRows.push(ouJoin(
-        tot, (line) => totalOverProb(tot.predicted_value!, tot.sigma, line),
-        odds["game_total"], true,
-      ));
+      if (gv3) {
+        // Two negative-binomial team-run distributions, convolved. The team
+        // means ride along in `probs` so the live total can condition on them
+        // as the game unfolds instead of re-deriving a pregame number.
+        const tot: MarketPrediction = {
+          market: "game_total", predicted_value: Math.round(gv3.mu_total * 100) / 100,
+          confidence: null, probs: null, sample_size: 0,
+          model_version: String(models["team_runs"]?.version ?? "v3"),
+        };
+        const row = ouJoin(tot, (line) => totalOver(gv3.mu_home, gv3.mu_away, gv3.alpha, line),
+          odds["game_total"], true);
+        row.probs = {
+          mu_home: Math.round(gv3.mu_home * 1e4) / 1e4,
+          mu_away: Math.round(gv3.mu_away * 1e4) / 1e4, alpha: gv3.alpha,
+        };
+        marketRows.push(row);
+      } else {
+        const tot = predictGameTotal(totalCtx);
+        marketRows.push(ouJoin(
+          tot, (line) => totalOverProb(tot.predicted_value!, tot.sigma, line),
+          odds["game_total"], true,
+        ));
+      }
 
       for (const m of marketRows) {
         if (already.has(`${g.game_pk}:${m.market}`)) { skipped += 1; continue; }
@@ -538,9 +669,16 @@ Deno.serve(async (req) => {
     // Deliberately AFTER the game_predictions write and wrapped in its own
     // try: a failure to project batters must not cost the slate its moneyline
     // and total, which is the part the board actually depends on.
+    // Games v3 scored get v3 projections; the rest keep the previous models.
+    const legacySlate = slate.filter((g: any) => !v3.has(g.game_pk));
+    try {
+      detail.v3_projections = await writeV3Projections(db, date, slate, v3, models);
+    } catch (e) {
+      errors.push(`v3_projections: ${String(e)}`);
+    }
     try {
       detail.batter_projections = await projectBatters(
-        db, date, slate, probBy, rollBy, models,
+        db, date, legacySlate, probBy, rollBy, models,
       );
     } catch (e) {
       errors.push(`batter_projections: ${String(e)}`);
@@ -548,7 +686,7 @@ Deno.serve(async (req) => {
     // Its own try for the same reason: starter props failing must not cost
     // the batters or the game markets.
     try {
-      detail.starter_props = await projectStarters(db, date, slate, probBy, rollBy, models);
+      detail.starter_props = await projectStarters(db, date, legacySlate, probBy, rollBy, models);
     } catch (e) {
       errors.push(`starter_props: ${String(e)}`);
     }

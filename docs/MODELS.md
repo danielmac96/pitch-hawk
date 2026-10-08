@@ -1,5 +1,13 @@
 # Models — insert, activate, roll back
 
+> **v3 (2026-10).** Player props, the pregame moneyline and the game total are
+> now served by one plate-appearance outcome model plus closed-form roll-ups
+> and per-market calibrators. The method is in
+> [`MODELING-METHODS.md`](MODELING-METHODS.md); per-market validation results
+> are in [`models/`](models/). This file remains the registry reference: the v3
+> `params.type` shapes are at the end ([v3 params](#v3-params)). The
+> per-pitch/per-at-bat markets below are still the v2 cell models.
+
 Every market is scored by the active row in `model_params` (one active row per
 market). The edge function `supabase/functions/_shared/model.ts` reads whatever
 is active via `loadActiveModels()` and degrades to a calibrated league-average
@@ -305,3 +313,31 @@ select market, version, is_active, activated_at, metrics from model_params order
 `/api/health` also lists the active `market`/`version` per market, and live
 `predictions.model_version` shows the trained version (not `heuristic_v0`) once a
 model is active.
+
+
+## v3 params
+
+Written by `python -m modeling markets --record` (a `model_runs` row per
+market, `config.pipeline = "markets_v3"`) and staged by
+`python -m modeling stage-v3` as **inactive** `v3_<YYYYMMDD>` versions.
+`game-predict` serves v3 only when `pa_outcome`, `workload` and `team_runs`
+are all active (`_shared/v3.ts::v3Bundle`); otherwise every market keeps its
+previous formula, so rollback is `python -m modeling rollback <market>`.
+
+| market | `type` | holds |
+|---|---|---|
+| `pa_outcome` | `pa_multinomial` | `classes` (K, BB, 1B, 2B, 3B, HR, OUT), `features`, `coef` 7×34, `intercept`, and `ratings`: the τ/k configs for batter, pitcher, pen and park that `publish-ratings` must use |
+| `workload` | `workload` | `outs` and `bf` location models (`features`, `coef`, `intercept`, `residual_pmf`), `pa_pmf` by slot+H/A, `pen_left_share`, priors |
+| `team_runs` | `team_runs` | Poisson GLM `features`/`coef`/`intercept`, NB `alpha`, `extra_home` |
+| `game_moneyline` | `moneyline_v3` | `cal` {a, b} |
+| `batter_hit` / `batter_hr` / `batter_tb15` / `batter_hrr` | `batter_game` | `event`, `cal` {a, b, w?} |
+| `pitcher_k` / `_bb` / `_hits` / `_outs` / `_er` | `starter_count` | `stat`, `cal`; `pitcher_er` also `er_glm` |
+
+**Activation order matters.** `pa_outcome` first; then run
+`python -m modeling publish-ratings` once so `model_ratings` exists; then
+`workload`, `team_runs`, and the market rows. The nightly warehouse job
+republishes ratings after that.
+
+Parity: `modeling/serve.py` ↔ `_shared/props.ts`, pinned at 1e-9 by
+`tests/fixtures/props_golden.json` (regenerate with
+`UPDATE_GOLDEN=1 deno test --allow-write --allow-read --allow-env supabase/functions/tests/props_golden_test.ts`).

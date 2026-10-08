@@ -27,8 +27,8 @@ from warehouse.config import (
 )
 from warehouse.weather import fetch_hourly, rows_for_games
 from warehouse.mlb import (
-    MlbApiError, _date, fetch_game, fetch_players, fetch_venues, flatten_game,
-    schedule,
+    MlbApiError, _date, fetch_boxscore, fetch_game, fetch_players,
+    fetch_venues, flatten_game, flatten_player_box, schedule,
 )
 
 WORKERS = 6
@@ -132,6 +132,18 @@ def ingest_day(store: ObjectStore, day: str, *, with_boxscore: bool = True,
         manifest.record(m, dataset, day, rows=len(rows), size_bytes=len(blob),
                         checksum=checksum(rows, dataset), ingested_at=now,
                         games=len(game_rows))
+    # The per-player boxscore lines ride along for free -- the payload was
+    # fetched above for umpire and weather. Written only when EVERY game's box
+    # arrived: a day missing one team's lines would bias every rate built on
+    # it, and `player-box --catchup` refetches a skipped day on its own.
+    if with_boxscore and all(results[pk]["boxscore"] for pk in results):
+        box_rows = [r for g in games if g["gamePk"] in results
+                    for r in flatten_player_box(
+                        g["gamePk"], _date(game_dates.get(g["gamePk"])),
+                        results[g["gamePk"]]["boxscore"])]
+        _write_derived(store, m, "player_box", day, box_rows,
+                       games=len(game_rows), now=now)
+
     if owns_manifest:
         manifest.save(store, m)
 
@@ -250,6 +262,69 @@ def refresh_contact_quality(store: ObjectStore, *,
     store.put(snapshot_key("contact_quality"),
               to_parquet(rows, "contact_quality"))
     return len(rows)
+
+
+def _write_derived(store: ObjectStore, m: dict, dataset: str, day: str,
+                   rows: list[dict], *, games: int, now: str) -> int:
+    """Write one derived dataset-day and record it. Returns bytes written."""
+    if not rows:
+        return 0
+    blob = to_parquet(rows, dataset)
+    store.put(object_key(dataset, day), blob)
+    manifest.record(m, dataset, day, rows=len(rows), size_bytes=len(blob),
+                    checksum=checksum(rows, dataset), ingested_at=now,
+                    games=games)
+    return len(blob)
+
+
+def ingest_player_box_range(store: ObjectStore, days: list[str], *,
+                            workers: int = WORKERS, on_day=None) -> dict:
+    """Fetch the boxscore for every stored game on `days`, write player_box.
+
+    One MLB call per game, and only the boxscore -- the play-by-play is
+    already in R2. This is how history gets per-player lines: they were
+    discarded at ingest until 2026-10, and re-ingesting whole days to recover
+    them would refetch ~8M pitches for nothing.
+
+    A day whose `games` file is absent is skipped, never written empty. A day
+    with any failed fetch is not written (all-or-nothing, as in ingest_day).
+    """
+    m = manifest.load(store)
+    totals = {"days": 0, "rows": 0, "games": 0, "bytes": 0, "failed": []}
+    now = datetime.now(timezone.utc).isoformat()
+    for i, day in enumerate(days, 1):
+        games = _read_dataset_day(store, "games", day)
+        if not games:
+            continue
+
+        def work(g):
+            try:
+                return g, fetch_boxscore(int(g["game_pk"]))
+            except MlbApiError as exc:
+                return g, exc
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            fetched = list(pool.map(work, games))
+        bad = [g["game_pk"] for g, b in fetched if isinstance(b, Exception)]
+        if bad:
+            totals["failed"].append(f"{day}: {len(bad)} game(s) failed")
+            if on_day:
+                on_day(day, None, f"{len(bad)} failed")
+            continue
+        rows = [r for g, b in fetched
+                for r in flatten_player_box(int(g["game_pk"]),
+                                            g.get("game_date"), b)]
+        totals["bytes"] += _write_derived(store, m, "player_box", day, rows,
+                                          games=len(games), now=now)
+        totals["days"] += 1
+        totals["rows"] += len(rows)
+        totals["games"] += len(games)
+        if on_day:
+            on_day(day, len(rows), None)
+        if i % 25 == 0:
+            manifest.save(store, m)
+    manifest.save(store, m)
+    return totals
 
 
 def ingest_weather_range(store: ObjectStore, start: str, end: str, *,

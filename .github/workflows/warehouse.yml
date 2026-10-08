@@ -43,6 +43,10 @@ on:
         description: "Re-ingest the day even if the manifest already has it"
         type: boolean
         default: false
+      player_box_catchup:
+        description: "Historical game-days of per-player boxscore lines to backfill this run (nightly default 60; ~2000 drains all history)"
+        required: false
+        default: "60"
 
 concurrency:
   group: warehouse-nightly
@@ -207,6 +211,44 @@ jobs:
         if: always()
         run: python -m warehouse status
 
+  # Per-player boxscore lines (player_box) for history.
+  #
+  # New days get them from `ingest` above at no extra cost. History does not:
+  # the lines were discarded at ingest until 2026-10, and the player-prop
+  # models (hits, runs, RBI, earned runs, outs recorded) train on them. One
+  # MLB call per game, newest days first.
+  #
+  # Its own job rather than a step in `ingest`, for the timeout: 60 days a
+  # night (~900 games) fits anywhere, but a manual run with
+  # player_box_catchup=2000 drains all of history in one ~2-hour pass. It runs
+  # after `ingest` in the same workflow-level concurrency group, so there is
+  # still only ever one writer on the manifest.
+  player_box:
+    needs: [guard, ingest]
+    if: ${{ always() && needs.guard.outputs.run == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install warehouse deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-warehouse.txt
+      - name: Backfill per-player boxscore lines
+        # Non-fatal: a day that fails is not written and the next run retries
+        # it. Nothing downstream of tonight's ingest depends on this.
+        continue-on-error: true
+        run: python -m warehouse player-box --catchup "${{ inputs.player_box_catchup || '60' }}"
+
   # Export yesterday's model output to R2 before Supabase's retention timers
   # reach it (predictions 21 days, game_predictions 35).
   #
@@ -273,10 +315,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # supabase-py is the publish transport and lives in requirements.txt.
-          pip install -r requirements-warehouse.txt -r requirements.txt
+          # requirements-modeling.txt brings pandas/scikit-learn for the
+          # ratings publish below.
+          pip install -r requirements-warehouse.txt -r requirements.txt -r requirements-modeling.txt
 
       # Each table is staged then swapped in one plpgsql transaction, so a
       # failure here leaves the previous night's aggregates serving rather
       # than a half-written table.
       - name: Build and publish display aggregates
         run: python -m warehouse publish
+
+      # The v3 model inputs: every player's, park's and bullpen's rating as of
+      # today, computed by the same functions training used and with the
+      # hyperparameters of the ACTIVE pa_outcome model. Stage-and-swap like
+      # the aggregates, so a failure serves yesterday's ratings. Non-fatal
+      # until a pa_outcome model is active: it exits non-zero with a message
+      # saying so, and the display aggregates above are already published.
+      - name: Publish model ratings
+        continue-on-error: true
+        run: python -m modeling publish-ratings

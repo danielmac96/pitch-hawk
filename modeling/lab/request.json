@@ -1,0 +1,4 @@
+{
+  "note": "markets v3 run 2: log5-logit features instead of league logits; calibrators kept only where they help OOS; measured bullpen lefty share",
+  "steps": [["modeling", "markets", "--record"]]
+}

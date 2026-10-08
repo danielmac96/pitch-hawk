@@ -441,6 +441,90 @@ def flatten_play_by_play(game_pk: int, game_date: date | None,
     return pitches, at_bats
 
 
+# ── per-player boxscore lines ───────────────────────────────────────────────
+
+def starter_slot(order: Any) -> int | None:
+    """'300' -> 3. Only a '?00' battingOrder is a starter; '301' is a sub.
+
+    Mirrors starterSlot() in supabase/functions/_shared/boxscore.ts.
+    """
+    s = str(order or "")
+    if len(s) != 3 or not s.isdigit() or not s.endswith("00"):
+        return None
+    slot = int(s[0])
+    return slot if 1 <= slot <= 9 else None
+
+
+def flatten_player_box(game_pk: int, game_date: date | None,
+                       box: dict | None) -> list[dict]:
+    """One row per player who batted or pitched, from the boxscore.
+
+    A block the player did not record (a pitcher's batting line in a DH game,
+    a hitter's pitching line) is left NULL rather than zero: "did not bat" and
+    "batted and went 0-for" are different facts and every rate downstream
+    depends on telling them apart.
+    """
+    if not box:
+        return []
+    rows: list[dict] = []
+    for side in ("home", "away"):
+        team = (box.get("teams") or {}).get(side) or {}
+        team_id = _int((team.get("team") or {}).get("id"))
+        for p in (team.get("players") or {}).values():
+            pid = _int((p.get("person") or {}).get("id"))
+            if pid is None:
+                continue
+            stats = p.get("stats") or {}
+            bat = stats.get("batting") or {}
+            pit = stats.get("pitching") or {}
+            batted = bool(bat) and (_int(bat.get("plateAppearances")) or 0) > 0
+            pitched = bool(pit) and ((_int(pit.get("battersFaced")) or 0)
+                                     + (_int(pit.get("outs")) or 0)) > 0
+            if not batted and not pitched:
+                continue
+            row = {
+                "game_pk": game_pk, "game_date": game_date,
+                "player_id": pid, "team_id": team_id,
+                "is_home": side == "home",
+                "batting_order": p.get("battingOrder"),
+                "slot": starter_slot(p.get("battingOrder")),
+            }
+            if batted:
+                row.update({
+                    "pa": _int(bat.get("plateAppearances")),
+                    "ab": _int(bat.get("atBats")),
+                    "h": _int(bat.get("hits")),
+                    "doubles": _int(bat.get("doubles")),
+                    "triples": _int(bat.get("triples")),
+                    "hr": _int(bat.get("homeRuns")),
+                    "r": _int(bat.get("runs")),
+                    "rbi": _int(bat.get("rbi")),
+                    "tb": _int(bat.get("totalBases")),
+                    "bb": _int(bat.get("baseOnBalls")),
+                    "k": _int(bat.get("strikeOuts")),
+                    "hbp": _int(bat.get("hitByPitch")),
+                })
+            if pitched:
+                row.update({
+                    "p_started": (_int(pit.get("gamesStarted")) or 0) > 0,
+                    "p_bf": _int(pit.get("battersFaced")),
+                    "p_outs": _int(pit.get("outs")),
+                    "p_h": _int(pit.get("hits")),
+                    "p_bb": _int(pit.get("baseOnBalls")),
+                    "p_k": _int(pit.get("strikeOuts")),
+                    "p_hr": _int(pit.get("homeRuns")),
+                    "p_r": _int(pit.get("runs")),
+                    "p_er": _int(pit.get("earnedRuns")),
+                    "p_pitches": _int(pit.get("numberOfPitches")),
+                })
+            rows.append(row)
+    return rows
+
+
+def fetch_boxscore(game_pk: int) -> dict:
+    return get(f"/game/{game_pk}/boxscore")
+
+
 def fetch_game(game_pk: int, game_date: date | None, *,
                with_boxscore: bool = True) -> dict:
     """One game: play-by-play plus optional boxscore context."""
