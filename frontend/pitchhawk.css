@@ -658,7 +658,7 @@ body { margin: 0; }
 .ph-fbar-count b { color: var(--text); }
 
 /* Trust tiles */
-.ph-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
+.ph-kpis { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; margin-bottom: 16px; }
 .ph-kpi {
   border: 1px solid var(--border); background: var(--surface-2); border-radius: 12px;
   padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; min-width: 0;

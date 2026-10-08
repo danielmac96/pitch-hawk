@@ -163,7 +163,7 @@ def projections():
                 rows.append(dict(base, market="batter_tb15", probability=round(rnd.uniform(.3, .55), 3),
                                  expected_value=round(rnd.uniform(1.1, 2.1), 2)))
                 rows.append(dict(base, market="batter_hrr", probability=round(rnd.uniform(.5, .8), 3),
-                                 per_pa_probability=round(rnd.uniform(.2, .4), 3)))
+                                 per_pa_probability=round(rnd.uniform(.2, .4), 3), result=res()))
         for key in ("probable_away_pitcher", "probable_home_pitcher"):
             p = g[key]
             for m, line in (("pitcher_k", 5.5), ("pitcher_outs", 16.5), ("pitcher_hits", 5.5), ("pitcher_er", 2.5), ("pitcher_bb", 1.5)):
