@@ -223,10 +223,13 @@ def cmd_publish_ratings(args) -> int:
     return publish_ratings.main(_store(), dry_run=args.dry_run)
 
 
+# pitcher_bb is deliberately absent. On the 2026-10-08 run its expected-walks
+# MAE (1.063) did not beat the pitcher's own average (1.056) and its 2026
+# holdout calibration was 0.90, so it stays on base_v1 until a run shows it
+# winning. Stage it explicitly with --market pitcher_bb to override.
 V3_MARKETS = ("pa_outcome", "workload", "team_runs", "game_moneyline",
               "batter_hit", "batter_hr", "batter_tb15", "batter_hrr",
-              "pitcher_k", "pitcher_bb", "pitcher_hits", "pitcher_outs",
-              "pitcher_er")
+              "pitcher_k", "pitcher_hits", "pitcher_outs", "pitcher_er")
 
 
 def cmd_stage_v3(args) -> int:
@@ -244,7 +247,8 @@ def cmd_stage_v3(args) -> int:
 
     version = args.version or f"v3_{date.today():%Y%m%d}"
     client = supabase_client()
-    for market in V3_MARKETS:
+    markets = tuple(args.market) if args.market else V3_MARKETS
+    for market in markets:
         rows = (client.table("model_runs")
                 .select("run_id, params, oos_metrics, config, created_at")
                 .eq("market", market).order("created_at", desc=True).limit(10)
@@ -257,7 +261,7 @@ def cmd_stage_v3(args) -> int:
         registry.insert_version(market, version, r["params"], r.get("oos_metrics") or {},
                                 notes=f"staged from model_runs {r['run_id']}")
     print(f"\nActivate in this order (pa_outcome first -- publish-ratings reads it):\n"
-          + "\n".join(f"  python -m modeling activate {m} {version}" for m in V3_MARKETS))
+          + "\n".join(f"  python -m modeling activate {m} {version}" for m in markets))
     return 0
 
 
@@ -354,6 +358,8 @@ def build_parser() -> argparse.ArgumentParser:
     pr.add_argument("--dry-run", action="store_true")
     sv = sub.add_parser("stage-v3", help="latest markets-v3 runs -> model_params (inactive)")
     sv.add_argument("--version", default=None)
+    sv.add_argument("--market", action="append",
+                    help="stage only these markets (repeatable); default: every v3 market that beat its baseline")
     rs = sub.add_parser("research", help="read-only lab diagnostic (modeling/research/)")
     rs.add_argument("name")
     rs.add_argument("--seasons", default=None)
