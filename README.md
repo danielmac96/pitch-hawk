@@ -231,12 +231,16 @@ quoted three different day counts for the same manifest.
 - **Micro-market prices are model-fair.** `pitch_speed_ou`, `ab_pitches_ou` and
   `ab_result` have no real prop source, so they price at even money and are
   tagged `model_fair` — they never read as beating a sportsbook.
-- **`game_moneyline` is fitted but not served.** `model.ts` has no `log5`
-  branch; `game-predict` takes the function's default `homeAdv = 0.542`. The
-  workbench measures it at ~0.535, so the number is at least known rather than
-  an unexamined constant. Do not `--promote` it.
-- **`game_total` is scored but unregistered** — a sixth market with no
-  `model_params` row and no `modeling/specs/` module.
+- **v3 serves player props, the moneyline and the total once activated.** One
+  plate-appearance outcome model on as-of ratings, closed-form roll-ups and
+  per-market calibrators ([`docs/MODELING-METHODS.md`](docs/MODELING-METHODS.md)).
+  Until `pa_outcome`, `workload` and `team_runs` are active, `game-predict`
+  keeps the previous formulas (`log5_v1`, `total_v1`, `base_v1`, v2 batter
+  models) — activation order is in [`docs/MODELS.md`](docs/MODELS.md#v3-params).
+- **The per-pitch / per-at-bat markets are still v2 cell models.**
+  `pitch_speed_ou` prices at a model-fair line equal to its own prediction, so
+  its graded hit rate sits near 50% by construction; `ab_result` still uses the
+  serve-time `CALIB_SHRINK`.
 - **Latency floors at the cron tick.** Sub-15s needs a worker outside
   `pg_cron`.
 - **Python dependencies are unpinned.**
