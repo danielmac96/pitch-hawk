@@ -15,7 +15,8 @@ import { resolveSlate } from "../_shared/slate.ts";
 import * as aggs from "../_shared/aggregates.ts";
 import { DEFAULT_LIMIT, MAX_LIMIT, pitchFeed } from "../_shared/pitchfeed.ts";
 import { gradingHealth } from "../_shared/settlequeue.ts";
-import { liveTotal, remainingPa, restOfGame } from "../_shared/basemodels.ts";
+import { liveTotal, remainingOuts, remainingPa, restOfGame } from "../_shared/basemodels.ts";
+import { convolve, negbinPmf, overProb } from "../_shared/props.ts";
 
 // Active model versions for the live base-model markets, cached per instance:
 // /live is the hottest route and these change only when a model is promoted.
@@ -487,14 +488,33 @@ async function slatePayloads(date: string): Promise<any[]> {
       const sit = { inning: Number(ls.inning), top: !!ls.top_inning, outs: Number(ls.outs ?? 0) };
       liveModels = {};
       const preTotal = gpPre.get(g.game_pk)?.get("game_total");
-      if (liveVersions["game_total_live"] && preTotal?.line != null) {
+      const v3Mu = preTotal?.probs?.mu_home != null && preTotal?.probs?.mu_away != null;
+      if (v3Mu && preTotal?.line != null) {
+        // v3: the pregame team-run means, scaled to the outs each side has
+        // left, as negative binomials -- the same family the pregame total
+        // was priced from, so the live number starts where the pregame one
+        // did and converges to the score as outs run out.
+        const now = Number(ls.home_score ?? 0) + Number(ls.away_score ?? 0);
+        const a = Number(preTotal.probs.alpha ?? 0);
+        const muH = Number(preTotal.probs.mu_home) * remainingOuts(sit, "home") / 27;
+        const muA = Number(preTotal.probs.mu_away) * remainingOuts(sit, "away") / 27;
+        const line = Number(preTotal.line);
+        const rest = convolve(negbinPmf(muH, a, 30), negbinPmf(muA, a, 30));
+        liveModels.total = {
+          projected: Math.round((now + muH + muA) * 1e4) / 1e4, line,
+          p_over: now > line ? 1 : Math.round(overProb(rest, line - now) * 1e4) / 1e4,
+          model_version: `${preTotal.model_version}:live`,
+        };
+      } else if (liveVersions["game_total_live"] && preTotal?.line != null) {
         liveModels.total = {
           ...liveTotal({ ...sit, home: Number(ls.home_score ?? 0), away: Number(ls.away_score ?? 0) },
             Number(preTotal.line)),
           model_version: liveVersions["game_total_live"],
         };
       }
-      if (liveVersions["batter_hit_rog"] || liveVersions["batter_hr_rog"]) {
+      const v3Rog = (projRows ?? []).some((r: any) => r.game_pk === g.game_pk &&
+        String(r.model_version ?? "").startsWith("v3") && r.per_pa_probability != null);
+      if (liveVersions["batter_hit_rog"] || liveVersions["batter_hr_rog"] || v3Rog) {
         const by = new Map<number, any>();
         for (const r of projRows ?? []) {
           if (r.game_pk !== g.game_pk) continue;
@@ -514,11 +534,12 @@ async function slatePayloads(date: string): Promise<any[]> {
           });
           return {
             player_id: b.player_id, side, slot: b.slot, remaining_pa: rem,
-            hit: liveVersions["batter_hit_rog"] && b.batter_hit != null ? restOfGame(b.batter_hit, rem) : null,
-            hr: liveVersions["batter_hr_rog"] && b.batter_hr != null ? restOfGame(b.batter_hr, rem) : null,
+            hit: (liveVersions["batter_hit_rog"] || v3Rog) && b.batter_hit != null ? restOfGame(b.batter_hit, rem) : null,
+            hr: (liveVersions["batter_hr_rog"] || v3Rog) && b.batter_hr != null ? restOfGame(b.batter_hr, rem) : null,
           };
         });
-        liveModels.rest_of_game_version = liveVersions["batter_hit_rog"] ?? liveVersions["batter_hr_rog"];
+        liveModels.rest_of_game_version = v3Rog ? "v3_pa_outcome"
+          : liveVersions["batter_hit_rog"] ?? liveVersions["batter_hr_rog"];
       }
     }
 
