@@ -149,6 +149,15 @@ def cmd_baseline(args) -> int:
     return 0
 
 
+def cmd_research(args) -> int:
+    """Run a read-only lab diagnostic from modeling/research/."""
+    import importlib
+
+    mod = importlib.import_module(f"modeling.research.{args.name}")
+    mod.main(_store(), args)
+    return 0
+
+
 def cmd_list(args) -> int:
     from warehouse.config import supabase_client as get_client
     rows = (get_client().table("model_params")
@@ -223,6 +232,9 @@ def build_parser() -> argparse.ArgumentParser:
     bl = sub.add_parser("baseline", help="score active params for a comparable OOS number")
     bl.add_argument("--market")
 
+    rs = sub.add_parser("research", help="read-only lab diagnostic (modeling/research/)")
+    rs.add_argument("name")
+    rs.add_argument("--seasons", default=None)
     sub.add_parser("list", help="every version, per market")
     sub.add_parser("status", help="registry version vs what live scoring stamps")
 
@@ -241,6 +253,7 @@ _COMMANDS = {
     "build": cmd_build, "sweep": cmd_sweep, "train": cmd_train,
     "baseline": cmd_baseline, "list": cmd_list, "show": cmd_show,
     "status": cmd_status, "activate": cmd_activate, "rollback": cmd_rollback,
+    "research": cmd_research,
 }
 
 

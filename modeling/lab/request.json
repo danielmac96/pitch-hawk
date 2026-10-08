@@ -1,7 +1,4 @@
 {
-  "note": "backfill per-player boxscore lines for all stored history",
-  "steps": [
-    ["warehouse", "status"],
-    ["warehouse", "player-box", "--catchup", "2600", "--workers", "8"]
-  ]
+  "note": "probe warehouse shape for the ratings layer",
+  "steps": [["modeling", "research", "probe"]]
 }
