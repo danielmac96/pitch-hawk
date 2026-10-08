@@ -195,7 +195,26 @@ def attach_ratings(pa: pd.DataFrame, *, tune: bool = True,
         [f"r_{c}" for c in range(NC)]].fillna(1.0).to_numpy()
     pa[[f"L_{c}" for c in range(NC)]] = L
     configs["league_tau"] = 365.0
+    # The tables themselves, keyed (id, day), for the game-level datasets
+    # (modeling/games.py) that need a rating on days with no PA row to hang
+    # it on -- a bullpen, a park, a starter's opponents.
+    pen_cfg = configs.get("pen") or R.RatingConfig(
+        tau=configs["pitcher"].tau, k=tuple(4 * v for v in configs["pitcher"].k))
+    configs["pen"] = pen_cfg
+    TABLES.clear()
+    TABLES.update({
+        "league": league,
+        "batter": R.ratings_asof(pa, "batter_id", league, configs["batter"]),
+        "pitcher": R.ratings_asof(pa, "pitcher_id", league, configs["pitcher"]),
+        "park": pk,
+        "pen": bullpen_asof(pa, league, pen_cfg),
+    })
     return pa, configs
+
+
+# Rating tables from the last attach_ratings() call. Module state rather than
+# a third return value so existing callers keep their (pa, configs) shape.
+TABLES: dict[str, pd.DataFrame] = {}
 
 
 def bullpen_asof(pa: pd.DataFrame, league: pd.DataFrame,
@@ -311,6 +330,12 @@ def metrics(p: np.ndarray, y: np.ndarray) -> dict:
     return {k: (round(v, 6) if isinstance(v, float) else v) for k, v in out.items()}
 
 
+# Params of each walk-forward fold, by test season. The game-level models
+# (modeling/markets.py) stack on these so that every season's structural
+# probabilities come from a PA model that never saw that season.
+FOLD_PARAMS: dict[int, dict] = {}
+
+
 def walk_forward(pa: pd.DataFrame, X: np.ndarray, *, C: float = 1.0) -> list[dict]:
     """Fold S trains on FIRST_TRAIN_SEASON..S-1, tests on S."""
     y = pa["y"].to_numpy(int)
@@ -326,6 +351,7 @@ def walk_forward(pa: pd.DataFrame, X: np.ndarray, *, C: float = 1.0) -> list[dic
             continue
         t0 = time.time()
         params = fit(X[tr], y[tr], C=C)
+        FOLD_PARAMS[s] = params
         m = metrics(predict(params, X[te]), y[te])
         m["league_only"] = metrics(L[te], y[te])["logloss"]
         m["log5"] = metrics(log5(rb[te], rp[te], L[te]), y[te])["logloss"]

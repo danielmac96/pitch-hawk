@@ -1,4 +1,4 @@
 {
-  "note": "PA outcome model v1 (with supabase client): tune ratings, walk-forward 2018-2025, 2026 holdout, record",
-  "steps": [["modeling", "pa", "--record"]]
+  "note": "markets v3: PA model + every player/game market, walk-forward, record",
+  "steps": [["modeling", "markets", "--record"]]
 }

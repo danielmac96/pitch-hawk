@@ -208,6 +208,14 @@ def cmd_pa(args) -> int:
     return 0
 
 
+def cmd_markets(args) -> int:
+    """Every player and game market, walk-forward, stacked on the PA model."""
+    from modeling import markets
+
+    markets.run(_store(), record=args.record, C=args.C)
+    return 0
+
+
 def cmd_research(args) -> int:
     """Run a read-only lab diagnostic from modeling/research/."""
     import importlib
@@ -294,6 +302,9 @@ def build_parser() -> argparse.ArgumentParser:
     pa = sub.add_parser("pa", help="PA outcome model: tune ratings, walk-forward, record")
     pa.add_argument("--C", type=float, default=1.0)
     pa.add_argument("--record", action="store_true")
+    mk = sub.add_parser("markets", help="all player/game markets: walk-forward, record")
+    mk.add_argument("--C", type=float, default=1.0)
+    mk.add_argument("--record", action="store_true")
     rs = sub.add_parser("research", help="read-only lab diagnostic (modeling/research/)")
     rs.add_argument("name")
     rs.add_argument("--seasons", default=None)
@@ -315,7 +326,7 @@ _COMMANDS = {
     "build": cmd_build, "sweep": cmd_sweep, "train": cmd_train,
     "baseline": cmd_baseline, "list": cmd_list, "show": cmd_show,
     "status": cmd_status, "activate": cmd_activate, "rollback": cmd_rollback,
-    "research": cmd_research, "pa": cmd_pa,
+    "research": cmd_research, "pa": cmd_pa, "markets": cmd_markets,
 }
 
 

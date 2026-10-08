@@ -290,3 +290,34 @@ def ratings_current(pa: pd.DataFrame, key: str, L_now: np.ndarray,
         out[f"r_{c}"] = r[:, c]
     out["n_eff"] = n
     return out
+
+
+def decayed_mean_asof(df: pd.DataFrame, key: str, value: str, tau: float,
+                      prior: float, k: float) -> pd.DataFrame:
+    """Exclusive decayed mean of `value` per (key, day), shrunk toward `prior`.
+
+    The workload twin of the class rates: a starter's typical outs, pitches
+    and batters faced per start, weighting recent starts most and trusting a
+    short history only as far as k pseudo-starts allow.
+    """
+    tmp = df[[key, "day"]].copy()
+    tmp["y"] = 0
+    w = np.zeros((len(df), NC))
+    w[:, 0] = df[value].to_numpy(float)
+    s = decayed_asof(tmp, key, tau, weights=w)
+    out = s[[key, "day"]].copy()
+    out[f"{value}_mean"] = (s["S_0"].to_numpy() + k * prior) / (s["S_n"].to_numpy() + k)
+    out[f"{value}_n"] = s["S_n"].to_numpy()
+    return out
+
+
+def decayed_mean_current(df: pd.DataFrame, key: str, value: str, tau: float,
+                         prior: float, k: float, at_day: float) -> pd.DataFrame:
+    """Serving twin of decayed_mean_asof."""
+    sub = df[df["day"] < at_day]
+    w = np.exp(-(at_day - sub["day"].to_numpy(float)) / tau)
+    g = pd.DataFrame({key: sub[key].to_numpy(), "wv": w * sub[value].to_numpy(float),
+                      "w": w}).groupby(key).sum().reset_index()
+    g[f"{value}_mean"] = (g["wv"] + k * prior) / (g["w"] + k)
+    g[f"{value}_n"] = g["w"]
+    return g[[key, f"{value}_mean", f"{value}_n"]]

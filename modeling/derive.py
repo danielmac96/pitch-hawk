@@ -112,27 +112,37 @@ def shift_pmf(mu: float, residual_pmf: dict[int, float], lo: int = 0,
     return out / s if s > 0 else out
 
 
-def negbin_failures_pmf(o: int, p_out: float, n_max: int) -> np.ndarray:
-    """P(F = f): non-out PAs before the o-th out, f = 0..n_max."""
-    out = np.zeros(n_max + 1)
-    if o == 0:
-        out[0] = 1.0
-        return out
-    q = 1.0 - p_out
-    # P(F=f) = C(f+o-1, f) p^o q^f, by recurrence for stability.
-    v = p_out ** o
-    for f in range(n_max + 1):
-        out[f] = v
-        v *= q * (f + o) / (f + 1)
-    return out
+# lgamma at the integers 0..255. Every argument in the count tables below is
+# a whole number, so a lookup is exact and keeps a season of starters cheap.
+_LG = np.array([math.lgamma(i) if i > 0 else 0.0 for i in range(256)])
 
 
-def binom_pmf(n: int, p: float) -> np.ndarray:
-    k = np.arange(n + 1)
-    lg = (np.array([math.lgamma(n + 1)] * (n + 1)) - np.vectorize(math.lgamma)(k + 1)
-          - np.vectorize(math.lgamma)(n - k + 1))
+def _lgamma(x: np.ndarray) -> np.ndarray:
+    return _LG[np.asarray(x, float).astype(int)]
+
+
+def binom_table(n_max: int, p: float) -> np.ndarray:
+    """T[n, k] = P(Binomial(n, p) = k), n, k = 0..n_max (zero for k > n)."""
     p = min(max(p, 1e-12), 1 - 1e-12)
-    return np.exp(lg + k * math.log(p) + (n - k) * math.log(1 - p))
+    n = np.arange(n_max + 1)[:, None]
+    k = np.arange(n_max + 1)[None, :]
+    valid = k <= n
+    lg = (_lgamma(n + 1.0) - _lgamma(np.where(valid, k, 0) + 1.0)
+          - _lgamma(np.where(valid, n - k, 0) + 1.0))
+    t = np.exp(lg + k * math.log(p) + np.where(valid, n - k, 0) * math.log(1 - p))
+    return np.where(valid, t, 0.0)
+
+
+def negbin_failures_table(o_max: int, p_out: float, n_max: int) -> np.ndarray:
+    """T[o, f] = P(f non-out PAs before the o-th out), o = 0..o_max."""
+    p_out = min(max(p_out, 1e-9), 1 - 1e-12)
+    o = np.arange(o_max + 1)[:, None].astype(float)
+    f = np.arange(n_max + 1)[None, :].astype(float)
+    lg = _lgamma(f + np.maximum(o, 1.0)) - _lgamma(f + 1.0) - _lgamma(np.maximum(o, 1.0))
+    t = np.exp(lg + o * math.log(p_out) + f * math.log(1 - p_out))
+    t[0, :] = 0.0
+    t[0, 0] = 1.0
+    return t
 
 
 def starter_counts(p_avg: np.ndarray, outs_pmf: np.ndarray,
@@ -142,31 +152,32 @@ def starter_counts(p_avg: np.ndarray, outs_pmf: np.ndarray,
     Given O = o outs: strikeouts ~ Binomial(o, pK/(pK+pOUT)); baserunners F
     ~ NegBin(o, p_out); hits | F ~ Binomial(F, pH/(pH+pBB)). `p_avg` is the
     pitcher's per-PA distribution averaged over the lineup he will face.
+    Written as matrix products so a season of starters scores in seconds;
+    props.ts computes the same sums with loops.
     """
+    o_max = len(outs_pmf) - 1
     pk, pout = float(p_avg[K]), float(p_avg[OUT])
     p_o = pk + pout
     ph = float(p_avg[list(HIT)].sum())
     pbb = float(p_avg[BB])
-    k_pmf = np.zeros(n_max + 1)
-    h_pmf = np.zeros(n_max + 1)
+    w = np.asarray(outs_pmf, float)
+    kt = binom_table(max(o_max, n_max), pk / p_o)[: o_max + 1, : n_max + 1]
+    nb = negbin_failures_table(o_max, p_o, n_max)          # (o, f)
+    f_marg = w @ nb                                          # P(F = f)
+    ht = binom_table(n_max, ph / max(ph + pbb, 1e-12))      # (f, h)
+    h_pmf = f_marg @ ht
+    # BB = F - H: P(BB = j) = sum_f P(F = f) P(H = f - j).
     bb_pmf = np.zeros(n_max + 1)
+    for f_ in range(n_max + 1):
+        if f_marg[f_] > 0:
+            bb_pmf[: f_ + 1] += f_marg[f_] * ht[f_, f_::-1]
     bf_pmf = np.zeros(MAX_BF + 1)
-    share_k = pk / p_o
-    share_h = ph / max(ph + pbb, 1e-12)
-    for o, w in enumerate(outs_pmf):
-        if w <= 0:
-            continue
-        kb = binom_pmf(o, share_k)
-        k_pmf[: len(kb)] += w * kb[: n_max + 1]
-        fail = negbin_failures_pmf(o, p_o, n_max)
-        for f, wf in enumerate(fail):
-            if wf <= 1e-14:
-                continue
-            bf_pmf[min(MAX_BF, o + f)] += w * wf
-            hb = binom_pmf(f, share_h)
-            h_pmf[: f + 1] += w * wf * hb
-            bb_pmf[: f + 1] += w * wf * hb[::-1]
-    return {"k": k_pmf, "h": h_pmf, "bb": bb_pmf, "bf": bf_pmf, "outs": outs_pmf}
+    wn = w[:, None] * nb
+    for o_ in range(o_max + 1):
+        idx = np.minimum(MAX_BF, o_ + np.arange(n_max + 1))
+        np.add.at(bf_pmf, idx, wn[o_])
+    return {"k": w @ kt, "h": h_pmf, "bb": bb_pmf, "bf": bf_pmf,
+            "outs": w}
 
 
 def over_prob(pmf: np.ndarray, line: float) -> float:
@@ -220,10 +231,16 @@ def home_win_prob(home: np.ndarray, away: np.ndarray,
 
 # ── calibration ─────────────────────────────────────────────────────────────
 
-def calibrate(p: float, cal: dict | None) -> float:
-    """Platt-style: sigmoid(a + b * logit(p) + sum w_j x_j). None -> identity."""
+def calibrate(p: float, cal: dict | None, x: dict | None = None) -> float:
+    """sigmoid(a + b * logit(p) + sum_j w_j * x_j). None -> identity.
+
+    `cal["w"]` names extra features (e.g. the batter's expected times on base
+    for H+R+RBI); a name missing from `x` contributes 0, matching props.ts.
+    """
     if not cal:
         return p
     p = min(max(p, 1e-6), 1 - 1e-6)
     z = cal["a"] + cal["b"] * math.log(p / (1 - p))
+    for name, w in (cal.get("w") or {}).items():
+        z += float(w) * float((x or {}).get(name, 0.0))
     return 1.0 / (1.0 + math.exp(-z))
