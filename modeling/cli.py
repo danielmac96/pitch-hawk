@@ -216,6 +216,13 @@ def cmd_markets(args) -> int:
     return 0
 
 
+def cmd_publish_ratings(args) -> int:
+    """Nightly: today's ratings -> Supabase model_ratings (serving inputs)."""
+    from modeling import publish_ratings
+
+    return publish_ratings.main(_store(), dry_run=args.dry_run)
+
+
 def cmd_research(args) -> int:
     """Run a read-only lab diagnostic from modeling/research/."""
     import importlib
@@ -305,6 +312,8 @@ def build_parser() -> argparse.ArgumentParser:
     mk = sub.add_parser("markets", help="all player/game markets: walk-forward, record")
     mk.add_argument("--C", type=float, default=1.0)
     mk.add_argument("--record", action="store_true")
+    pr = sub.add_parser("publish-ratings", help="today's ratings -> model_ratings")
+    pr.add_argument("--dry-run", action="store_true")
     rs = sub.add_parser("research", help="read-only lab diagnostic (modeling/research/)")
     rs.add_argument("name")
     rs.add_argument("--seasons", default=None)
@@ -327,6 +336,7 @@ _COMMANDS = {
     "baseline": cmd_baseline, "list": cmd_list, "show": cmd_show,
     "status": cmd_status, "activate": cmd_activate, "rollback": cmd_rollback,
     "research": cmd_research, "pa": cmd_pa, "markets": cmd_markets,
+    "publish-ratings": cmd_publish_ratings,
 }
 
 

@@ -315,10 +315,22 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           # supabase-py is the publish transport and lives in requirements.txt.
-          pip install -r requirements-warehouse.txt -r requirements.txt
+          # requirements-modeling.txt brings pandas/scikit-learn for the
+          # ratings publish below.
+          pip install -r requirements-warehouse.txt -r requirements.txt -r requirements-modeling.txt
 
       # Each table is staged then swapped in one plpgsql transaction, so a
       # failure here leaves the previous night's aggregates serving rather
       # than a half-written table.
       - name: Build and publish display aggregates
         run: python -m warehouse publish
+
+      # The v3 model inputs: every player's, park's and bullpen's rating as of
+      # today, computed by the same functions training used and with the
+      # hyperparameters of the ACTIVE pa_outcome model. Stage-and-swap like
+      # the aggregates, so a failure serves yesterday's ratings. Non-fatal
+      # until a pa_outcome model is active: it exits non-zero with a message
+      # saying so, and the display aggregates above are already published.
+      - name: Publish model ratings
+        continue-on-error: true
+        run: python -m modeling publish-ratings
