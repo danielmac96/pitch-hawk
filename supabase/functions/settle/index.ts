@@ -435,6 +435,7 @@ async function settleProjections(
     // Every plate appearance in the game, by batter and by pitcher.
     const pa = new Map<number, number>(), hits = new Map<number, number>();
     const homers = new Map<number, number>(), tb = new Map<number, number>();
+    const batterKs = new Map<number, number>();
     const bf = new Map<number, number>(), ks = new Map<number, number>();
     const bbs = new Map<number, number>(), hitsAllowed = new Map<number, number>();
     const bump = (m: Map<number, number>, id: number, n = 1) => m.set(id, (m.get(id) ?? 0) + n);
@@ -444,6 +445,7 @@ async function settleProjections(
         bump(pa, a.batter_id);
         if (a.result === "hit") bump(hits, a.batter_id);
         if (a.result_detail === "home_run") bump(homers, a.batter_id);
+        if (a.result === "strikeout") bump(batterKs, a.batter_id);
         bump(tb, a.batter_id, TB[a.result_detail] ?? 0);
       }
       if (a.pitcher_id != null) {
@@ -479,12 +481,12 @@ async function settleProjections(
         : gradeBase(r.market, r.line == null ? null : Number(r.line), box
           ? {
             official: true,
-            pa: bl?.pa ?? 0, tb: bl?.tb ?? 0, h: bl?.h ?? 0, r: bl?.r ?? 0, rbi: bl?.rbi ?? 0,
+            pa: bl?.pa ?? 0, tb: bl?.tb ?? 0, so: bl?.k ?? 0, h: bl?.h ?? 0, r: bl?.r ?? 0, rbi: bl?.rbi ?? 0,
             bf: pl?.bf ?? 0, k: pl?.k ?? 0, bb: pl?.bb ?? 0, hits: pl?.h ?? 0,
             outs: pl?.outs ?? 0, er: pl?.er ?? 0,
           }
           : {
-            pa: pa.get(id) ?? 0, tb: tb.get(id) ?? 0,
+            pa: pa.get(id) ?? 0, tb: tb.get(id) ?? 0, so: batterKs.get(id) ?? 0,
             bf: bf.get(id) ?? 0, k: ks.get(id) ?? 0, bb: bbs.get(id) ?? 0, hits: hitsAllowed.get(id) ?? 0,
           });
       const { error: uerr } = await db.from("player_game_projections").update({

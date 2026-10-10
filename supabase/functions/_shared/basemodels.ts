@@ -73,6 +73,38 @@ export function poissonOver(line: number, mean: number): number {
 
 const r4 = (v: number) => Math.round(v * 10000) / 10000;
 
+// ── ladders: P(over) at every half-point line ───────────────────────────────
+// The base models' counts are Poisson (starters) and binomial over expected
+// PAs (batters), so every line falls out of the same arithmetic as the one
+// published. Same shape and stopping rule as props.ts ladder().
+export interface Rung { line: number; p_over: number }
+function ladderOf(over: (line: number) => number, floor = 0.005, maxRungs = 10): Rung[] {
+  const out: Rung[] = [];
+  for (let k = 0; k < 40 && out.length < maxRungs; k++) {
+    const p = over(k + 0.5);
+    if (p < floor) break;
+    out.push({ line: k + 0.5, p_over: r4(p) });
+  }
+  return out;
+}
+export function poissonLadder(mean: number, maxRungs = 14): Rung[] {
+  return ladderOf((line) => poissonOver(line, mean), 0.005, maxRungs);
+}
+/** P(Binomial(n, p) > line), mixed over a fractional expected PA count. */
+export function binomLadder(perPa: number, pa: number, maxRungs = 6): Rung[] {
+  const q = Math.min(Math.max(perPa, 0), 1);
+  const over = (line: number) => mixPa(pa, (n) => {
+    let cdf = 0;
+    for (let k = 0; k <= Math.min(n, Math.floor(line)); k++) {
+      let c = 1;
+      for (let j = 0; j < k; j++) c *= (n - j) / (j + 1);
+      cdf += c * Math.pow(q, k) * Math.pow(1 - q, n - k);
+    }
+    return 1 - cdf;
+  });
+  return ladderOf(over, 0.005, maxRungs);
+}
+
 export interface BatterInputs { hitRate: number | null; hrRate: number | null; samplePa: number }
 
 function batterRates(b: BatterInputs, p: ReturnType<typeof P>) {
@@ -121,7 +153,7 @@ export function starterProp(market: StarterMarket, s: StarterInputs, params?: Ba
         : market === "pitcher_outs" ? outs
           : outs * p.er_per_out * baserunners;
   const line = Math.floor(mean) + 0.5;
-  return { line, expected_value: r4(mean), probability: r4(poissonOver(line, mean)) };
+  return { line, expected_value: r4(mean), probability: r4(poissonOver(line, mean)), ladder: poissonLadder(mean) };
 }
 
 // ── live ────────────────────────────────────────────────────────────────────
@@ -183,13 +215,14 @@ export function liveTotal(
 // boxscore can answer void without it, so a market we cannot grade never sits
 // pending (and never trips /health):
 //   batter_tb15                    total bases (box, else at_bats.result_detail)
+//   batter_k                       batter strikeouts (box, else at_bats.result)
 //   batter_hrr                     hits + runs + RBI            (box only)
 //   pitcher_k | pitcher_bb | hits  per pitcher (box, else at_bats.result)
 //   pitcher_outs | pitcher_er      outs recorded, earned runs   (box only)
 // A batter with no plate appearance, or a starter who faced no batter, is
 // void -- a scratch is not a miss.
 export interface BaseGradeInputs {
-  pa?: number; tb?: number;                          // batter
+  pa?: number; tb?: number; so?: number;             // batter (so: strikeouts)
   h?: number; r?: number; rbi?: number;              // batter, box only
   bf?: number; k?: number; bb?: number; hits?: number; // pitcher
   outs?: number; er?: number;                        // pitcher, box only
@@ -204,6 +237,7 @@ export function gradeBase(market: string, line: number | null, x: BaseGradeInput
       : voidRow;
   switch (market) {
     case "batter_tb15": return decide(x.tb ?? 0, x.pa ?? 0, line ?? 1.5);
+    case "batter_k": return decide(x.so ?? 0, x.pa ?? 0, line ?? 0.5);
     case "batter_hrr":
       return x.official ? decide((x.h ?? 0) + (x.r ?? 0) + (x.rbi ?? 0), x.pa ?? 0, line ?? 0.5) : voidRow;
     case "pitcher_k": return decide(x.k ?? 0, x.bf ?? 0, line ?? 0);

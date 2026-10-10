@@ -12,7 +12,7 @@
 
 import { assert } from "jsr:@std/assert@1";
 import {
-  batterDists, batterMarkets, batterValue, type Bundle, gameMarkets, paDist,
+  batterDists, batterLadders, batterMarkets, batterValue, type Bundle, gameMarkets, paDist,
   paPmf, starterMarkets, teamMu, workload,
 } from "../_shared/props.ts";
 
@@ -98,6 +98,7 @@ function compute() {
     });
     const teamValue = batters.reduce((a, v) => a + v.value, 0);
     const bm = batterMarkets(b, batters[2].d, batters[2].pmf, 3, teamValue);
+    const bl = batterLadders(b, batters[2].d, batters[2].pmf);
     const sm = starterMarkets(b, { sp_r: spR, sp_hand: spHand, lineup, batting_home: isHome, pk, L,
                                    outs_pmf: wl.outs, bf_pmf: wl.bf });
     const muH = teamMu(b, { value: teamValue, is_home: true, temp_c: 10 * (rnd() - 0.5), wind_out: 6 * (rnd() - 0.5) });
@@ -109,6 +110,7 @@ function compute() {
                 mu_inputs: [muH, muA] },
       outputs: { pa_dist: one, outs_pmf: wl.outs, bf_pmf: wl.bf, team_value: teamValue,
                  batter3: { hit: bm.batter_hit, hr: bm.batter_hr, tb15: bm.batter_tb15, hrr: bm.batter_hrr },
+                 batter3_ladders: bl.ladders, batter3_e_k: bl.e_k,
                  starter: sm, mu_home: muH, mu_away: muA, game: gm },
     });
   }

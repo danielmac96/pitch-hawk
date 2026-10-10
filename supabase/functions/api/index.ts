@@ -683,7 +683,7 @@ async function projections(url: URL): Promise<Response> {
   const date = parseDate(url.searchParams.get("date")) ?? (await resolveSlate(svc())).date;
   const market = url.searchParams.get("market");
   const valid = [
-    "batter_hit", "batter_hr", "batter_tb15", "batter_hrr",
+    "batter_hit", "batter_hr", "batter_tb15", "batter_hrr", "batter_k",
     "pitcher_k", "pitcher_bb", "pitcher_hits", "pitcher_outs", "pitcher_er",
   ];
   if (market && !valid.includes(market)) {
@@ -700,7 +700,7 @@ async function projections(url: URL): Promise<Response> {
     .select("game_pk,player_id,market,team_id,opponent_id,is_home," +
             "lineup_slot,opposing_pitcher_id,probability,per_pa_probability," +
             "expected_pa,model_version,book,updated_at," +
-            "result,actual_count,plate_appearances,role,line,expected_value")
+            "result,actual_count,plate_appearances,role,line,expected_value,ladder")
     .eq("official_date", date);
   if (market) q = q.eq("market", market);
   if (role) q = q.eq("role", role);
@@ -751,6 +751,9 @@ async function projections(url: URL): Promise<Response> {
       role: r.role ?? "batter",
       line: r.line != null ? Number(r.line) : null,
       expected_value: r.expected_value != null ? Number(r.expected_value) : null,
+      // P(over) at every half-point line ([{line, p_over}]); null on rows
+      // written before ladders existed or by a writer with no distribution.
+      ladder: Array.isArray(r.ladder) ? r.ladder : null,
       // 30-day per-PA form from the rolling-stats tables the live scorer
       // reads: the player's own, and for a batter, the opposing starter's
       // rates allowed. null when the player has no row (too few PAs).

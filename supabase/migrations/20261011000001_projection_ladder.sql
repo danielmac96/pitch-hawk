@@ -1,0 +1,16 @@
+-- Every half-point line of a projection's count distribution.
+--
+-- A projection row publishes one line (`line`, `probability`): 1+ hit, TB
+-- 1.5, a starter's median K line. The model already holds the whole count
+-- distribution behind that number, so the other lines a book or pick'em app
+-- posts (2+ hits, 7+ Ks, outs 17.5) cost nothing to publish:
+--
+--     ladder = [{"line": 0.5, "p_over": 0.71}, {"line": 1.5, "p_over": 0.33}, ...]
+--
+-- P(count > line), non-increasing, calibrated with the market's calibrator.
+-- `line`/`probability` stay the graded, published read; any rung grades from
+-- `actual_count` (`actual_count > line`), so settle needs no change.
+--
+-- batter_k (batter strikeouts, from the same PA-outcome distribution) is a
+-- new market value in this table; there is no market check constraint.
+alter table player_game_projections add column if not exists ladder jsonb;
