@@ -1,0 +1,766 @@
+{
+ "cohort": "c07-mobile-first",
+ "cohort_summary": "Ten phone-only bettors drove Pitch Hawk at 375x667, 390x844, 430x932 and 360x800. The phone basics work: a fixed bottom tab bar with safe-area padding, no horizontal page overflow, working hash deep-links, and a short onboarding. Game cards on Home are the most phone-friendly part. The main mobile problem is density. On a 375x667 screen the first prediction row starts ~500px down, each row is ~190px, and names truncate to 70\u201385px. Most tap targets are 40px, and Home pill toggles are 18px tall. One-handed users mis-tap the star next to the name. Offline handling is risky for live use: the 'Feed unreachable' banner scrolls away, and the sticky header keeps saying 'auto-refreshing'. As in every cohort, the missing sportsbook price on props means every 'pick' ends with switching to a book app. The watchlist saves a player rather than a pick, and there is no way to track a pick. Average time from open to a first usable read was ~55s; only the game-market persona fully succeeded.",
+ "personas": [
+  {
+   "name": "Marcus Bell",
+   "profile": "Pro, 9 yrs; $40k roll, $400 units; DK, FD, Circa, Pinnacle (for reference); props-first, tracks CLV in a sheet",
+   "device": "phone",
+   "goal": "Ballpark (Fenway), iPhone SE 375x667, one hand holding a beer: find a 1+ Hit prop for the BOS-NYY game priced better than fair, before the 3rd inning.",
+   "journey": [
+    "Opens app; Home fold is slate meta and the 'New here?' explainer, so he taps 'Got it'.",
+    "Taps Predictions in the bottom bar (good thumb reach). Row #1 is at the bottom of the screen and he has to scroll.",
+    "Filters \u25be \u2192 All teams \u25be \u2192 picks BOS. The filter sheet pushes the list off-screen, so he closes it and scrolls again.",
+    "Scans rows: names truncated ('Julio Rodri\u2026'); P 74%, league 65%, +9 pts; no price.",
+    "Switches to DK, finds Rodriguez 1+ Hit -250 (71.4% imp), and does the math in his head: thin edge.",
+    "Back in Pitch Hawk the poll has re-rendered; he re-finds his row and stars it. The watch pill later shows his HR read instead.",
+    "Bets in DK. Logs CLV in his own sheet, because the app has nowhere to record it."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 55,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Nice model, but a number with no price next to it is homework, not a pick \u2014 and at Fenway I don't have hands for homework.",
+   "pain_points": [
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob or edge on any prop row",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Every row shows model % vs league %. With no line or price, the user has to switch to a book app, find the market, convert odds to implied probability by hand and compare. One-handed on a phone that round trip is the whole session.",
+     "evidence": "375_pred_fold.png; frontend/pitchhawk.js:1189-1206 (batter row has P, league, lift, why; no price)",
+     "suggested_fix": "Add a compact 'Book -150 \u00b7 imp 60% \u00b7 edge +6' line under P() on each row, with the best book first; sort by edge."
+    },
+    {
+     "id": "first-pick-below-fold-on-small-phones",
+     "title": "At 375x667 the first prediction row starts ~500px down; less than one row is visible",
+     "area": "mobile",
+     "severity": 4,
+     "detail": "The page title, a 2-line description, the Pregame/Live segment plus Filters, the market chips, the MODEL RECORD bar, the section title, a 2-line live-mode note and the sort chips all come before row #1. Row #1 starts at y\u2248498 at 375x667 and 524 at 360x800, and the fixed tab bar covers its bottom. When a pin exists, the WATCHING strip pushes it down another ~65px.",
+     "evidence": "work/c07-mobile-first/375_pred_fold.png, 375_starters.png; results2.json firstRowY=498",
+     "suggested_fix": "On phones, collapse the description and live-mode note into a single (i), move MODEL RECORD below the list or into the Guide, and merge sort into the Filters sheet. Aim for row #1 above 250px."
+    },
+    {
+     "id": "player-name-truncated-on-small-phones",
+     "title": "Player names truncate to 70\u201385px at 360/375 wide",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "'Gunnar Alva\u2026', 'Fernando Ro\u2026', 'Yordan Deve\u2026'. The matchup subline truncates too ('PHI @ A\u2026', 'NYM @ WSH 9:1\u2026'), which hides the first-pitch time. Team, slot and the 'pending' badge take the width the name needs. Common surnames (two Mookie Freemans, two Rodriguezes) become hard to tell apart.",
+     "evidence": "results.json trunc at 375/360: 'Gunnar Alvarez [85/92]', 'Fernando Alvarez-Longname [85/169]'; 375_pred_fold.png",
+     "suggested_fix": "Put the name on its own full-width line, move team/#slot to the subline, and drop the 'pending' badge on phones because it repeats on every row."
+    },
+    {
+     "id": "watchlist-pins-player-not-pick",
+     "title": "Starring a 1+ Hit row saves the player; the watch pill then shows his 1+ HR read",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "Starred Gunnar Alvarez from the 1+ Hit board and the WATCHING pill showed 'G. Alvarez 1+ HR 20% +8.5 pts'. The pin key is the batter, and the pill shows whichever market has the stronger lift. Tapping the pill opens the Home game pill, not the row that was starred. The user loses the pick they meant to save.",
+     "evidence": "frontend/pitchhawk.js:806-812 (m chosen by hr.rel > hit.rel), 418-426 watchGo",
+     "suggested_fix": "Pin player+market (key b:<id>:<m>) and have the pill deep-link back to that row with it expanded."
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a pick with price/stake, or to track CLV",
+     "area": "other",
+     "severity": 4,
+     "detail": "The star is the only 'save' action. It records no price, stake or time, there is no 'my picks' view, and nothing is graded against the close. Pros can't measure CLV, and amateurs can't see their record.",
+     "evidence": "pin handler frontend/pitchhawk.js:415",
+     "suggested_fix": "Add 'Track pick' in the expanded row that captures market, model %, book price (manual entry OK) and units, plus a My Picks tab graded after the final."
+    },
+    {
+     "id": "tap-targets-below-44px",
+     "title": "Most controls are 40x40, and Home game-pill headers are 18px tall",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "At 375, 93 of 98 interactive elements on Predictions are under 44px: star 40x40, row chevron 40x40, and the player-name expand button 142x33. On Home, the game-pill toggles (e.g. 'LAD @ SD') are 97x18. The star sits right next to the name/expand button, so one-handed use mis-taps a lot: people star when they meant to expand, and the reverse.",
+     "evidence": "results.json tapPred/tapHome; frontend/pitchhawk.css:1216-1219 (min 40px), pitchhawk.js:2298",
+     "suggested_fix": "Raise the minimum to 44px (iOS HIG) and 48dp (Android). Make the whole row card the expand target, and give the star an 8px dead zone."
+    },
+    {
+     "id": "tap-lost-during-8s-rerender",
+     "title": "8-second poll re-render detaches elements mid-interaction",
+     "area": "performance",
+     "severity": 2,
+     "detail": "During scripted taps, the Filters button detached between open and close because the whole view re-rendered. A real thumb tap landing during a poll re-render can be dropped or land on a shifted element, which is worse on slow phones.",
+     "evidence": "drive.js run 1 error 'Element is not attached to the DOM' after Filters tap; polls every 8s (pitchhawk.js:1975)",
+     "suggested_fix": "Diff-update the list instead of re-rendering wholesale, and defer the re-render while a touch is active or a sheet is open."
+    }
+   ],
+   "delights": [
+    "Bottom tab bar is easy to reach with a thumb and respects the home-indicator safe area",
+    "WHY line ('30d H/PA .216 (82 PA) \u00b7 Devers allows .232') is a fast sanity check"
+   ]
+  },
+  {
+   "name": "Tasha Okafor",
+   "profile": "Amateur, 2 yrs; $500 roll, $10 units; FanDuel, Fanatics; HR longshots and same-game parlays",
+   "device": "phone",
+   "goal": "At a sports bar on a Galaxy S23 (360x800): find two HR props for tonight's upcoming games to build a +odds SGP.",
+   "journey": [
+    "Opens to Home; spots 'Alonso 1+ HR 23%' on the TOR @ CLE pill; promising.",
+    "Taps Predictions \u2192 swipes the market chips \u2192 1+ HR. Ranked by lift, not by probability.",
+    "Wants upcoming only: opens Filters, taps Upcoming. 'Final' is hidden off the right edge and she doesn't notice more chips.",
+    "Names truncated to ~70px ('Yordan Deve\u2026'). She expands a row to read the full name, and the expansion pushes everything down.",
+    "Has no idea whether 23% is good at +350 (22% implied). Asks a friend.",
+    "Stars two players; can't build or save a parlay. Goes to FanDuel."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 70,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "I liked seeing who's hot for HRs, but I had to open FanDuel to know if any of it was worth it.",
+   "pain_points": [
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob or edge on any prop row",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Every row shows model % vs league %. With no line or price, the user has to switch to a book app, find the market, convert odds to implied probability by hand and compare. One-handed on a phone that round trip is the whole session.",
+     "evidence": "375_pred_fold.png; frontend/pitchhawk.js:1189-1206 (batter row has P, league, lift, why; no price)",
+     "suggested_fix": "Add a compact 'Book -150 \u00b7 imp 60% \u00b7 edge +6' line under P() on each row, with the best book first; sort by edge."
+    },
+    {
+     "id": "player-name-truncated-on-small-phones",
+     "title": "Player names truncate to 70\u201385px at 360/375 wide",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "'Gunnar Alva\u2026', 'Fernando Ro\u2026', 'Yordan Deve\u2026'. The matchup subline truncates too ('PHI @ A\u2026', 'NYM @ WSH 9:1\u2026'), which hides the first-pitch time. Team, slot and the 'pending' badge take the width the name needs. Common surnames (two Mookie Freemans, two Rodriguezes) become hard to tell apart.",
+     "evidence": "results.json trunc at 375/360: 'Gunnar Alvarez [85/92]', 'Fernando Alvarez-Longname [85/169]'; 375_pred_fold.png",
+     "suggested_fix": "Put the name on its own full-width line, move team/#slot to the subline, and drop the 'pending' badge on phones because it repeats on every row."
+    },
+    {
+     "id": "filter-bar-clips-at-375",
+     "title": "Results count, min-lift value and later chips are clipped off the right edge",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "At 375, the '126 results' count and the slider's 'any' label are cut off at the right edge. The Starters chip (the only route to Ks/Outs) and the 'Final' status chip are off-screen in a horizontal scroller with no visible affordance.",
+     "evidence": "work/c07-mobile-first/375_pred_fold.png, 375_filters.png; frontend/pitchhawk.js:984,994",
+     "suggested_fix": "Wrap the filter bar onto two lines on phones. Show the count under the title. Add a fade or arrow at the scroller edge, or put markets in a 2x3 grid."
+    },
+    {
+     "id": "first-pick-below-fold-on-small-phones",
+     "title": "At 375x667 the first prediction row starts ~500px down; less than one row is visible",
+     "area": "mobile",
+     "severity": 4,
+     "detail": "The page title, a 2-line description, the Pregame/Live segment plus Filters, the market chips, the MODEL RECORD bar, the section title, a 2-line live-mode note and the sort chips all come before row #1. Row #1 starts at y\u2248498 at 375x667 and 524 at 360x800, and the fixed tab bar covers its bottom. When a pin exists, the WATCHING strip pushes it down another ~65px.",
+     "evidence": "work/c07-mobile-first/375_pred_fold.png, 375_starters.png; results2.json firstRowY=498",
+     "suggested_fix": "On phones, collapse the description and live-mode note into a single (i), move MODEL RECORD below the list or into the Guide, and merge sort into the Filters sheet. Aim for row #1 above 250px."
+    },
+    {
+     "id": "no-parlay-or-correlation-view",
+     "title": "No way to combine picks or see correlation for SGPs",
+     "area": "predictions",
+     "severity": 2,
+     "detail": "Amateurs build SGPs. The app shows independent probabilities with no joint probability, so two HR picks in the same game can't be evaluated together.",
+     "evidence": "Predictions board; pin-only save",
+     "suggested_fix": "Add a 'combine' tray that multiplies independent probabilities, flags same-game correlation, and shows fair parlay odds."
+    }
+   ],
+   "delights": [
+    "1+ HR chip is one tap away",
+    "Home pills show a 'READ' (e.g. Alonso 1+ HR 23%) per game, a fast hook"
+   ]
+  },
+  {
+   "name": "Diego Ramirez",
+   "profile": "Pro, live specialist; $15k roll, $150 units; BetMGM, Caesars, bet365 live",
+   "device": "phone",
+   "goal": "On a crowded subway with an iPhone 15 (390x844), spotty LTE: follow live at-bat calls in PHI @ ATL and fire in-play when the model leans hard.",
+   "journey": [
+    "Opens to Home \u2192 'TOP CALL NOW' card: In Play 20%, league 19%. Taps it and lands on Live Markets.",
+    "Live view defaults to NYY @ BOS 'top call'. He swipes the liveSel chips to PHI @ ATL.",
+    "Next pitch / at-bat outcome / velo calls stack vertically and he scrolls to see the outcome probabilities.",
+    "The train goes into a tunnel. Scrolled down, the header still says 'auto-refreshing' with a green dot; the numbers are frozen and he doesn't know.",
+    "Back online, the banner lingers. He's lost two at-bats and can't tell which call is current.",
+    "No live book price to compare, so he can't act inside the 20s window."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 35,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "If I can't tell the feed died, I can't trust a single live number \u2014 that's disqualifying for in-play.",
+   "pain_points": [
+    {
+     "id": "no-offline-indicator-when-scrolled",
+     "title": "Offline state is easy to miss: header still says 'auto-refreshing' and the banner scrolls away",
+     "area": "performance",
+     "severity": 4,
+     "detail": "With the network off for 20s, a 'Feed unreachable' banner rendered in the page flow at the top. Scrolled into the list, nothing shows it, and the sticky header kept saying '3 games live \u00b7 auto-refreshing' with a green dot. Ten seconds after reconnecting, the banner was still present. A ballpark user on bad LTE can act on frozen live numbers without knowing.",
+     "evidence": "work/c07-mobile-first/offline_scrolled.png; frontend/pitchhawk.js:834-845, 4601-4607; copy.js:21",
+     "suggested_fix": "Put connection state in the sticky header (amber 'offline \u00b7 last 5:22:16'). Grey out live percentages after one missed poll. Retry right away on the window 'online' event."
+    },
+    {
+     "id": "live-view-long-vertical-scroll",
+     "title": "Live Markets is a ~2,500px stack; the next-pitch call and the at-bat outcome need several thumb swipes",
+     "area": "live",
+     "severity": 2,
+     "detail": "The top call card shows next pitch, the at-bat outcome, velo and pitch-count calls stacked vertically. To switch games you scroll to the 'Other live games' cards at the bottom or use the small liveSel chips at the top. Between pitches (~20s) that is slow.",
+     "evidence": "375_live.png; results.json liveH=2524",
+     "suggested_fix": "Pin the game switcher chips under the header while on Live, and collapse secondary calls (velo, pitch count) behind a tap."
+    },
+    {
+     "id": "tap-lost-during-8s-rerender",
+     "title": "8-second poll re-render detaches elements mid-interaction",
+     "area": "performance",
+     "severity": 2,
+     "detail": "During scripted taps, the Filters button detached between open and close because the whole view re-rendered. A real thumb tap landing during a poll re-render can be dropped or land on a shifted element, which is worse on slow phones.",
+     "evidence": "drive.js run 1 error 'Element is not attached to the DOM' after Filters tap; polls every 8s (pitchhawk.js:1975)",
+     "suggested_fix": "Diff-update the list instead of re-rendering wholesale, and defer the re-render while a touch is active or a sheet is open."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob or edge on any prop row",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Every row shows model % vs league %. With no line or price, the user has to switch to a book app, find the market, convert odds to implied probability by hand and compare. One-handed on a phone that round trip is the whole session.",
+     "evidence": "375_pred_fold.png; frontend/pitchhawk.js:1189-1206 (batter row has P, league, lift, why; no price)",
+     "suggested_fix": "Add a compact 'Book -150 \u00b7 imp 60% \u00b7 edge +6' line under P() on each row, with the best book first; sort by edge."
+    },
+    {
+     "id": "tap-targets-below-44px",
+     "title": "Most controls are 40x40, and Home game-pill headers are 18px tall",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "At 375, 93 of 98 interactive elements on Predictions are under 44px: star 40x40, row chevron 40x40, and the player-name expand button 142x33. On Home, the game-pill toggles (e.g. 'LAD @ SD') are 97x18. The star sits right next to the name/expand button, so one-handed use mis-taps a lot: people star when they meant to expand, and the reverse.",
+     "evidence": "results.json tapPred/tapHome; frontend/pitchhawk.css:1216-1219 (min 40px), pitchhawk.js:2298",
+     "suggested_fix": "Raise the minimum to 44px (iOS HIG) and 48dp (Android). Make the whole row card the expand target, and give the star an 8px dead zone."
+    }
+   ],
+   "delights": [
+    "Next-pitch and at-bat outcome probabilities with league baseline are novel",
+    "Score/inning/count summary at top of the live card is compact"
+   ]
+  },
+  {
+   "name": "Priya Nair",
+   "profile": "Amateur, 1 yr; $200 roll, $5 units; DraftKings; fantasy player crossing over; pitcher Ks",
+   "device": "phone",
+   "goal": "Commuting on a Pixel 7a (~412 wide, tested at 430x932): find tonight's best strikeout over.",
+   "journey": [
+    "Opens Predictions; sees 1+ Hit / HR / HRR / Win prob / Totals. No 'Ks' chip in view.",
+    "Tries Search for 'strikeouts'. Search covers player or team only.",
+    "Opens Guide (?), learns 'Starters', swipes the chip row and finds it.",
+    "Starter card: 'STRIKEOUTS O 5.5 BASE 46% over \u00b7 exp 4.7'. Unsure whether 'BASE' means a book line or a model baseline.",
+    "Copy says 'props reserved until modeled'. She doesn't know whether to trust it, and gives up."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 120,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "I came for K props and spent two minutes just finding them, then couldn't tell if 5.5 was a real line.",
+   "pain_points": [
+    {
+     "id": "ks-buried-behind-starters-chip",
+     "title": "Pitcher K lines are reachable only through an off-screen 'Starters' chip; deep link m=so doesn't work",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "A K bettor has to know to swipe the market chips left to find 'Starters'. '#/pred?m=so' silently falls back to the default market. Starter cards say 'props reserved until modeled' and show 'O 5.5 BASE 46% over', which reads as a line but has no price.",
+     "evidence": "375_starters.png; results2.json soHash; frontend/pitchhawk.js:1298-1312",
+     "suggested_fix": "Add a 'Pitcher Ks' chip as the first visible market for pitcher-prop users, and support m=k / m=so aliases."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob or edge on any prop row",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Every row shows model % vs league %. With no line or price, the user has to switch to a book app, find the market, convert odds to implied probability by hand and compare. One-handed on a phone that round trip is the whole session.",
+     "evidence": "375_pred_fold.png; frontend/pitchhawk.js:1189-1206 (batter row has P, league, lift, why; no price)",
+     "suggested_fix": "Add a compact 'Book -150 \u00b7 imp 60% \u00b7 edge +6' line under P() on each row, with the best book first; sort by edge."
+    },
+    {
+     "id": "filter-bar-clips-at-375",
+     "title": "Results count, min-lift value and later chips are clipped off the right edge",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "At 375, the '126 results' count and the slider's 'any' label are cut off at the right edge. The Starters chip (the only route to Ks/Outs) and the 'Final' status chip are off-screen in a horizontal scroller with no visible affordance.",
+     "evidence": "work/c07-mobile-first/375_pred_fold.png, 375_filters.png; frontend/pitchhawk.js:984,994",
+     "suggested_fix": "Wrap the filter bar onto two lines on phones. Show the count under the title. Add a fade or arrow at the scroller edge, or put markets in a 2x3 grid."
+    },
+    {
+     "id": "base-line-label-ambiguous",
+     "title": "'BASE' badge on K/Outs lines is ambiguous (book line vs model baseline)",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "'O 5.5 BASE' reads like a sportsbook line but has no price, and 'props reserved until modeled' adds to the confusion about whether the number is real.",
+     "evidence": "375_starters.png",
+     "suggested_fix": "Label it 'Model line (no book)', or show the actual book line and price once ingested."
+    }
+   ],
+   "delights": [
+    "Expected Ks (exp 4.7) next to the line is a useful number",
+    "Guide overlay is reachable from the header"
+   ]
+  },
+  {
+   "name": "Jamal Whitfield",
+   "profile": "Pro, ex-trader; $100k roll, $1k units; Pinnacle-style shops plus 6 US books via odds screen; HRR and totals",
+   "device": "phone",
+   "goal": "iPhone 15 Pro Max (430x932) in an Uber: spot-check whether the model's top HRR leans disagree with his own numbers before lineups lock.",
+   "journey": [
+    "Deep-links #/pred?m=hrr&sort=prob-&lineup=1. The hash routing works, which he likes.",
+    "Wide screen: names mostly untruncated; scrolls 25 rows quickly.",
+    "Wants to sort by disagreement with market. Not possible: lift vs league only.",
+    "Checks MODEL RECORD bar: 'Hit 37%/62%' \u2014 model said 62% and hit 37% on the day. Asks what the calibration is over 30+ days. Not shown on mobile.",
+    "Exports CSV (inside Filters) to reconcile on his laptop later. Files on a phone are awkward."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 30,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Hash deep-links are great; a 'model record' showing 37% realised vs 62% predicted with no context makes me trust it less, not more.",
+   "pain_points": [
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking is lift over league, not edge over market",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "The default sort puts the highest lift first, but lift is not value. Sharp users stop trusting the order straight away.",
+     "evidence": "Predictions header copy 'ranked by lift over the league rate'",
+     "suggested_fix": "Default to edge-vs-book once odds exist. Until then, relabel the sort as 'Model lean' and say plainly that it is not edge."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob or edge on any prop row",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Every row shows model % vs league %. With no line or price, the user has to switch to a book app, find the market, convert odds to implied probability by hand and compare. One-handed on a phone that round trip is the whole session.",
+     "evidence": "375_pred_fold.png; frontend/pitchhawk.js:1189-1206 (batter row has P, league, lift, why; no price)",
+     "suggested_fix": "Add a compact 'Book -150 \u00b7 imp 60% \u00b7 edge +6' line under P() on each row, with the best book first; sort by edge."
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a pick with price/stake, or to track CLV",
+     "area": "other",
+     "severity": 4,
+     "detail": "The star is the only 'save' action. It records no price, stake or time, there is no 'my picks' view, and nothing is graded against the close. Pros can't measure CLV, and amateurs can't see their record.",
+     "evidence": "pin handler frontend/pitchhawk.js:415",
+     "suggested_fix": "Add 'Track pick' in the expanded row that captures market, model %, book price (manual entry OK) and units, plus a My Picks tab graded after the final."
+    },
+    {
+     "id": "calibration-record-unexplained-on-phone",
+     "title": "Model record bar shows a single-day miss with no sample size or longer window",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "'Hit 37%/62%' at the top of the board, next to the picks, reads as 'the model is badly overconfident' with no n, no window and no reliability curve.",
+     "evidence": "375_pred_fold.png MODEL RECORD \u00b7 7 DAYS",
+     "suggested_fix": "Show n, the window and a mini calibration chart. Move it out of the path to the first pick on phones."
+    }
+   ],
+   "delights": [
+    "URL-encoded filters (#/pred?m=hrr&lineup=1&sort=prob-) make bookmarks and home-screen shortcuts possible",
+    "Lineup confirmed filter"
+   ]
+  },
+  {
+   "name": "Sofia Castellano",
+   "profile": "Amateur, casual; $100 roll, $5 units; ESPN Bet; bets her home team; Ks and HR",
+   "device": "phone",
+   "goal": "iPhone SE (375x667) at the ballpark: one bet on her team's starter or slugger tonight, in under a minute.",
+   "journey": [
+    "Opens app. Home fold: no picks visible; the live card rail is cut off at the bottom.",
+    "Uses Search \u2192 types 'NYY' \u2192 lands on game context.",
+    "Taps a Home pill toggle ('NYY @ BOS', 18px tall). Misses twice and hits the star by accident.",
+    "Finds 'Judge 1+ HR 23%'. Doesn't know what 'lift +10.4 pts' means in money terms.",
+    "Bets based on the 23%, without a price comparison."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 60,
+   "would_return": "yes",
+   "nps_0_10": 7,
+   "quote": "Once I found Judge it was clear, but my thumb kept hitting the star instead of the game.",
+   "pain_points": [
+    {
+     "id": "tap-targets-below-44px",
+     "title": "Most controls are 40x40, and Home game-pill headers are 18px tall",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "At 375, 93 of 98 interactive elements on Predictions are under 44px: star 40x40, row chevron 40x40, and the player-name expand button 142x33. On Home, the game-pill toggles (e.g. 'LAD @ SD') are 97x18. The star sits right next to the name/expand button, so one-handed use mis-taps a lot: people star when they meant to expand, and the reverse.",
+     "evidence": "results.json tapPred/tapHome; frontend/pitchhawk.css:1216-1219 (min 40px), pitchhawk.js:2298",
+     "suggested_fix": "Raise the minimum to 44px (iOS HIG) and 48dp (Android). Make the whole row card the expand target, and give the star an 8px dead zone."
+    },
+    {
+     "id": "home-fold-no-picks-on-small-phones",
+     "title": "Home's first screen at 375x667 is slate meta and onboarding; the first live card is cut at the bottom",
+     "area": "home",
+     "severity": 3,
+     "detail": "Above the fold: title, date/tz, the RANK READS segment, the slate counts box and the 'New here?' explainer. The LIVE DECISIONS cards start at y\u2248530, and the cards scroll sideways, past the screen edge. No actual pick shows until you scroll or swipe.",
+     "evidence": "work/c07-mobile-first/375_home_fold.png",
+     "suggested_fix": "After first dismissal, collapse the slate meta into one line. Put the 'Top pick now' card first, and make the card rail snap with a 2-of-N indicator."
+    },
+    {
+     "id": "player-name-truncated-on-small-phones",
+     "title": "Player names truncate to 70\u201385px at 360/375 wide",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "'Gunnar Alva\u2026', 'Fernando Ro\u2026', 'Yordan Deve\u2026'. The matchup subline truncates too ('PHI @ A\u2026', 'NYM @ WSH 9:1\u2026'), which hides the first-pitch time. Team, slot and the 'pending' badge take the width the name needs. Common surnames (two Mookie Freemans, two Rodriguezes) become hard to tell apart.",
+     "evidence": "results.json trunc at 375/360: 'Gunnar Alvarez [85/92]', 'Fernando Alvarez-Longname [85/169]'; 375_pred_fold.png",
+     "suggested_fix": "Put the name on its own full-width line, move team/#slot to the subline, and drop the 'pending' badge on phones because it repeats on every row."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob or edge on any prop row",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Every row shows model % vs league %. With no line or price, the user has to switch to a book app, find the market, convert odds to implied probability by hand and compare. One-handed on a phone that round trip is the whole session.",
+     "evidence": "375_pred_fold.png; frontend/pitchhawk.js:1189-1206 (batter row has P, league, lift, why; no price)",
+     "suggested_fix": "Add a compact 'Book -150 \u00b7 imp 60% \u00b7 edge +6' line under P() on each row, with the best book first; sort by edge."
+    }
+   ],
+   "delights": [
+    "Search finds players and teams quickly",
+    "'New here?' explainer is short and dismissible"
+   ]
+  },
+  {
+   "name": "Kenji Watanabe",
+   "profile": "Pro-lite, 4 yrs; $5k roll, $50 units; FanDuel, DK, Caesars; 1+ Hit volume grinder",
+   "device": "phone",
+   "goal": "Lunch break on a Galaxy A54 (360x800): shortlist 5 hit props across the slate to bet before first pitch.",
+   "journey": [
+    "Predictions \u2192 1+ Hit default (good). Pregame/Live toggle is set to Live because games are in progress, which reorders the list. He flips to Pregame.",
+    "Each row is ~190px, so 4 rows per screen. Scrolls 25 rows, then 'Show all 126'.",
+    "Stars 5 players. WATCHING strip appears above Predictions and pushes the list down.",
+    "Two of his stars show '1+ HR' in the watch pills even though he picked them for hits.",
+    "Has no list view of the shortlist with probabilities. Screenshots the rows instead."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 45,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Give me a dense list mode and a real 'my picks' tray and I'd live in this app.",
+   "pain_points": [
+    {
+     "id": "prediction-rows-too-tall-on-phone",
+     "title": "Each prop row is ~190px tall, so a 667 viewport shows 2.5 picks",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Rows stack P(), league, bar, per-PA/xPA, lift, multiplier and the WHY line. The top 25 are a ~5,500px scroll, and 'Show all 36/126' sits at the bottom. Comparing picks 3 and 12 means scrolling back and forth with one thumb.",
+     "evidence": "pageHeightPred=5480 at 375; 375_bottom.png",
+     "suggested_fix": "Offer a dense 1-line row on phones (name \u00b7 team \u00b7 P \u00b7 lift \u00b7 price) and keep the extra detail behind a tap. Persist that choice in localStorage."
+    },
+    {
+     "id": "watchlist-pins-player-not-pick",
+     "title": "Starring a 1+ Hit row saves the player; the watch pill then shows his 1+ HR read",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "Starred Gunnar Alvarez from the 1+ Hit board and the WATCHING pill showed 'G. Alvarez 1+ HR 20% +8.5 pts'. The pin key is the batter, and the pill shows whichever market has the stronger lift. Tapping the pill opens the Home game pill, not the row that was starred. The user loses the pick they meant to save.",
+     "evidence": "frontend/pitchhawk.js:806-812 (m chosen by hr.rel > hit.rel), 418-426 watchGo",
+     "suggested_fix": "Pin player+market (key b:<id>:<m>) and have the pill deep-link back to that row with it expanded."
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a pick with price/stake, or to track CLV",
+     "area": "other",
+     "severity": 4,
+     "detail": "The star is the only 'save' action. It records no price, stake or time, there is no 'my picks' view, and nothing is graded against the close. Pros can't measure CLV, and amateurs can't see their record.",
+     "evidence": "pin handler frontend/pitchhawk.js:415",
+     "suggested_fix": "Add 'Track pick' in the expanded row that captures market, model %, book price (manual entry OK) and units, plus a My Picks tab graded after the final."
+    },
+    {
+     "id": "first-pick-below-fold-on-small-phones",
+     "title": "At 375x667 the first prediction row starts ~500px down; less than one row is visible",
+     "area": "mobile",
+     "severity": 4,
+     "detail": "The page title, a 2-line description, the Pregame/Live segment plus Filters, the market chips, the MODEL RECORD bar, the section title, a 2-line live-mode note and the sort chips all come before row #1. Row #1 starts at y\u2248498 at 375x667 and 524 at 360x800, and the fixed tab bar covers its bottom. When a pin exists, the WATCHING strip pushes it down another ~65px.",
+     "evidence": "work/c07-mobile-first/375_pred_fold.png, 375_starters.png; results2.json firstRowY=498",
+     "suggested_fix": "On phones, collapse the description and live-mode note into a single (i), move MODEL RECORD below the list or into the Guide, and merge sort into the Filters sheet. Aim for row #1 above 250px."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob or edge on any prop row",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Every row shows model % vs league %. With no line or price, the user has to switch to a book app, find the market, convert odds to implied probability by hand and compare. One-handed on a phone that round trip is the whole session.",
+     "evidence": "375_pred_fold.png; frontend/pitchhawk.js:1189-1206 (batter row has P, league, lift, why; no price)",
+     "suggested_fix": "Add a compact 'Book -150 \u00b7 imp 60% \u00b7 edge +6' line under P() on each row, with the best book first; sort by edge."
+    },
+    {
+     "id": "player-name-truncated-on-small-phones",
+     "title": "Player names truncate to 70\u201385px at 360/375 wide",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "'Gunnar Alva\u2026', 'Fernando Ro\u2026', 'Yordan Deve\u2026'. The matchup subline truncates too ('PHI @ A\u2026', 'NYM @ WSH 9:1\u2026'), which hides the first-pitch time. Team, slot and the 'pending' badge take the width the name needs. Common surnames (two Mookie Freemans, two Rodriguezes) become hard to tell apart.",
+     "evidence": "results.json trunc at 375/360: 'Gunnar Alvarez [85/92]', 'Fernando Alvarez-Longname [85/169]'; 375_pred_fold.png",
+     "suggested_fix": "Put the name on its own full-width line, move team/#slot to the subline, and drop the 'pending' badge on phones because it repeats on every row."
+    },
+    {
+     "id": "tap-targets-below-44px",
+     "title": "Most controls are 40x40, and Home game-pill headers are 18px tall",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "At 375, 93 of 98 interactive elements on Predictions are under 44px: star 40x40, row chevron 40x40, and the player-name expand button 142x33. On Home, the game-pill toggles (e.g. 'LAD @ SD') are 97x18. The star sits right next to the name/expand button, so one-handed use mis-taps a lot: people star when they meant to expand, and the reverse.",
+     "evidence": "results.json tapPred/tapHome; frontend/pitchhawk.css:1216-1219 (min 40px), pitchhawk.js:2298",
+     "suggested_fix": "Raise the minimum to 44px (iOS HIG) and 48dp (Android). Make the whole row card the expand target, and give the star an 8px dead zone."
+    }
+   ],
+   "delights": [
+    "Default market (1+ Hit) is his market",
+    "Sort chips (Lift/Prob/Time/Name) are one tap each"
+   ]
+  },
+  {
+   "name": "Aaliyah Brooks",
+   "profile": "Amateur, data-curious; $300 roll, $10 units; DraftKings; learns by reading the WHY",
+   "device": "phone",
+   "goal": "Bar, iPhone 13 mini-sized phone at 375x667, in landscape to read long names: understand why the model likes a hitter and decide whether to bet.",
+   "journey": [
+    "Predictions \u2192 expands row #1. Gets PHASE, LINEUP \u2713, REST OF GAME 31% BASE, MATCHUP 'H2H \u2014'. Wants splits/park.",
+    "Rotates to landscape to see full names. Header plus tab bar leave ~256px of content.",
+    "Taps 'Open game \u203a' \u2192 game context. Back button returns her to the top of Predictions, and she loses her place.",
+    "Decides with partial info."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 50,
+   "would_return": "yes",
+   "nps_0_10": 6,
+   "quote": "The WHY line is the best part \u2014 I just wish expanding the row told me more than the row already did.",
+   "pain_points": [
+    {
+     "id": "row-expansion-adds-little-for-decision",
+     "title": "Expanding a row reveals phase/lineup/rest-of-game/H2H, but no odds, splits or recent form",
+     "area": "player-detail",
+     "severity": 2,
+     "detail": "Tapping a row opens PHASE, LINEUP \u2713, REST OF GAME 31%, FRESH, MATCHUP 'H2H \u2014', and 'Open game \u203a'. Useful context, but there is still no price, no platoon/park split and no recent game log, so the user leaves for another app to finish the analysis.",
+     "evidence": "work/c07-mobile-first/375_rowopen2.png; frontend/pitchhawk.js predBatterDetailHtml",
+     "suggested_fix": "Add price/implied, L/R split, park factor and last-10 game hits/HR to the expanded panel."
+    },
+    {
+     "id": "landscape-chrome-eats-viewport",
+     "title": "In landscape (667x375), header plus bottom tab bar take 119px (32%) of the height",
+     "area": "mobile",
+     "severity": 2,
+     "detail": "Turning the phone to read a long row (names untruncate in landscape) leaves about 256px of content. At 800x360 the header grows to 114px.",
+     "evidence": "work/c07-mobile-first/375_landscape.png; results2.json landscapeSticky",
+     "suggested_fix": "Hide the header on scroll-down and show it on scroll-up. In landscape, move the tabs into the header."
+    },
+    {
+     "id": "player-name-truncated-on-small-phones",
+     "title": "Player names truncate to 70\u201385px at 360/375 wide",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "'Gunnar Alva\u2026', 'Fernando Ro\u2026', 'Yordan Deve\u2026'. The matchup subline truncates too ('PHI @ A\u2026', 'NYM @ WSH 9:1\u2026'), which hides the first-pitch time. Team, slot and the 'pending' badge take the width the name needs. Common surnames (two Mookie Freemans, two Rodriguezes) become hard to tell apart.",
+     "evidence": "results.json trunc at 375/360: 'Gunnar Alvarez [85/92]', 'Fernando Alvarez-Longname [85/169]'; 375_pred_fold.png",
+     "suggested_fix": "Put the name on its own full-width line, move team/#slot to the subline, and drop the 'pending' badge on phones because it repeats on every row."
+    },
+    {
+     "id": "prediction-rows-too-tall-on-phone",
+     "title": "Each prop row is ~190px tall, so a 667 viewport shows 2.5 picks",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Rows stack P(), league, bar, per-PA/xPA, lift, multiplier and the WHY line. The top 25 are a ~5,500px scroll, and 'Show all 36/126' sits at the bottom. Comparing picks 3 and 12 means scrolling back and forth with one thumb.",
+     "evidence": "pageHeightPred=5480 at 375; 375_bottom.png",
+     "suggested_fix": "Offer a dense 1-line row on phones (name \u00b7 team \u00b7 P \u00b7 lift \u00b7 price) and keep the extra detail behind a tap. Persist that choice in localStorage."
+    },
+    {
+     "id": "scroll-position-lost-on-back",
+     "title": "Returning from game context loses list position",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "After 'Open game \u203a' and back, she is not returned to the expanded row, so she has to scroll back through ~190px rows.",
+     "evidence": "pitchhawk.js:2775-2783 (manual scrollTo, scrollIntoView banned)",
+     "suggested_fix": "Store scrollY per route and restore it on hashchange back. Keep the row expanded."
+    }
+   ],
+   "delights": [
+    "WHY line is human-readable",
+    "Landscape un-truncates names"
+   ]
+  },
+  {
+   "name": "Ray Donnelly",
+   "profile": "Pro, 15 yrs; $60k roll, $500 units; sharp books plus offshore; totals and moneylines, some live",
+   "device": "phone",
+   "goal": "Pixel 8 (390-ish, tested 390x844) between innings at a bar: compare model total and win prob vs market for upcoming TOR @ CLE.",
+   "journey": [
+    "Home pill shows 'ML CLE 57% \u00b7 TOT O 8.5 60%'. Fast and clear.",
+    "Expands the pill (\u25b8 40x40) for more context. No market line or price, though the backend has game-market edge (/edge) that isn't served here.",
+    "Predictions \u2192 Win prob / Totals chips. Same numbers ranked by lift.",
+    "Converts 57% to -133 fair in his head and checks his book. Edge found in about 40s."
+   ],
+   "task_success": "full",
+   "time_to_first_value_sec_estimate": 25,
+   "would_return": "yes",
+   "nps_0_10": 7,
+   "quote": "Game cards are the most phone-friendly thing here \u2014 put the market price beside that 57% and it's a daily open.",
+   "pain_points": [
+    {
+     "id": "no-fair-odds-display",
+     "title": "Probabilities are never converted to fair American odds",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "Every bettor converts % to fair odds in their head, which is slow and error-prone one-handed.",
+     "evidence": "Home pill ML 57% / TOT 60%",
+     "suggested_fix": "Show fair odds (-133) under or beside every probability, with a toggle for decimal."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob or edge on any prop row",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Every row shows model % vs league %. With no line or price, the user has to switch to a book app, find the market, convert odds to implied probability by hand and compare. One-handed on a phone that round trip is the whole session.",
+     "evidence": "375_pred_fold.png; frontend/pitchhawk.js:1189-1206 (batter row has P, league, lift, why; no price)",
+     "suggested_fix": "Add a compact 'Book -150 \u00b7 imp 60% \u00b7 edge +6' line under P() on each row, with the best book first; sort by edge."
+    }
+   ],
+   "delights": [
+    "Home game pills pack ML, total and top read into one card",
+    "Win prob delta (\u25b216) since open is a nice live signal"
+   ]
+  },
+  {
+   "name": "Lena Fischer",
+   "profile": "Amateur, new to MLB props (ex-NBA bettor); $250 roll, $5 units; FanDuel; wants guidance",
+   "device": "phone",
+   "goal": "Android 360x800 on the couch, flaky Wi-Fi: learn the board and place a first MLB prop within 5 minutes.",
+   "journey": [
+    "Reads 'New here?' \u2192 'How to read the board' overlay. Helpful.",
+    "Predictions: Pregame vs Live toggle, 'reads froze at first pitch', 'pending' badge on every row. Unsure what 'pending' means.",
+    "Filter bar: count '126 results' clipped at the edge; the min-lift slider label is off-screen.",
+    "Wi-Fi drops; the banner appears at the top but she's scrolled and misses it. Tapping does nothing for a few seconds.",
+    "Finds a +12 pts hit read and bets it."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 90,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "The guide helped, but half the labels \u2014 pending, BASE, frozen \u2014 I had to guess.",
+   "pain_points": [
+    {
+     "id": "filter-bar-clips-at-375",
+     "title": "Results count, min-lift value and later chips are clipped off the right edge",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "At 375, the '126 results' count and the slider's 'any' label are cut off at the right edge. The Starters chip (the only route to Ks/Outs) and the 'Final' status chip are off-screen in a horizontal scroller with no visible affordance.",
+     "evidence": "work/c07-mobile-first/375_pred_fold.png, 375_filters.png; frontend/pitchhawk.js:984,994",
+     "suggested_fix": "Wrap the filter bar onto two lines on phones. Show the count under the title. Add a fade or arrow at the scroller edge, or put markets in a 2x3 grid."
+    },
+    {
+     "id": "no-offline-indicator-when-scrolled",
+     "title": "Offline state is easy to miss: header still says 'auto-refreshing' and the banner scrolls away",
+     "area": "performance",
+     "severity": 4,
+     "detail": "With the network off for 20s, a 'Feed unreachable' banner rendered in the page flow at the top. Scrolled into the list, nothing shows it, and the sticky header kept saying '3 games live \u00b7 auto-refreshing' with a green dot. Ten seconds after reconnecting, the banner was still present. A ballpark user on bad LTE can act on frozen live numbers without knowing.",
+     "evidence": "work/c07-mobile-first/offline_scrolled.png; frontend/pitchhawk.js:834-845, 4601-4607; copy.js:21",
+     "suggested_fix": "Put connection state in the sticky header (amber 'offline \u00b7 last 5:22:16'). Grey out live percentages after one missed poll. Retry right away on the window 'online' event."
+    },
+    {
+     "id": "first-pick-below-fold-on-small-phones",
+     "title": "At 375x667 the first prediction row starts ~500px down; less than one row is visible",
+     "area": "mobile",
+     "severity": 4,
+     "detail": "The page title, a 2-line description, the Pregame/Live segment plus Filters, the market chips, the MODEL RECORD bar, the section title, a 2-line live-mode note and the sort chips all come before row #1. Row #1 starts at y\u2248498 at 375x667 and 524 at 360x800, and the fixed tab bar covers its bottom. When a pin exists, the WATCHING strip pushes it down another ~65px.",
+     "evidence": "work/c07-mobile-first/375_pred_fold.png, 375_starters.png; results2.json firstRowY=498",
+     "suggested_fix": "On phones, collapse the description and live-mode note into a single (i), move MODEL RECORD below the list or into the Guide, and merge sort into the Filters sheet. Aim for row #1 above 250px."
+    },
+    {
+     "id": "player-name-truncated-on-small-phones",
+     "title": "Player names truncate to 70\u201385px at 360/375 wide",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "'Gunnar Alva\u2026', 'Fernando Ro\u2026', 'Yordan Deve\u2026'. The matchup subline truncates too ('PHI @ A\u2026', 'NYM @ WSH 9:1\u2026'), which hides the first-pitch time. Team, slot and the 'pending' badge take the width the name needs. Common surnames (two Mookie Freemans, two Rodriguezes) become hard to tell apart.",
+     "evidence": "results.json trunc at 375/360: 'Gunnar Alvarez [85/92]', 'Fernando Alvarez-Longname [85/169]'; 375_pred_fold.png",
+     "suggested_fix": "Put the name on its own full-width line, move team/#slot to the subline, and drop the 'pending' badge on phones because it repeats on every row."
+    },
+    {
+     "id": "jargon-badges-unexplained",
+     "title": "'pending', 'BASE', 'PREGAME \u00b7 FROZEN', 'FROM ORDER' badges have no tap-to-explain",
+     "area": "onboarding",
+     "severity": 2,
+     "detail": "Badges repeat on every row and take width from player names, and the meaning isn't clear without the Guide.",
+     "evidence": "375_pred_fold.png 'pending' badge; home 'PREGAME \u00b7 FROZEN'",
+     "suggested_fix": "Tap a badge to get a one-line tooltip sheet. Hide 'pending' on phones."
+    }
+   ],
+   "delights": [
+    "Onboarding explainer is concise",
+    "Responsible-gambling footer present"
+   ]
+  }
+ ],
+ "top_cohort_issues": [
+  {
+   "id": "no-sportsbook-odds-on-props",
+   "title": "No book price, implied prob or edge on any prop row",
+   "personas_affected": 8,
+   "avg_severity": 5.0,
+   "fix": "Add a compact 'Book -150 \u00b7 imp 60% \u00b7 edge +6' line under P() on each row, with the best book first; sort by edge."
+  },
+  {
+   "id": "player-name-truncated-on-small-phones",
+   "title": "Player names truncate to 70\u201385px at 360/375 wide",
+   "personas_affected": 6,
+   "avg_severity": 3.0,
+   "fix": "Put the name on its own full-width line, move team/#slot to the subline, and drop the 'pending' badge on phones because it repeats on every row."
+  },
+  {
+   "id": "first-pick-below-fold-on-small-phones",
+   "title": "At 375x667 the first prediction row starts ~500px down; less than one row is visible",
+   "personas_affected": 4,
+   "avg_severity": 4.0,
+   "fix": "On phones, collapse the description and live-mode note into a single (i), move MODEL RECORD below the list or into the Guide, and merge sort into the Filters sheet. Aim for row #1 above 250px."
+  },
+  {
+   "id": "no-bet-slip-or-pick-tracking",
+   "title": "No way to log a pick with price/stake, or to track CLV",
+   "personas_affected": 3,
+   "avg_severity": 4.0,
+   "fix": "Add 'Track pick' in the expanded row that captures market, model %, book price (manual entry OK) and units, plus a My Picks tab graded after the final."
+  },
+  {
+   "id": "tap-targets-below-44px",
+   "title": "Most controls are 40x40, and Home game-pill headers are 18px tall",
+   "personas_affected": 4,
+   "avg_severity": 3.0,
+   "fix": "Raise the minimum to 44px (iOS HIG) and 48dp (Android). Make the whole row card the expand target, and give the star an 8px dead zone."
+  },
+  {
+   "id": "filter-bar-clips-at-375",
+   "title": "Results count, min-lift value and later chips are clipped off the right edge",
+   "personas_affected": 3,
+   "avg_severity": 3.0,
+   "fix": "Wrap the filter bar onto two lines on phones. Show the count under the title. Add a fade or arrow at the scroller edge, or put markets in a 2x3 grid."
+  },
+  {
+   "id": "no-offline-indicator-when-scrolled",
+   "title": "Offline state is easy to miss: header still says 'auto-refreshing' and the banner scrolls away",
+   "personas_affected": 2,
+   "avg_severity": 4.0,
+   "fix": "Put connection state in the sticky header (amber 'offline \u00b7 last 5:22:16'). Grey out live percentages after one missed poll. Retry right away on the window 'online' event."
+  },
+  {
+   "id": "watchlist-pins-player-not-pick",
+   "title": "Starring a 1+ Hit row saves the player; the watch pill then shows his 1+ HR read",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Pin player+market (key b:<id>:<m>) and have the pill deep-link back to that row with it expanded."
+  },
+  {
+   "id": "prediction-rows-too-tall-on-phone",
+   "title": "Each prop row is ~190px tall, so a 667 viewport shows 2.5 picks",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Offer a dense 1-line row on phones (name \u00b7 team \u00b7 P \u00b7 lift \u00b7 price) and keep the extra detail behind a tap. Persist that choice in localStorage."
+  },
+  {
+   "id": "tap-lost-during-8s-rerender",
+   "title": "8-second poll re-render detaches elements mid-interaction",
+   "personas_affected": 2,
+   "avg_severity": 2.0,
+   "fix": "Diff-update the list instead of re-rendering wholesale, and defer the re-render while a touch is active or a sheet is open."
+  },
+  {
+   "id": "lift-vs-league-not-vs-market",
+   "title": "Ranking is lift over league, not edge over market",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Default to edge-vs-book once odds exist. Until then, relabel the sort as 'Model lean' and say plainly that it is not edge."
+  },
+  {
+   "id": "ks-buried-behind-starters-chip",
+   "title": "Pitcher K lines are reachable only through an off-screen 'Starters' chip; deep link m=so doesn't work",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Add a 'Pitcher Ks' chip as the first visible market for pitcher-prop users, and support m=k / m=so aliases."
+  }
+ ]
+}

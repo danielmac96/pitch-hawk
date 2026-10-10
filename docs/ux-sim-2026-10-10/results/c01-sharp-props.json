@@ -1,0 +1,756 @@
+{
+ "cohort": "c01-sharp-props",
+ "cohort_summary": "Ten professional prop bettors ($20k-$500k). All value the per-PA x xPA decomposition, lineup-slot awareness, transparent BASE/SAMPLE labels, filterable/exportable board. None can complete the core sharp loop (model fair vs best price -> edge -> bet -> CLV) inside the app: no prop prices, fair odds, edge sort, or bet log; LIFT vs league is not a value signal. Pitcher props use generic fixed lines (every SP O5.5 Ks / O16.5 outs) with no ladder, which fails K/outs specialists outright. Early-line bettors lack tomorrow's slate and lineup-post alerts. Power users want a dense multi-market grid and ID-keyed CSV/API. Trust is weakened by small-sample calibration tiles, fixture Data Feed and ungraded pitcher props. Task success: full 0, partial 6, failed 4.",
+ "personas": [
+  {
+   "name": "Marcus Feld",
+   "profile": "Pro, 9 yrs; $250k bankroll, $2.5k unit; Pinnacle, Circa, DK, FD, BetMGM, Caesars; markets: 1+ hit, TB, HRR; bets openers at 10am ET before lineups",
+   "device": "desktop",
+   "goal": "Morning screen: find 5-8 hit/TB props where model fair beats the best available price by 4%+ before lineups lock",
+   "journey": [
+    "Opens #/pred, defaults to 1+ Hit sorted by LIFT; looks for a price/line column \u2014 none",
+    "Expands Gunnar Alvarez row: sees 1+ HIT 77%, TB 1.5+ 51% 'BASE' \u2014 no fair odds",
+    "Hand-converts 77% to -335 and tabs to OddsJam/books to compare against posted -400/-450 \u2014 mental arithmetic on 126 rows",
+    "Tries to rank by TB: no TB chip; gives up on TB",
+    "Exports CSV for spreadsheet join to his odds feed; CSV has no player_id so name join is fragile",
+    "Ends with 3 candidate hits after 25 minutes; would normally do this in 5 with his own tool"
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 600,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "Show me a number I can bet against \u2014 77% means nothing until it's next to -400 at DK and -365 at Circa.",
+   "pain_points": [
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book line, price, implied prob or edge on any player prop",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Core loop (model vs price) impossible inside the product; every comparison is manual.",
+     "evidence": "desk__pred: columns are P(1+ HIT)/LIFT/WHY/REST OF GAME only; pitchhawk.js:1017-1030 CSV has no price/line fields; brief: /edge exists only for game markets",
+     "suggested_fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+    },
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking by LIFT over league rate is not a value signal",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "Top-of-board LIFT rows are often heavy-juiced hit props where book already prices the edge.",
+     "evidence": "desk__pred header 'ranked by lift over the league rate'; PRED_DEFAULTS pSort:'lift' pitchhawk.js:870",
+     "suggested_fix": "Offer 'Edge vs market' as default sort when odds exist; demote lift to a context column."
+    },
+    {
+     "id": "tb-not-a-board-market",
+     "title": "Total bases only visible after expanding a row; cannot rank/filter/export TB",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "TB is his main market; it's buried in row expansion.",
+     "evidence": "desk_pred_rowopen 'TB 1.5+ 51% BASE exp 2.0 TB'; not in market chips pitchhawk.js:864; not in CSV pitchhawk.js:1021",
+     "suggested_fix": "Add TB chip with lines 0.5/1.5/2.5 and include in CSV."
+    },
+    {
+     "id": "csv-missing-ids-and-odds-fields",
+     "title": "CSV export lacks player/game IDs, timestamps, opposing hand, and any line/price columns",
+     "area": "export",
+     "severity": 3,
+     "detail": "Name-only join breaks on 'Alvarez-Longname' style names and duplicates.",
+     "evidence": "pitchhawk.js:1021 head = rank,player,team,slot,opposing_starter,game,status,probability,league_rate,lift_pts,xpa,form_30d_rate,result",
+     "suggested_fix": "Add mlbam player_id, game_pk, model_ts, phase, opp_hand, all markets in one wide file, and an API/JSON endpoint with token auth."
+    }
+   ],
+   "delights": [
+    "Per-PA rate and xPA shown inline \u2014 easy to sanity-check the 1+ prob",
+    "Lineup slot -> xPA mapping is exactly the right decomposition"
+   ]
+  },
+  {
+   "name": "Priya Ramanathan",
+   "profile": "Pro, ex-quant; $500k bankroll, $5k units on Pinnacle/Circa, smaller on DK/FD/Caesars/BetRivers; markets: pitcher Ks and outs; 3-monitor setup",
+   "device": "desktop",
+   "goal": "Get K and outs distributions for tonight's starters and compare to Pinnacle/Circa lines (often 4.5/5.5/6.5 Ks, 15.5-18.5 outs)",
+   "journey": [
+    "Clicks Starters chip on Predictions",
+    "Sees every starter at O 5.5 Ks and O 16.5 outs regardless of 'exp' (4.5 to 6.6) \u2014 realises the line is generic, not the market's",
+    "Henderson posted 4.5 at Pinnacle; tool only gives P(over 5.5) \u2014 no way to get P(over 4.5)",
+    "Looks for 30D K%, whiff, FB velo: all '\u2014'",
+    "Tries to sort by K over-prob: no sort on columns, no lift",
+    "Exports Starters CSV: one line per prop with P(over) \u2014 useless without the distribution"
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 2,
+   "quote": "A single P(over 5.5) for every pitcher is a coin flip with a label \u2014 give me the full K ladder and I'll do the rest.",
+   "pain_points": [
+    {
+     "id": "starter-lines-fixed-not-book-lines",
+     "title": "Pitcher K/Outs/H/ER/BB lines are generic (every SP O5.5 Ks, O16.5 outs) and not editable",
+     "area": "predictions",
+     "severity": 5,
+     "detail": "Market lines differ by pitcher; P(over) at the wrong line can't be priced.",
+     "evidence": "work/c01-sharp-props/sp.png: all 14 starters show O 5.5 / O 16.5 / O 5.5 / O 2.5 / O 1.5 tagged BASE; copy.js:156 'line and P(over) from league rates \u00d7 30-day form'",
+     "suggested_fix": "Expose full distribution (P(over) at every half-line, or ladder), let user type the book line/price, and default the line to the market's posted number."
+    },
+    {
+     "id": "starters-table-no-sort-or-edge",
+     "title": "Starters tab has no lift, no min-lift filter, no sort by K over-prob, and form columns empty",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "No way to rank starters by edge or even by expected Ks.",
+     "evidence": "sp.png: no LIFT column, MIN LIFT slider hidden, 30D K%/WHIFF/HR/PA/FB VELO/FATIGUE all '\u2014'",
+     "suggested_fix": "Sortable columns per prop, lift/edge per prop, populated K%/whiff/CSW, opposing lineup K% vs hand."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book line, price, implied prob or edge on any player prop",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "No pitcher prop prices or no-vig.",
+     "evidence": "desk__pred: columns are P(1+ HIT)/LIFT/WHY/REST OF GAME only; pitchhawk.js:1017-1030 CSV has no price/line fields; brief: /edge exists only for game markets",
+     "suggested_fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+    },
+    {
+     "id": "no-weather-park-umpire-inputs",
+     "title": "No weather, park factor, umpire, or lineup-hand split shown for HR/K props",
+     "area": "player-detail",
+     "severity": 3,
+     "detail": "No umpire/opposing-lineup K% vs hand for K props.",
+     "evidence": "WHY column only shows 30d H/PA, pitcher allows, H2H, slot\u2192xPA (desk__pred)",
+     "suggested_fix": "Add park/weather (wind, temp), umpire K-tendency, and batter vs hand splits to WHY and expanded row."
+    }
+   ],
+   "delights": [
+    "'exp' mean shown next to each line is a helpful anchor"
+   ]
+  },
+  {
+   "name": "Derek 'DK' Kowalski",
+   "profile": "Pro grinder; $40k bankroll, $300 units; DK, FD, BetMGM, Caesars, BetRivers + Novig; markets: 1+ HR longshots; MacBook Air 13\"",
+   "device": "desktop",
+   "goal": "Shortlist HR props +350 or longer where model gives >= 25% and grab before steam",
+   "journey": [
+    "Opens #/pred?m=hr on laptop; WHY column truncates ('Guerrero allows ...')",
+    "Sorts by P(1+ HR); top is 23-24% \u2014 needs fair odds; converts 23% -> +335 in his head",
+    "Wants min probability filter; only MIN LIFT slider exists",
+    "Opens Juan Judge from Home 'Due up' card \u2014 good context but no price",
+    "Stars 4 players; finds no way to note price taken or stake",
+    "Checks Data Feed for HR calibration: SAMPLE DATA banner kills trust"
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 300,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "I'm converting percentages to American odds in my head on a laptop with the WHY column cut off \u2014 that's my spreadsheet's job, not mine.",
+   "pain_points": [
+    {
+     "id": "no-fair-odds-display",
+     "title": "Probabilities never converted to fair American/decimal odds",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "HR market is all about price thresholds; % alone forces manual conversion.",
+     "evidence": "Every prob cell renders % only (desk__pred, desk_pred_rowopen); no odds-format toggle anywhere",
+     "suggested_fix": "Show fair odds next to every % (e.g. 77% / -335) with a global American/decimal toggle."
+    },
+    {
+     "id": "laptop-width-truncation",
+     "title": "At laptop widths the WHY column truncates ('Guerrero allows ...') and the wide board needs horizontal effort",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "13\" screen truncates evidence column.",
+     "evidence": "desk__pred.png WHY cells end in ellipsis even at 1440",
+     "suggested_fix": "Wrap or tooltip WHY; responsive column priority for 1280-1366 widths."
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a bet (book, price, stake) or track results",
+     "area": "watchlist",
+     "severity": 4,
+     "detail": "Stars aren't bets; no record of price taken.",
+     "evidence": "Star/pin (pitchhawk.js:2282) only watches; no stake/price fields; alerts are only score/final events pitchhawk.js:711-735",
+     "suggested_fix": "Add 'Log bet' on each row (book, price, stake, time) feeding a bet tracker with CLV and ROI."
+    },
+    {
+     "id": "calibration-tiles-undermine-trust",
+     "title": "Calibration tiles sit atop the board showing large landed-vs-predicted gaps with tiny samples, and Data Feed is SAMPLE DATA",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "HR calibration tile and sample data make him doubt model at tails.",
+     "evidence": "desk__pred tiles '1+ HIT 37% / 62% \u00b7 27 graded'; Data Feed banner 'SAMPLE DATA ... None of these reads are real' (desk__data); calTile pitchhawk.js:1446-1464",
+     "suggested_fix": "Show reliability with confidence intervals, longer windows by default, Brier/log-loss vs market closing price; hide tiles below a min sample."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book line, price, implied prob or edge on any player prop",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Like every pro in this cohort, has to cross-reference books in another window for every row; the app stops at probability.",
+     "evidence": "desk__pred: columns are P(1+ HIT)/LIFT/WHY/REST OF GAME only; pitchhawk.js:1017-1030 CSV has no price/line fields; brief: /edge exists only for game markets",
+     "suggested_fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+    },
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking by LIFT over league rate is not a value signal",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Lift-ranked top rows are not the same as mispriced rows; still needs his/her own price screen to re-rank.",
+     "evidence": "desk__pred header 'ranked by lift over the league rate'; PRED_DEFAULTS pSort:'lift' pitchhawk.js:870",
+     "suggested_fix": "Offer 'Edge vs market' as default sort when odds exist; demote lift to a context column."
+    }
+   ],
+   "delights": [
+    "HR row shows pitcher HR/PA allowed next to batter HR/PA \u2014 quick matchup read",
+    "Search finds batters and starters instantly"
+   ]
+  },
+  {
+   "name": "Lena Osei",
+   "profile": "Pro, syndicate member; $150k bankroll, $1.5k units; Pinnacle, Circa, ProphetX, Novig; markets: hits and HRR, bets overs and unders; CLV-tracked",
+   "device": "desktop",
+   "goal": "Find both-side value (incl. unders on 1+ HRR) and measure whether model reads beat closing line",
+   "journey": [
+    "Selects 1+ HRR chip; board ranks overs by lift; negative-lift rows at bottom are her under candidates",
+    "No 'under' probability or fair under odds shown; derives 1-p manually",
+    "Wants model vs closing-line comparison in Data Feed: only landed-vs-predicted calibration",
+    "Data Feed banner says SAMPLE DATA \u2014 none real",
+    "Looks for closing price per graded read \u2014 absent"
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 2,
+   "quote": "Calibration against outcomes is nice; calibration against the close is the only thing that tells me if this model is sharp.",
+   "pain_points": [
+    {
+     "id": "no-clv-or-line-movement",
+     "title": "No open/close prices or line history, so CLV cannot be measured",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "No closing line anywhere; can't evaluate model or her own bets.",
+     "evidence": "No price history anywhere; Data Feed grades at 'probability it carried when the market locked' (desk__data) but never vs closing line",
+     "suggested_fix": "Store open/current/close per prop per book; show movement sparkline and grade model/pick CLV in Data Feed."
+    },
+    {
+     "id": "no-alt-lines-or-ladders",
+     "title": "Only 1+ thresholds; no 2+ hits, 2+ HRR, 2.5 TB, HR 2+, or under side",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "No under side, no 2+ HRR.",
+     "evidence": "PRED_MARKETS pitchhawk.js:864 = hit/hr/hrr/wp/tot/sp only; TB 1.5+ appears only inside expanded row (pitchhawk.js:1343) and is not a board market",
+     "suggested_fix": "Add a threshold selector per market (0.5/1.5/2.5) with over and under probabilities; promote TB to a first-class market tab."
+    },
+    {
+     "id": "calibration-tiles-undermine-trust",
+     "title": "Calibration tiles sit atop the board showing large landed-vs-predicted gaps with tiny samples, and Data Feed is SAMPLE DATA",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "Data Feed is fixture data; 7-day tiles have tiny n.",
+     "evidence": "desk__pred tiles '1+ HIT 37% / 62% \u00b7 27 graded'; Data Feed banner 'SAMPLE DATA ... None of these reads are real' (desk__data); calTile pitchhawk.js:1446-1464",
+     "suggested_fix": "Show reliability with confidence intervals, longer windows by default, Brier/log-loss vs market closing price; hide tiles below a min sample."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book line, price, implied prob or edge on any player prop",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "No exchange prices for Novig/ProphetX.",
+     "evidence": "desk__pred: columns are P(1+ HIT)/LIFT/WHY/REST OF GAME only; pitchhawk.js:1017-1030 CSV has no price/line fields; brief: /edge exists only for game markets",
+     "suggested_fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+    }
+   ],
+   "delights": [
+    "Data Feed calibration chart by 10-pt bands with counts is the right format",
+    "Brier skill shown vs base rate"
+   ]
+  },
+  {
+   "name": "Tom\u00e1s Echeverr\u00eda",
+   "profile": "Pro, early-line specialist; $80k bankroll, $800 units; DK, FD, BetMGM, Caesars; markets: hits/TB openers posted night before",
+   "device": "desktop",
+   "goal": "At 11pm the night before, pre-price tomorrow's hit props before lineups and set lineup-change alerts",
+   "journey": [
+    "Looks for a date picker for tomorrow's slate \u2014 Home shows 'Today's slate' only",
+    "Next morning: Upcoming filter shows 'LINEUP PENDING \u00b7 slot pending \u2192 4.50 xPA' \u2014 assumes leadoff PA for everyone?",
+    "Header says 'Live mode... reads froze at first pitch' while filtering Upcoming \u2014 confusing",
+    "Turns on alerts: only fires for pinned games/finals, not lineup posts or prob moves",
+    "Has to keep refreshing and diffing manually"
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "My edge is the four hours before lineups drop, and this board basically wakes up after they do.",
+   "pain_points": [
+    {
+     "id": "no-pre-lineup-projection-context",
+     "title": "Early (pre-lineup) reads show 'slot pending' with no assumed slot/PA or lineup-change alert",
+     "area": "predictions",
+     "severity": 5,
+     "detail": "Pre-lineup reads lack assumed slot/start prob; no alert on lineup post.",
+     "evidence": "hr_up.txt: 'LINEUP PENDING ... slot pending \u2192 4.50 xPA'; alerts only for pinned games/finals pitchhawk.js:711-735",
+     "suggested_fix": "Show assumed slot + probability of starting, and push an alert/diff when a lineup posts and the prob moves > X pts."
+    },
+    {
+     "id": "no-next-day-slate",
+     "title": "Cannot view tomorrow's slate",
+     "area": "home",
+     "severity": 4,
+     "detail": "Openers post the night before; app only shows today.",
+     "evidence": "desk__home 'Today's slate \u00b7 Sat, Oct 10'; no date nav",
+     "suggested_fix": "Add date selector / tomorrow tab with provisional projections."
+    },
+    {
+     "id": "live-mode-header-on-upcoming-filter",
+     "title": "Board says 'Live mode... reads froze at first pitch' even when filtering to Upcoming",
+     "area": "predictions",
+     "severity": 2,
+     "detail": "Live header on upcoming rows is misleading.",
+     "evidence": "hr_up.txt: Upcoming filter shows 'Live mode: in-progress games first'",
+     "suggested_fix": "Auto-switch to Pregame mode when status=upcoming or reword header."
+    },
+    {
+     "id": "no-model-change-log",
+     "title": "Can't see when/why a probability moved (timestamp only 'updated 5:06 PM')",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Can't see how much a read moved when lineup posted.",
+     "evidence": "Each row 'updated 5:06 PM' (desk__pred); no history of prior values",
+     "suggested_fix": "Add per-row prob history (open model value, lineup-adjusted, weather-adjusted) with deltas and reasons."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book line, price, implied prob or edge on any player prop",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Like every pro in this cohort, has to cross-reference books in another window for every row; the app stops at probability.",
+     "evidence": "desk__pred: columns are P(1+ HIT)/LIFT/WHY/REST OF GAME only; pitchhawk.js:1017-1030 CSV has no price/line fields; brief: /edge exists only for game markets",
+     "suggested_fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+    },
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking by LIFT over league rate is not a value signal",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Lift-ranked top rows are not the same as mispriced rows; still needs his/her own price screen to re-rank.",
+     "evidence": "desk__pred header 'ranked by lift over the league rate'; PRED_DEFAULTS pSort:'lift' pitchhawk.js:870",
+     "suggested_fix": "Offer 'Edge vs market' as default sort when odds exist; demote lift to a context column."
+    }
+   ],
+   "delights": [
+    "Lineup confirmed 6/7 counter on Home is a great at-a-glance status",
+    "'Lineup confirmed only' filter"
+   ]
+  },
+  {
+   "name": "Hannah Brooks",
+   "profile": "Pro, data engineer turned bettor; $120k bankroll; Pinnacle, Circa, DK, FD, Caesars, BetRivers; markets: all batter props via own model; ensemble user",
+   "device": "desktop",
+   "goal": "Pull PitchHawk probabilities into her pipeline as one more model input",
+   "journey": [
+    "Clicks Export CSV on 1+ Hit; gets one market only",
+    "Repeats for HR and HRR; three files keyed by name",
+    "No player_id/game_pk/timestamp; no TB, no starters in same file",
+    "Looks for API docs or token \u2014 none in Guide",
+    "Notes CSV reflects current filters only (25 vs all?) \u2014 checks: exports all rows, good"
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 180,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Give me IDs, timestamps and a JSON endpoint and I'll pay for this; three name-keyed CSVs I won't.",
+   "pain_points": [
+    {
+     "id": "csv-missing-ids-and-odds-fields",
+     "title": "CSV export lacks player/game IDs, timestamps, opposing hand, and any line/price columns",
+     "area": "export",
+     "severity": 4,
+     "detail": "Joins on names; no timestamps means can't tell staleness.",
+     "evidence": "pitchhawk.js:1021 head = rank,player,team,slot,opposing_starter,game,status,probability,league_rate,lift_pts,xpa,form_30d_rate,result",
+     "suggested_fix": "Add mlbam player_id, game_pk, model_ts, phase, opp_hand, all markets in one wide file, and an API/JSON endpoint with token auth."
+    },
+    {
+     "id": "tb-not-a-board-market",
+     "title": "Total bases only visible after expanding a row; cannot rank/filter/export TB",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "TB not exportable.",
+     "evidence": "desk_pred_rowopen 'TB 1.5+ 51% BASE exp 2.0 TB'; not in market chips pitchhawk.js:864; not in CSV pitchhawk.js:1021",
+     "suggested_fix": "Add TB chip with lines 0.5/1.5/2.5 and include in CSV."
+    },
+    {
+     "id": "no-model-change-log",
+     "title": "Can't see when/why a probability moved (timestamp only 'updated 5:06 PM')",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "No model version/timestamp for backtests.",
+     "evidence": "Each row 'updated 5:06 PM' (desk__pred); no history of prior values",
+     "suggested_fix": "Add per-row prob history (open model value, lineup-adjusted, weather-adjusted) with deltas and reasons."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book line, price, implied prob or edge on any player prop",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Like every pro in this cohort, has to cross-reference books in another window for every row; the app stops at probability.",
+     "evidence": "desk__pred: columns are P(1+ HIT)/LIFT/WHY/REST OF GAME only; pitchhawk.js:1017-1030 CSV has no price/line fields; brief: /edge exists only for game markets",
+     "suggested_fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+    }
+   ],
+   "delights": [
+    "CSV export respects all filters and includes league_rate and xpa",
+    "Hash URLs make filters shareable/scriptable"
+   ]
+  },
+  {
+   "name": "Victor Malenko",
+   "profile": "Pro, high-volume; $300k bankroll; Circa, BetMGM, Caesars, DK, FD, BetRivers + ProphetX; markets: hits, HR, Ks; 2 x 32\" monitors",
+   "device": "desktop",
+   "goal": "Scan full slate across markets in one dense grid side-by-side with his odds screen",
+   "journey": [
+    "Opens Predictions; board shows 25 rows, ~12 per screen at 60px each",
+    "Clicks 'Show all 126'; scrolling long list, no sticky header",
+    "Wants hit+HR+HRR+TB columns for each batter in one row \u2014 must switch chips",
+    "Expanded row has all four, but one at a time",
+    "Live page is rich but irrelevant to pregame props"
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 240,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "I have two 32-inch monitors and I'm seeing twelve players at a time \u2014 give me a spreadsheet view.",
+   "pain_points": [
+    {
+     "id": "board-density-too-low-for-power-users",
+     "title": "Rows are ~60px tall with 2-line cells; only ~12 rows per 1440x900 screen and default caps at 25",
+     "area": "performance",
+     "severity": 4,
+     "detail": "Low info density slows full-slate scan.",
+     "evidence": "desk__pred.png (25 rows fill 2000px); pAll toggle pitchhawk.js:1141",
+     "suggested_fix": "Add compact/dense mode (one line per row), sticky header, column chooser, keyboard nav, default show all."
+    },
+    {
+     "id": "no-multi-market-grid",
+     "title": "No all-markets-per-batter grid view",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "Must toggle chips to compare a player's hit/HR/HRR/TB.",
+     "evidence": "pitchhawk.js:864 single pMarket state; expanded row desk_pred_rowopen shows all four",
+     "suggested_fix": "Add 'All props' wide grid view with one row per batter."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book line, price, implied prob or edge on any player prop",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "No prices for side-by-side.",
+     "evidence": "desk__pred: columns are P(1+ HIT)/LIFT/WHY/REST OF GAME only; pitchhawk.js:1017-1030 CSV has no price/line fields; brief: /edge exists only for game markets",
+     "suggested_fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+    },
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking by LIFT over league rate is not a value signal",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Lift-ranked top rows are not the same as mispriced rows; still needs his/her own price screen to re-rank.",
+     "evidence": "desk__pred header 'ranked by lift over the league rate'; PRED_DEFAULTS pSort:'lift' pitchhawk.js:870",
+     "suggested_fix": "Offer 'Edge vs market' as default sort when odds exist; demote lift to a context column."
+    }
+   ],
+   "delights": [
+    "Rest-of-game prob + PA left is useful for live HR/hit in-play bets",
+    "Polling every 8s with timestamps feels live"
+   ]
+  },
+  {
+   "name": "Sofia Lindqvist",
+   "profile": "Pro, CLV-obsessed small-limits hunter; $20k bankroll, $200 units; DK, FD, BetMGM, Caesars, BetRivers, Fanatics; markets: HRR and hits at soft books",
+   "device": "desktop",
+   "goal": "Find props where soft books lag Pinnacle and model agrees; log bets with price for CLV",
+   "journey": [
+    "No Pinnacle reference or consensus line in app; keeps OddsJam open",
+    "Uses MIN LIFT +6 to cut list to ~11 rows \u2014 quick",
+    "Stars 6 players as 'bet' \u2014 star is just a watchlist",
+    "Wants to log price/stake; no field",
+    "Checks back after game: Result 'pending'->landed but no CLV/ROI view"
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 200,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "I can filter fast, but the moment I place a bet the app forgets everything that matters about it.",
+   "pain_points": [
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a bet (book, price, stake) or track results",
+     "area": "watchlist",
+     "severity": 5,
+     "detail": "No bet log means no CLV tracking, the thing she lives on.",
+     "evidence": "Star/pin (pitchhawk.js:2282) only watches; no stake/price fields; alerts are only score/final events pitchhawk.js:711-735",
+     "suggested_fix": "Add 'Log bet' on each row (book, price, stake, time) feeding a bet tracker with CLV and ROI."
+    },
+    {
+     "id": "no-clv-or-line-movement",
+     "title": "No open/close prices or line history, so CLV cannot be measured",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "No sharp reference price.",
+     "evidence": "No price history anywhere; Data Feed grades at 'probability it carried when the market locked' (desk__data) but never vs closing line",
+     "suggested_fix": "Store open/current/close per prop per book; show movement sparkline and grade model/pick CLV in Data Feed."
+    },
+    {
+     "id": "no-limits-or-market-liquidity",
+     "title": "No info on which books post the prop, limits, or exchange liquidity",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "No signal of which books post which props.",
+     "evidence": "No book references anywhere in UI",
+     "suggested_fix": "Show book availability/limit tier and exchange best bid/ask + depth for Novig/ProphetX."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book line, price, implied prob or edge on any player prop",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Like every pro in this cohort, has to cross-reference books in another window for every row; the app stops at probability.",
+     "evidence": "desk__pred: columns are P(1+ HIT)/LIFT/WHY/REST OF GAME only; pitchhawk.js:1017-1030 CSV has no price/line fields; brief: /edge exists only for game markets",
+     "suggested_fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+    },
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking by LIFT over league rate is not a value signal",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Lift-ranked top rows are not the same as mispriced rows; still needs his/her own price screen to re-rank.",
+     "evidence": "desk__pred header 'ranked by lift over the league rate'; PRED_DEFAULTS pSort:'lift' pitchhawk.js:870",
+     "suggested_fix": "Offer 'Edge vs market' as default sort when odds exist; demote lift to a context column."
+    }
+   ],
+   "delights": [
+    "MIN LIFT slider + Lineup confirmed filter trims board fast",
+    "Result column grades rows in place"
+   ]
+  },
+  {
+   "name": "Jamal Whitaker",
+   "profile": "Pro, 12 yrs; $200k; Pinnacle, Circa, Caesars, BetMGM; markets: pitcher outs and hits allowed; skeptical of black-box models",
+   "device": "desktop",
+   "goal": "Decide whether the model is trustworthy enough to weight for outs props",
+   "journey": [
+    "Starters tab: lines tagged BASE and copy says 'league rates x 30-day form'; asks what BASE means \u2014 Guide explains briefly",
+    "Looks for pitch count/leash/bullpen fatigue for outs \u2014 FATIGUE '\u2014'",
+    "Calibration tiles: WIN PROB/AT-BAT 'nothing graded yet'; batter tiles small sample",
+    "Data Feed: SAMPLE DATA; no pitcher-prop market in By market table",
+    "Concludes pitcher props are a placeholder model"
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 2,
+   "quote": "If you label it BASE and won't grade it, I'm not betting it.",
+   "pain_points": [
+    {
+     "id": "starter-lines-fixed-not-book-lines",
+     "title": "Pitcher K/Outs/H/ER/BB lines are generic (every SP O5.5 Ks, O16.5 outs) and not editable",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "Outs line fixed at 16.5 for all starters.",
+     "evidence": "work/c01-sharp-props/sp.png: all 14 starters show O 5.5 / O 16.5 / O 5.5 / O 2.5 / O 1.5 tagged BASE; copy.js:156 'line and P(over) from league rates \u00d7 30-day form'",
+     "suggested_fix": "Expose full distribution (P(over) at every half-line, or ladder), let user type the book line/price, and default the line to the market's posted number."
+    },
+    {
+     "id": "pitcher-props-not-graded",
+     "title": "Pitcher props absent from Data Feed grading",
+     "area": "datafeed",
+     "severity": 4,
+     "detail": "By market table lists hit/HR/HRR/win/totals/at-bat/pitch \u2014 no Ks/outs",
+     "evidence": "desk__data 'By market'",
+     "suggested_fix": "Grade pitcher props and show calibration/CLV separately."
+    },
+    {
+     "id": "starters-table-no-sort-or-edge",
+     "title": "Starters tab has no lift, no min-lift filter, no sort by K over-prob, and form columns empty",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Leash/fatigue/pitch-count projections empty.",
+     "evidence": "sp.png: no LIFT column, MIN LIFT slider hidden, 30D K%/WHIFF/HR/PA/FB VELO/FATIGUE all '\u2014'",
+     "suggested_fix": "Sortable columns per prop, lift/edge per prop, populated K%/whiff/CSW, opposing lineup K% vs hand."
+    },
+    {
+     "id": "calibration-tiles-undermine-trust",
+     "title": "Calibration tiles sit atop the board showing large landed-vs-predicted gaps with tiny samples, and Data Feed is SAMPLE DATA",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Trust signals are thin or fixture.",
+     "evidence": "desk__pred tiles '1+ HIT 37% / 62% \u00b7 27 graded'; Data Feed banner 'SAMPLE DATA ... None of these reads are real' (desk__data); calTile pitchhawk.js:1446-1464",
+     "suggested_fix": "Show reliability with confidence intervals, longer windows by default, Brier/log-loss vs market closing price; hide tiles below a min sample."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book line, price, implied prob or edge on any player prop",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Like every pro in this cohort, has to cross-reference books in another window for every row; the app stops at probability.",
+     "evidence": "desk__pred: columns are P(1+ HIT)/LIFT/WHY/REST OF GAME only; pitchhawk.js:1017-1030 CSV has no price/line fields; brief: /edge exists only for game markets",
+     "suggested_fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+    }
+   ],
+   "delights": [
+    "Honest 'BASE' tagging and 'SAMPLE DATA' banner \u2014 appreciates transparency"
+   ]
+  },
+  {
+   "name": "Grace Nakamura",
+   "profile": "Pro-adjacent part-timer; $60k bankroll, $500 units; DK, FD, BetMGM, Novig; markets: 1+ hit and HR; uses a 14\" laptop at lunch",
+   "device": "desktop",
+   "goal": "20-minute lunch session: 3 high-confidence hit props with good price and a stake suggestion",
+   "journey": [
+    "Home: LIVE DECISIONS cards are about win prob/next pitch \u2014 not her use case; scrolls",
+    "Game cards show 'STRONGEST READ' HR per game \u2014 nice discovery",
+    "Predictions 1+ Hit; picks top 3 by lift; no price, no EV",
+    "Wants suggested stake at 1/4 Kelly \u2014 nothing",
+    "Places bets based on her own book check; leaves with picks but unsure of edge"
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "It found me names quickly \u2014 but whether they're worth betting is still all on me.",
+   "pain_points": [
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking by LIFT over league rate is not a value signal",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "Lift ranking surfaces players whose books already price the edge.",
+     "evidence": "desk__pred header 'ranked by lift over the league rate'; PRED_DEFAULTS pSort:'lift' pitchhawk.js:870",
+     "suggested_fix": "Offer 'Edge vs market' as default sort when odds exist; demote lift to a context column."
+    },
+    {
+     "id": "no-staking-or-kelly-helper",
+     "title": "No stake sizing given bankroll and edge",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "No staking help.",
+     "evidence": "No bankroll or stake settings",
+     "suggested_fix": "Optional bankroll setting, fractional-Kelly stake suggestion per edge row."
+    },
+    {
+     "id": "home-optimized-for-live-not-pregame-props",
+     "title": "Home hero is live win-prob/next-pitch; pregame prop discovery is below the fold",
+     "area": "home",
+     "severity": 2,
+     "detail": "For a pregame prop bettor the first screen is irrelevant live-game content; she scrolls past it every visit.",
+     "evidence": "desk__home LIVE DECISIONS block first",
+     "suggested_fix": "Let users pin a 'Top props value' module above live cards."
+    },
+    {
+     "id": "laptop-width-truncation",
+     "title": "At laptop widths the WHY column truncates ('Guerrero allows ...') and the wide board needs horizontal effort",
+     "area": "mobile",
+     "severity": 2,
+     "detail": "Laptop truncation of WHY.",
+     "evidence": "desk__pred.png WHY cells end in ellipsis even at 1440",
+     "suggested_fix": "Wrap or tooltip WHY; responsive column priority for 1280-1366 widths."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book line, price, implied prob or edge on any player prop",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Like every pro in this cohort, has to cross-reference books in another window for every row; the app stops at probability.",
+     "evidence": "desk__pred: columns are P(1+ HIT)/LIFT/WHY/REST OF GAME only; pitchhawk.js:1017-1030 CSV has no price/line fields; brief: /edge exists only for game markets",
+     "suggested_fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+    }
+   ],
+   "delights": [
+    "'Strongest read' per game card is quick discovery",
+    "Due-up card computes who bats next from the order"
+   ]
+  }
+ ],
+ "top_cohort_issues": [
+  {
+   "id": "no-sportsbook-odds-on-props",
+   "title": "No book line, price, implied prob or edge on any player prop",
+   "personas_affected": 10,
+   "avg_severity": 4.3,
+   "fix": "Add per-row best price across books (+ book name), no-vig consensus, model fair odds (American) and EV%/edge; sort by edge, not lift."
+  },
+  {
+   "id": "lift-vs-league-not-vs-market",
+   "title": "Ranking by LIFT over league rate is not a value signal",
+   "personas_affected": 6,
+   "avg_severity": 3.33,
+   "fix": "Offer 'Edge vs market' as default sort when odds exist; demote lift to a context column."
+  },
+  {
+   "id": "calibration-tiles-undermine-trust",
+   "title": "Calibration tiles sit atop the board showing large landed-vs-predicted gaps with tiny samples, and Data Feed is SAMPLE DATA",
+   "personas_affected": 3,
+   "avg_severity": 3.33,
+   "fix": "Show reliability with confidence intervals, longer windows by default, Brier/log-loss vs market closing price; hide tiles below a min sample."
+  },
+  {
+   "id": "starter-lines-fixed-not-book-lines",
+   "title": "Pitcher K/Outs/H/ER/BB lines are generic (every SP O5.5 Ks, O16.5 outs) and not editable",
+   "personas_affected": 2,
+   "avg_severity": 4.5,
+   "fix": "Expose full distribution (P(over) at every half-line, or ladder), let user type the book line/price, and default the line to the market's posted number."
+  },
+  {
+   "id": "no-bet-slip-or-pick-tracking",
+   "title": "No way to log a bet (book, price, stake) or track results",
+   "personas_affected": 2,
+   "avg_severity": 4.5,
+   "fix": "Add 'Log bet' on each row (book, price, stake, time) feeding a bet tracker with CLV and ROI."
+  },
+  {
+   "id": "no-clv-or-line-movement",
+   "title": "No open/close prices or line history, so CLV cannot be measured",
+   "personas_affected": 2,
+   "avg_severity": 4.5,
+   "fix": "Store open/current/close per prop per book; show movement sparkline and grade model/pick CLV in Data Feed."
+  },
+  {
+   "id": "tb-not-a-board-market",
+   "title": "Total bases only visible after expanding a row; cannot rank/filter/export TB",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Add TB chip with lines 0.5/1.5/2.5 and include in CSV."
+  },
+  {
+   "id": "csv-missing-ids-and-odds-fields",
+   "title": "CSV export lacks player/game IDs, timestamps, opposing hand, and any line/price columns",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Add mlbam player_id, game_pk, model_ts, phase, opp_hand, all markets in one wide file, and an API/JSON endpoint with token auth."
+  },
+  {
+   "id": "starters-table-no-sort-or-edge",
+   "title": "Starters tab has no lift, no min-lift filter, no sort by K over-prob, and form columns empty",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Sortable columns per prop, lift/edge per prop, populated K%/whiff/CSW, opposing lineup K% vs hand."
+  },
+  {
+   "id": "no-model-change-log",
+   "title": "Can't see when/why a probability moved (timestamp only 'updated 5:06 PM')",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Add per-row prob history (open model value, lineup-adjusted, weather-adjusted) with deltas and reasons."
+  },
+  {
+   "id": "laptop-width-truncation",
+   "title": "At laptop widths the WHY column truncates ('Guerrero allows ...') and the wide board needs horizontal effort",
+   "personas_affected": 2,
+   "avg_severity": 2.5,
+   "fix": "Wrap or tooltip WHY; responsive column priority for 1280-1366 widths."
+  },
+  {
+   "id": "no-pre-lineup-projection-context",
+   "title": "Early (pre-lineup) reads show 'slot pending' with no assumed slot/PA or lineup-change alert",
+   "personas_affected": 1,
+   "avg_severity": 5.0,
+   "fix": "Show assumed slot + probability of starting, and push an alert/diff when a lineup posts and the prob moves > X pts."
+  }
+ ]
+}

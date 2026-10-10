@@ -1,0 +1,757 @@
+{
+ "cohort": "c02-hr-longshots",
+ "cohort_summary": "10 anytime-HR longshot hunters (4 pro desktop-heavy, 6 amateur, 4 on phone). The 1+ HR board's transparent math (per-PA rate x slot xPA, lineup \u2713, rest-of-game HR% with PA left) earned genuine praise, but the cohort's value loop breaks at the same spots: no book price/implied/fair American odds so every prob must be converted and line-shopped by hand; the HR-specific inputs they bet on (park HR factor, weather/wind relative to field, barrel/EV, pitcher HR/9 and pitch mix, platoon handedness) are absent from Predictions \u2014 park/wind only exist in the collapsed game pill (blank here) and hand filters only on Data Feed's historical view. Calibration in the 10-30% longshot band is too coarse, phone record strip shows Hit even on HR, and there's no lineup-posted alert or bet/CLV logging. 3 failed (weather pro, pitch-mix pro, platoon amateur); the other 7 partial; avg NPS 5.2.",
+ "personas": [
+  {
+   "name": "Marcus Delgado",
+   "profile": "Pro, 9 yrs, $40k roll, 1u=$200. Books: Circa, DK, FD, Pinnacle (for fair). Bets 15-25 anytime HR props/day at +300..+600, tracks CLV religiously.",
+   "device": "desktop",
+   "goal": "Pregame 3 hrs before first pitch: build a shortlist of HR props where model fair beats best book by 15%+ and fire before lines move.",
+   "journey": [
+    "Lands on Home; sees STRONGEST READ cards with 1+ HR 23% +11.5 pts \u2014 no price anywhere.",
+    "Clicks Predictions > 1+ HR; status Upcoming, Lineup confirmed only (18 results).",
+    "Sorts by Prob; mentally converts 23% -> +335 fair for each row.",
+    "Alt-tabs to DK/FD/Circa to pull prices for 18 batters; builds edge column in his own sheet.",
+    "Exports CSV hoping to join odds \u2014 no fair-odds or price columns, no player IDs matched to book names.",
+    "Expands a row; sees 30d HR/PA and 'Harper allows 1.9%' \u2014 no barrel/park/wind to sanity check.",
+    "Gives up on in-app value finding; uses Pitch Hawk only as a second-opinion probability."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 420,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "A fair number without the book price next to it is homework, not an edge \u2014 I'm doing the whole join in Excel.",
+   "pain_points": [
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook price, implied prob or edge on HR props",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Core job is model-vs-book; app has no book price so every row needs a manual lookup across 4 books.",
+     "evidence": "desk__pred_m_hr: columns are P(1+ HR) / LIFT / WHY; pitchhawk.js:22 'no odds are fetched'; /edge only for game markets",
+     "suggested_fix": "Add BOOK PRICE (best of user's books), IMPLIED %, NO-VIG FAIR and EDGE columns to the 1+ HR board; sort by edge"
+    },
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking by lift over league rate is not a value signal",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "Lift vs league rate ranks guys the market already prices high; it's not where the edge is.",
+     "evidence": "Predictions subtitle 'ranked by lift over the league rate'; PRED_DEFAULTS pSort:'lift' pitchhawk.js:870",
+     "suggested_fix": "Default sort to edge vs book when odds exist; keep lift as secondary context column"
+    },
+    {
+     "id": "no-american-fair-odds-display",
+     "title": "Probabilities never shown as American fair odds",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "Has to convert every percentage to American odds by hand.",
+     "evidence": "P(1+ HR) cell shows '24% league 12%' only (pitchhawk.js:1214 probHead)",
+     "suggested_fix": "Show fair line next to every prob (24% -> +317) and a 'min price to bet' at the user's target edge"
+    },
+    {
+     "id": "export-lacks-context-columns",
+     "title": "CSV export has no hand, park, weather, odds columns",
+     "area": "export",
+     "severity": 3,
+     "detail": "CSV can't be joined to odds feeds cleanly.",
+     "evidence": "[data-act=pExport] pitchhawk.js:974 exports board rows only",
+     "suggested_fix": "Include hand, park HR factor, temp/wind, fair American odds; add Copy-to-sheet"
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a bet at a price and track ROI/CLV",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "No CLV tracking of his HR plays.",
+     "evidence": "Star ([data-act=pin]) only pins; no stake/price fields; Data Feed grades model reads, not user bets",
+     "suggested_fix": "Add 'Log bet' on each row: book, price, stake; track ROI, CLV vs closing price, HR-prop record"
+    }
+   ],
+   "delights": [
+    "Lineup confirmed only filter is fast and exactly the right default for pregame HR",
+    "Per-PA rate and xPA by slot shown explicitly \u2014 transparent math",
+    "Deep-linkable filtered URLs (#/pred?m=hr&status=upcoming&lineup=1&sort=prob-)"
+   ]
+  },
+  {
+   "name": "Hannah Okafor",
+   "profile": "Pro, ex-sportsbook trader, $25k roll, 1u=$150. Books: Pinnacle, BetMGM, Caesars, ESPN Bet. Weather/park-driven HR bettor.",
+   "device": "desktop",
+   "goal": "Find the 2-3 games with wind blowing out / warm temps in hitter parks and target the best power bats there.",
+   "journey": [
+    "Opens Predictions 1+ HR; looks for park/weather columns \u2014 none.",
+    "Searches Guide; learns weather is 'in the model' for totals but not visible on rows.",
+    "Clicks Open game on TOR @ CLE row; lands on Home with game pill open (#/home?open=800005).",
+    "Pill shows STADIUM, ROOF, WEATHER, WIND, PARK HR FACTOR \u2014 all '\u2014' in this env.",
+    "Even if populated, wind would show raw '12 mph SW' not 'out to LF'.",
+    "Goes back to Predictions and loses her filter context; repeats for each game.",
+    "Ends up using a separate weather site; Pitch Hawk not used for the environmental read."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 600,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "Weather is my whole thesis and it's buried in a collapsed game card three clicks from the board.",
+   "pain_points": [
+    {
+     "id": "no-park-weather-on-hr-board",
+     "title": "Park HR factor, weather and wind absent from the HR board",
+     "area": "predictions",
+     "severity": 5,
+     "detail": "Her filter is environment-first; the HR board can't be sliced by park or wind.",
+     "evidence": "pillMetaGridHtml pitchhawk.js:2391-2420 puts PARK HR FACTOR/WIND only in the expanded game pill; in this env all render '\u2014' (desk_game.txt: WEATHER \u2014, WIND \u2014, PARK HR FACTOR \u2014)",
+     "suggested_fix": "Add a compact 'environment' chip per row/game (park HR% \u00b7 temp \u00b7 wind out/in to CF, roof) and filters 'wind out', 'park HR factor > +5%'"
+    },
+    {
+     "id": "wind-not-relative-to-park",
+     "title": "Wind shown as raw mph/direction, not blowing out/in relative to the field",
+     "area": "game-detail",
+     "severity": 4,
+     "detail": "Raw wind direction needs park orientation to be useful.",
+     "evidence": "pitchhawk.js:2400 wind = `${wind_mph} mph ${wind_direction}`",
+     "suggested_fix": "Translate to 'out to LF 12 mph' using park orientation and show estimated HR carry impact"
+    },
+    {
+     "id": "game-detail-hidden-behind-home",
+     "title": "'Open game' jumps to Home with a pill expanded instead of a game page",
+     "area": "game-detail",
+     "severity": 3,
+     "detail": "Open game bounces to Home; loses Predictions filter state.",
+     "evidence": "After [data-act=openGame] URL became #/home?open=800005; context switch away from Predictions",
+     "suggested_fix": "Open an in-place drawer or dedicated #/game/<pk> page with back to the filtered board"
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook price, implied prob or edge on HR props",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Even after finding a spot, no price/edge to decide.",
+     "evidence": "desk__pred_m_hr: columns are P(1+ HR) / LIFT / WHY; pitchhawk.js:22 'no odds are fetched'; /edge only for game markets",
+     "suggested_fix": "Add BOOK PRICE (best of user's books), IMPLIED %, NO-VIG FAIR and EDGE columns to the 1+ HR board; sort by edge"
+    }
+   ],
+   "delights": [
+    "The game pill does have the right fields (park HR factor, roof, HP umpire) \u2014 just in the wrong place",
+    "Probable starters and first pitch in one grid"
+   ]
+  },
+  {
+   "name": "Dmitri Volkov",
+   "profile": "Pro, quant hobby-turned-job, $60k roll, 1u=$300. Books: Pinnacle, Circa, BetOnline, Kalshi. Models HR himself; uses third-party models to blend.",
+   "device": "desktop",
+   "goal": "Check Pitch Hawk's HR calibration in the 15-25% band before blending its probabilities into his model.",
+   "journey": [
+    "Sees '1+ HR CALIBRATION \u00b7 7 DAYS 41% / 15%' tile on Predictions; unclear what population that is.",
+    "Goes to Data Feed > 1+ HR > 14D; sees bands 0-10 (n=114) and 10-20 (n=277), no 20-30 data.",
+    "Notices the SAMPLE DATA banner \u2014 can't trust any of it in this env.",
+    "Wants Brier/log-loss by band and by park/hand; gets one Brier skill tile (2.9%).",
+    "Filters vs LHP \u2014 works, nice; but no handedness filter on Predictions to act on it.",
+    "Exports CSV to backtest; no historical export with graded results."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 300,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "Give me 5-point bands, n and a CI between 10 and 30 percent and I'll tell you if I can blend you.",
+   "pain_points": [
+    {
+     "id": "calibration-tiles-confusing-for-longshots",
+     "title": "HR calibration not readable at the 15-25% band where +300..+700 lives",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "Longshot band is where he needs resolution; 10-pt bands blur +300 vs +600.",
+     "evidence": "Pred tile '1+ HR CALIBRATION 41% / 15% landed/predicted \u00b7 small sample'; Data Feed bands are 10-pt (0-10, 10-20, 20-30)",
+     "suggested_fix": "Show HR calibration in 5-pt bands across 10-30%, with n and CI; explain 'landed/predicted' inline; default HR record view in Data Feed"
+    },
+    {
+     "id": "no-handedness-platoon-on-prediction-rows",
+     "title": "Batter/pitcher handedness and platoon splits missing from Predictions",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Data Feed has vs LHP/RHP, Predictions doesn't \u2014 can't act on split findings.",
+     "evidence": "Prediction row 'vs Yordan Devers' with no (L)/(R); hand only exists on Data Feed filter (pitchhawk.js:3884) and Live hero (3354)",
+     "suggested_fix": "Show 'L vs R' badges per row, a platoon split (HR/PA vs this hand) and a 'platoon advantage only' filter"
+    },
+    {
+     "id": "no-historical-graded-export",
+     "title": "No export of graded historical reads",
+     "area": "export",
+     "severity": 3,
+     "detail": "Can't backtest or blend without row-level history.",
+     "evidence": "Data Feed has no export; Export CSV only on Predictions (pitchhawk.js:974)",
+     "suggested_fix": "Add 'Export graded reads' on Data Feed with prob, outcome, timestamp, park, hand"
+    }
+   ],
+   "delights": [
+    "Brier skill vs base rate shown explicitly",
+    "Honest 'small sample' and SAMPLE DATA labels",
+    "Calibration gap tile with direction ('landed more often than predicted')"
+   ]
+  },
+  {
+   "name": "Renee Castillo",
+   "profile": "Pro, $15k roll, 1u=$100. Books: FD, DK, Fanatics, bet365. Pitch-mix matchup specialist (targets hitters who crush the SP's primary pitch).",
+   "device": "desktop",
+   "goal": "Find batters facing starters whose main pitch (e.g. 4-seam up, hanging sliders) they barrel; bet +400..+700.",
+   "journey": [
+    "Opens Predictions 1+ HR; expands Juan Judge row.",
+    "Sees 30D H\u00b7HR/PA, 'GUERRERO ALLOWS \u00b7 30D', 'VS THIS STARTER \u2014'.",
+    "Looks for pitch mix, pitcher HR/9, barrel% allowed \u2014 none.",
+    "Tries Starters chip \u2014 pitcher K/Outs lines, still no HR profile/arsenal.",
+    "Opens Live Markets for an in-progress game; sees pitch-by-pitch calls but no pitch-type damage matrix.",
+    "Concludes the matchup layer she bets on doesn't exist here."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "'Guerrero allows 3.2%' tells me nothing about whether he's throwing this guy sliders he deposits into the seats.",
+   "pain_points": [
+    {
+     "id": "no-pitcher-hr-profile-or-pitch-mix",
+     "title": "No pitcher HR/9, barrel% allowed, FB% or pitch-mix vs batter damage by pitch",
+     "area": "player-detail",
+     "severity": 5,
+     "detail": "Her entire edge is pitch-type matchups; app reduces pitcher to one 30d HR/PA number.",
+     "evidence": "WHY shows only 'Devers allows 4.3%' (30d HR/PA); STARTERS tab has K/Outs lines but no HR/9 or arsenal",
+     "suggested_fix": "Pitcher card: HR/9, HR/FB, barrel% allowed, pitch mix %, and a batter-vs-pitch-type ISO matrix"
+    },
+    {
+     "id": "no-statcast-power-metrics",
+     "title": "No barrel%, EV, hard-hit, launch angle or ISO for batters",
+     "area": "player-detail",
+     "severity": 4,
+     "detail": "No batter quality-of-contact metrics to validate power.",
+     "evidence": "whyLines pitchhawk.js:1697-1716 only 30d HR/PA, opp allows, H2H, slot/xPA",
+     "suggested_fix": "Add power profile to row expansion: Barrel%, EV90, HardHit%, pulled-FB%, xISO (season + 30d)"
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook price, implied prob or edge on HR props",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "No price to compare once a matchup is found.",
+     "evidence": "desk__pred_m_hr: columns are P(1+ HR) / LIFT / WHY; pitchhawk.js:22 'no odds are fetched'; /edge only for game markets",
+     "suggested_fix": "Add BOOK PRICE (best of user's books), IMPLIED %, NO-VIG FAIR and EDGE columns to the 1+ HR board; sort by edge"
+    }
+   ],
+   "delights": [
+    "H2H count with PA sample shown honestly ('\u2014 (<3 PA)')",
+    "Live pitch calls interesting for in-game HR props"
+   ]
+  },
+  {
+   "name": "Tyler 'Moonshot' Briggs",
+   "profile": "Amateur, 3 yrs, $1.5k roll, 1u=$15. Books: DK, FD. Plays 5-8 HR props nightly at +350..+600 plus a HR parlay.",
+   "device": "phone",
+   "goal": "On the couch at 5pm: get 5 HR picks for tonight in under 10 minutes.",
+   "journey": [
+    "Opens app on phone; Home shows live decision cards; scrolls to find HR.",
+    "Taps Predictions; 1+ Hit selected by default \u2014 taps 1+ HR.",
+    "Sees 'MODEL RECORD \u00b7 7 DAYS Hit 37%/62%' \u2014 confused, he's on HR.",
+    "Results count clipped ('18 r'), Starters chip half off-screen.",
+    "Scrolls cards: 23%, 22%... no odds, doesn't know if 23% is good at +400.",
+    "Stars 5 players; star only pins, no slip.",
+    "Switches to DK app and picks by gut among the starred names."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 240,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Cool, he's 23% \u2014 is that good at plus four hundred or not? Just tell me.",
+   "pain_points": [
+    {
+     "id": "no-american-fair-odds-display",
+     "title": "Probabilities never shown as American fair odds",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Can't translate % to whether the price is worth it.",
+     "evidence": "P(1+ HR) cell shows '24% league 12%' only (pitchhawk.js:1214 probHead)",
+     "suggested_fix": "Show fair line next to every prob (24% -> +317) and a 'min price to bet' at the user's target edge"
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook price, implied prob or edge on HR props",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Needs DK price next to the prob.",
+     "evidence": "desk__pred_m_hr: columns are P(1+ HR) / LIFT / WHY; pitchhawk.js:22 'no odds are fetched'; /edge only for game markets",
+     "suggested_fix": "Add BOOK PRICE (best of user's books), IMPLIED %, NO-VIG FAIR and EDGE columns to the 1+ HR board; sort by edge"
+    },
+    {
+     "id": "mobile-model-record-ignores-market",
+     "title": "Phone 'Model record' summary always shows Hit record, even on 1+ HR",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Hit record shown while looking at HR undermines trust.",
+     "evidence": "pitchhawk.js:1483 summary built from calib.batter_hit only; phone__pred_m_hr: 'MODEL RECORD \u00b7 7 DAYS Hit 37%/62%'",
+     "suggested_fix": "Summarize the selected market's calibration (HR x/y) in the collapsed phone strip"
+    },
+    {
+     "id": "mobile-filter-row-clipped",
+     "title": "Phone market chips and results count clipped off-screen",
+     "area": "mobile",
+     "severity": 2,
+     "detail": "Clipped chips/count look broken.",
+     "evidence": "phone_hr_upcoming.png: results count shows '18 r', 'Starters' chip cut to 'St' with no scroll hint",
+     "suggested_fix": "Wrap chips or add fade+scroll affordance; move count under the filter bar"
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a bet at a price and track ROI/CLV",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "Stars don't become a slip or a record.",
+     "evidence": "Star ([data-act=pin]) only pins; no stake/price fields; Data Feed grades model reads, not user bets",
+     "suggested_fix": "Add 'Log bet' on each row: book, price, stake; track ROI, CLV vs closing price, HR-prop record"
+    }
+   ],
+   "delights": [
+    "Phone cards are readable and the bottom tab bar is thumb-friendly",
+    "Prob/Lift/Time/Name sort pills on mobile",
+    "Lineup \u2713 badge visible on cards"
+   ]
+  },
+  {
+   "name": "Jasmine Reyes",
+   "profile": "Amateur, 2 yrs, $800 roll, 1u=$10. Books: FD, Fanatics. Loves platoon spots (LHB vs RHP in short-porch parks).",
+   "device": "phone",
+   "goal": "Find lefty power bats facing righty starters in Yankee Stadium/Citizens Bank/GABP tonight.",
+   "journey": [
+    "Predictions > 1+ HR on phone.",
+    "Looks for (L)/(R) \u2014 rows say 'vs Bobby Harper' without hands.",
+    "Opens Filters sheet: teams, status, lineup, min lift \u2014 no hand or park filter.",
+    "Discovers Data Feed has 'vs LHP / vs RHP' and stadium filters \u2014 but it's historical model record, not tonight's picks.",
+    "Taps each player via Search hoping for a profile with splits \u2014 search hit shows only team and game.",
+    "Gives up after 8 minutes."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "The filters I need exist \u2014 on the wrong tab, for yesterday's results.",
+   "pain_points": [
+    {
+     "id": "no-handedness-platoon-on-prediction-rows",
+     "title": "Batter/pitcher handedness and platoon splits missing from Predictions",
+     "area": "predictions",
+     "severity": 5,
+     "detail": "Platoon is her core angle; no hands or splits on the board.",
+     "evidence": "Prediction row 'vs Yordan Devers' with no (L)/(R); hand only exists on Data Feed filter (pitchhawk.js:3884) and Live hero (3354)",
+     "suggested_fix": "Show 'L vs R' badges per row, a platoon split (HR/PA vs this hand) and a 'platoon advantage only' filter"
+    },
+    {
+     "id": "hr-board-lacks-longshot-filters",
+     "title": "Can't filter the HR board to a probability/odds band or by park/weather",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "No park/hand filter on Predictions.",
+     "evidence": "Only filters: teams, status, lineup confirmed, MIN LIFT slider (-10..+15, pitchhawk.js:978)",
+     "suggested_fix": "Add prob range (e.g. 12-25%) / fair-odds range filter, park, roof, wind-out, platoon, and saved presets"
+    },
+    {
+     "id": "search-results-lack-hr-context",
+     "title": "Search finds players but shows no prop/HR context in results",
+     "area": "search",
+     "severity": 3,
+     "detail": "Search results give no player context.",
+     "evidence": "desk_search.txt: 'Juan Judge NYY \u00b7 NYY @ BOS' only",
+     "suggested_fix": "Show today's P(1+ HR), fair odds and lineup status in each search hit"
+    },
+    {
+     "id": "no-park-weather-on-hr-board",
+     "title": "Park HR factor, weather and wind absent from the HR board",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Can't target short-porch parks.",
+     "evidence": "pillMetaGridHtml pitchhawk.js:2391-2420 puts PARK HR FACTOR/WIND only in the expanded game pill; in this env all render '\u2014' (desk_game.txt: WEATHER \u2014, WIND \u2014, PARK HR FACTOR \u2014)",
+     "suggested_fix": "Add a compact 'environment' chip per row/game (park HR% \u00b7 temp \u00b7 wind out/in to CF, roof) and filters 'wind out', 'park HR factor > +5%'"
+    }
+   ],
+   "delights": [
+    "Data Feed's stadium + hand filters are well designed \u2014 wants them on Predictions"
+   ]
+  },
+  {
+   "name": "Kevin Tran",
+   "profile": "Amateur, 5 yrs, $3k roll, 1u=$30. Books: DK, BetMGM, Caesars. Line shops; hunts +500..+700 on bottom-of-order power bats.",
+   "device": "desktop",
+   "goal": "Spot slot 7-9 hitters with real power whose prices are inflated by lineup position.",
+   "journey": [
+    "Predictions 1+ HR sorted by Lift; top 2 are #7 and #9 hitters \u2014 promising.",
+    "Notes 'Bobby Seager 30d HR/PA 5.0% (19 PA)' \u2014 tiny sample, no season/Statcast to verify.",
+    "Uses MIN LIFT slider; nothing for probability band (wants 10-18% = +450..+800).",
+    "Expands row: TB 1.5+, HRR \u2014 no barrel/EV.",
+    "Checks book prices manually in 3 tabs.",
+    "Places 3 bets, logs them in a notes app."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 360,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "Slot-adjusted xPA is genuinely smart \u2014 now let me filter by price band and show me his barrels.",
+   "pain_points": [
+    {
+     "id": "hr-board-lacks-longshot-filters",
+     "title": "Can't filter the HR board to a probability/odds band or by park/weather",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "No prob/odds band filter for the longshot range.",
+     "evidence": "Only filters: teams, status, lineup confirmed, MIN LIFT slider (-10..+15, pitchhawk.js:978)",
+     "suggested_fix": "Add prob range (e.g. 12-25%) / fair-odds range filter, park, roof, wind-out, platoon, and saved presets"
+    },
+    {
+     "id": "no-statcast-power-metrics",
+     "title": "No barrel%, EV, hard-hit, launch angle or ISO for batters",
+     "area": "player-detail",
+     "severity": 4,
+     "detail": "Small 30d PA samples with no power metrics to back them up.",
+     "evidence": "whyLines pitchhawk.js:1697-1716 only 30d HR/PA, opp allows, H2H, slot/xPA",
+     "suggested_fix": "Add power profile to row expansion: Barrel%, EV90, HardHit%, pulled-FB%, xISO (season + 30d)"
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook price, implied prob or edge on HR props",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Line-shopping across 3 books by hand.",
+     "evidence": "desk__pred_m_hr: columns are P(1+ HR) / LIFT / WHY; pitchhawk.js:22 'no odds are fetched'; /edge only for game markets",
+     "suggested_fix": "Add BOOK PRICE (best of user's books), IMPLIED %, NO-VIG FAIR and EDGE columns to the 1+ HR board; sort by edge"
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a bet at a price and track ROI/CLV",
+     "area": "watchlist",
+     "severity": 2,
+     "detail": "Logs bets elsewhere.",
+     "evidence": "Star ([data-act=pin]) only pins; no stake/price fields; Data Feed grades model reads, not user bets",
+     "suggested_fix": "Add 'Log bet' on each row: book, price, stake; track ROI, CLV vs closing price, HR-prop record"
+    }
+   ],
+   "delights": [
+    "Slot -> xPA math surfaces bottom-order value explicitly",
+    "Lift multiplier (1.96x) is a quick power-spot read"
+   ]
+  },
+  {
+   "name": "Brianna Holt",
+   "profile": "Amateur, 1 yr, $500 roll, 1u=$5. Books: FD only. Bets 2-3 HR props + same-game HR parlays on weekends.",
+   "device": "phone",
+   "goal": "Pick 2 HR props for the night game and wait for lineups before betting.",
+   "journey": [
+    "Sees NYM @ WSH 'LINEUP PENDING' on Home.",
+    "Stars Alvarez-Longname, hopes to be notified when lineup posts.",
+    "Enables alerts \u2014 no per-player 'lineup posted' alert option.",
+    "Comes back 2 hours later; manually checks Predictions with Lineup confirmed only.",
+    "Can't tell when lineup was confirmed or if he's been scratched.",
+    "Places bet on FD; no in-app record."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 180,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "I just want a ping when my guy is in the lineup \u2014 that's it.",
+   "pain_points": [
+    {
+     "id": "lineup-confirmation-no-timing-or-alert",
+     "title": "Lineup \u2713 badge exists but no confirmation time, alert, or scratch handling",
+     "area": "watchlist",
+     "severity": 4,
+     "detail": "She has to poll manually for lineups.",
+     "evidence": "Home: 'lineups confirmed 6/7'; NYM @ WSH strongest read 'LINEUP PENDING'; alerts toggle has no per-player lineup-posted trigger",
+     "suggested_fix": "Push/alert when a starred batter's lineup posts or he's scratched; show 'confirmed 3:12 PM' timestamp"
+    },
+    {
+     "id": "no-american-fair-odds-display",
+     "title": "Probabilities never shown as American fair odds",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "Doesn't know what price makes 20% a good bet.",
+     "evidence": "P(1+ HR) cell shows '24% league 12%' only (pitchhawk.js:1214 probHead)",
+     "suggested_fix": "Show fair line next to every prob (24% -> +317) and a 'min price to bet' at the user's target edge"
+    },
+    {
+     "id": "mobile-model-record-ignores-market",
+     "title": "Phone 'Model record' summary always shows Hit record, even on 1+ HR",
+     "area": "mobile",
+     "severity": 2,
+     "detail": "Hit record on HR view confused her.",
+     "evidence": "pitchhawk.js:1483 summary built from calib.batter_hit only; phone__pred_m_hr: 'MODEL RECORD \u00b7 7 DAYS Hit 37%/62%'",
+     "suggested_fix": "Summarize the selected market's calibration (HR x/y) in the collapsed phone strip"
+    },
+    {
+     "id": "pregame-live-toggle-ambiguous",
+     "title": "Pregame/Live toggle reads as game status but is a 'rank reads for' mode",
+     "area": "predictions",
+     "severity": 2,
+     "detail": "'Live' highlighted while viewing an upcoming game.",
+     "evidence": "#/pred?status=upcoming shows 'Live' highlighted + 'Live mode: in-progress games first' over only upcoming games",
+     "suggested_fix": "Rename to 'Ranking: frozen pregame / live rest-of-game' and hide when status filter excludes live games"
+    }
+   ],
+   "delights": [
+    "'New here?' explainer and Guide are friendly",
+    "Star/watchlist is one tap"
+   ]
+  },
+  {
+   "name": "Andre Whitfield",
+   "profile": "Amateur, 4 yrs, $2k roll, 1u=$20. Books: DK, ESPN Bet, Hard Rock. Live HR bettor (re-entry in later innings at +500..+900).",
+   "device": "phone",
+   "goal": "During live games, find batters with 1-2 PA left whose live HR price has drifted long.",
+   "journey": [
+    "Predictions 1+ HR, Live mode; 'REST OF GAME 6% \u00b7 1.4 PA left' column \u2014 exactly what he wants.",
+    "On phone the rest-of-game value is in the expanded card only.",
+    "Mental math 6% -> +1567 fair; books offer +900 \u2014 no edge, but has to compute himself.",
+    "Opens Live Markets for NYY @ BOS; per-pitch calls good, but no live HR odds.",
+    "Auto-refresh every 8s keeps state; nice.",
+    "Bets one live HR at +1100 after manual calc."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 200,
+   "would_return": "yes",
+   "nps_0_10": 7,
+   "quote": "Rest-of-game HR% with PA left is gold \u2014 put the fair odds on it and I'm here every night.",
+   "pain_points": [
+    {
+     "id": "no-american-fair-odds-display",
+     "title": "Probabilities never shown as American fair odds",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Live speed requires fair odds pre-computed.",
+     "evidence": "P(1+ HR) cell shows '24% league 12%' only (pitchhawk.js:1214 probHead)",
+     "suggested_fix": "Show fair line next to every prob (24% -> +317) and a 'min price to bet' at the user's target edge"
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook price, implied prob or edge on HR props",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "No live book price.",
+     "evidence": "desk__pred_m_hr: columns are P(1+ HR) / LIFT / WHY; pitchhawk.js:22 'no odds are fetched'; /edge only for game markets",
+     "suggested_fix": "Add BOOK PRICE (best of user's books), IMPLIED %, NO-VIG FAIR and EDGE columns to the 1+ HR board; sort by edge"
+    },
+    {
+     "id": "pregame-live-toggle-ambiguous",
+     "title": "Pregame/Live toggle reads as game status but is a 'rank reads for' mode",
+     "area": "predictions",
+     "severity": 2,
+     "detail": "'reads froze at first pitch' vs rest-of-game is confusing at first.",
+     "evidence": "#/pred?status=upcoming shows 'Live' highlighted + 'Live mode: in-progress games first' over only upcoming games",
+     "suggested_fix": "Rename to 'Ranking: frozen pregame / live rest-of-game' and hide when status filter excludes live games"
+    },
+    {
+     "id": "mobile-filter-row-clipped",
+     "title": "Phone market chips and results count clipped off-screen",
+     "area": "mobile",
+     "severity": 2,
+     "detail": "Clipped filter row.",
+     "evidence": "phone_hr_upcoming.png: results count shows '18 r', 'Starters' chip cut to 'St' with no scroll hint",
+     "suggested_fix": "Wrap chips or add fade+scroll affordance; move count under the filter bar"
+    }
+   ],
+   "delights": [
+    "REST OF GAME prob with remaining PA",
+    "Auto-refresh with 'polls every 8s' freshness stamp",
+    "Due-up card ('3RD UP') on Home"
+   ]
+  },
+  {
+   "name": "Lily Chen",
+   "profile": "Amateur, 2 yrs, $1k roll, 1u=$10. Books: DK, FD, Caesars. Spreadsheet person; tracks every HR prop with CLV.",
+   "device": "desktop",
+   "goal": "Build tonight's HR card, export to her tracker, and review last week's model HR accuracy.",
+   "journey": [
+    "Predictions 1+ HR, Upcoming, Lineup confirmed; 18 rows.",
+    "Export CSV: works; missing hand/park/weather/fair odds \u2014 adds them manually.",
+    "Calibration tile '41% / 15% landed/predicted' \u2014 reads it as model was badly wrong; unclear meaning.",
+    "Data Feed > 1+ HR: SAMPLE DATA banner; 10-pt bands.",
+    "No place to log her own bets/ROI in-app; tracker stays in Sheets."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "yes",
+   "nps_0_10": 7,
+   "quote": "Export is the best part \u2014 just put the columns I actually bet on into it.",
+   "pain_points": [
+    {
+     "id": "export-lacks-context-columns",
+     "title": "CSV export has no hand, park, weather, odds columns",
+     "area": "export",
+     "severity": 3,
+     "detail": "Has to enrich CSV manually.",
+     "evidence": "[data-act=pExport] pitchhawk.js:974 exports board rows only",
+     "suggested_fix": "Include hand, park HR factor, temp/wind, fair American odds; add Copy-to-sheet"
+    },
+    {
+     "id": "calibration-tiles-confusing-for-longshots",
+     "title": "HR calibration not readable at the 15-25% band where +300..+700 lives",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Calibration tile wording ambiguous.",
+     "evidence": "Pred tile '1+ HR CALIBRATION 41% / 15% landed/predicted \u00b7 small sample'; Data Feed bands are 10-pt (0-10, 10-20, 20-30)",
+     "suggested_fix": "Show HR calibration in 5-pt bands across 10-30%, with n and CI; explain 'landed/predicted' inline; default HR record view in Data Feed"
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a bet at a price and track ROI/CLV",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "No in-app bet/CLV tracking.",
+     "evidence": "Star ([data-act=pin]) only pins; no stake/price fields; Data Feed grades model reads, not user bets",
+     "suggested_fix": "Add 'Log bet' on each row: book, price, stake; track ROI, CLV vs closing price, HR-prop record"
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook price, implied prob or edge on HR props",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "No odds to compute edge.",
+     "evidence": "desk__pred_m_hr: columns are P(1+ HR) / LIFT / WHY; pitchhawk.js:22 'no odds are fetched'; /edge only for game markets",
+     "suggested_fix": "Add BOOK PRICE (best of user's books), IMPLIED %, NO-VIG FAIR and EDGE columns to the 1+ HR board; sort by edge"
+    }
+   ],
+   "delights": [
+    "One-click Export CSV that respects filters",
+    "Shareable filter URLs",
+    "Clear 'small sample' and DNP counts on tiles"
+   ]
+  }
+ ],
+ "top_cohort_issues": [
+  {
+   "id": "no-sportsbook-odds-on-props",
+   "title": "No sportsbook price, implied prob or edge on HR props",
+   "personas_affected": 7,
+   "avg_severity": 4.0,
+   "fix": "Add BOOK PRICE (best of user's books), IMPLIED %, NO-VIG FAIR and EDGE columns to the 1+ HR board; sort by edge"
+  },
+  {
+   "id": "no-american-fair-odds-display",
+   "title": "Probabilities never shown as American fair odds",
+   "personas_affected": 4,
+   "avg_severity": 3.5,
+   "fix": "Show fair line next to every prob (24% -> +317) and a 'min price to bet' at the user's target edge"
+  },
+  {
+   "id": "no-bet-slip-or-pick-tracking",
+   "title": "No way to log a bet at a price and track ROI/CLV",
+   "personas_affected": 4,
+   "avg_severity": 2.75,
+   "fix": "Add 'Log bet' on each row: book, price, stake; track ROI, CLV vs closing price, HR-prop record"
+  },
+  {
+   "id": "no-park-weather-on-hr-board",
+   "title": "Park HR factor, weather and wind absent from the HR board",
+   "personas_affected": 2,
+   "avg_severity": 4.0,
+   "fix": "Add a compact 'environment' chip per row/game (park HR% \u00b7 temp \u00b7 wind out/in to CF, roof) and filters 'wind out', 'park HR factor > +5%'"
+  },
+  {
+   "id": "no-handedness-platoon-on-prediction-rows",
+   "title": "Batter/pitcher handedness and platoon splits missing from Predictions",
+   "personas_affected": 2,
+   "avg_severity": 4.0,
+   "fix": "Show 'L vs R' badges per row, a platoon split (HR/PA vs this hand) and a 'platoon advantage only' filter"
+  },
+  {
+   "id": "no-statcast-power-metrics",
+   "title": "No barrel%, EV, hard-hit, launch angle or ISO for batters",
+   "personas_affected": 2,
+   "avg_severity": 4.0,
+   "fix": "Add power profile to row expansion: Barrel%, EV90, HardHit%, pulled-FB%, xISO (season + 30d)"
+  },
+  {
+   "id": "hr-board-lacks-longshot-filters",
+   "title": "Can't filter the HR board to a probability/odds band or by park/weather",
+   "personas_affected": 2,
+   "avg_severity": 4.0,
+   "fix": "Add prob range (e.g. 12-25%) / fair-odds range filter, park, roof, wind-out, platoon, and saved presets"
+  },
+  {
+   "id": "calibration-tiles-confusing-for-longshots",
+   "title": "HR calibration not readable at the 15-25% band where +300..+700 lives",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Show HR calibration in 5-pt bands across 10-30%, with n and CI; explain 'landed/predicted' inline; default HR record view in Data Feed"
+  },
+  {
+   "id": "export-lacks-context-columns",
+   "title": "CSV export has no hand, park, weather, odds columns",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Include hand, park HR factor, temp/wind, fair American odds; add Copy-to-sheet"
+  },
+  {
+   "id": "no-pitcher-hr-profile-or-pitch-mix",
+   "title": "No pitcher HR/9, barrel% allowed, FB% or pitch-mix vs batter damage by pitch",
+   "personas_affected": 1,
+   "avg_severity": 5.0,
+   "fix": "Pitcher card: HR/9, HR/FB, barrel% allowed, pitch mix %, and a batter-vs-pitch-type ISO matrix"
+  },
+  {
+   "id": "mobile-model-record-ignores-market",
+   "title": "Phone 'Model record' summary always shows Hit record, even on 1+ HR",
+   "personas_affected": 2,
+   "avg_severity": 2.5,
+   "fix": "Summarize the selected market's calibration (HR x/y) in the collapsed phone strip"
+  },
+  {
+   "id": "lift-vs-league-not-vs-market",
+   "title": "Ranking by lift over league rate is not a value signal",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Default sort to edge vs book when odds exist; keep lift as secondary context column"
+  },
+  {
+   "id": "wind-not-relative-to-park",
+   "title": "Wind shown as raw mph/direction, not blowing out/in relative to the field",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Translate to 'out to LF 12 mph' using park orientation and show estimated HR carry impact"
+  },
+  {
+   "id": "mobile-filter-row-clipped",
+   "title": "Phone market chips and results count clipped off-screen",
+   "personas_affected": 2,
+   "avg_severity": 2.0,
+   "fix": "Wrap chips or add fade+scroll affordance; move count under the filter bar"
+  },
+  {
+   "id": "lineup-confirmation-no-timing-or-alert",
+   "title": "Lineup \u2713 badge exists but no confirmation time, alert, or scratch handling",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Push/alert when a starred batter's lineup posts or he's scratched; show 'confirmed 3:12 PM' timestamp"
+  },
+  {
+   "id": "pregame-live-toggle-ambiguous",
+   "title": "Pregame/Live toggle reads as game status but is a 'rank reads for' mode",
+   "personas_affected": 2,
+   "avg_severity": 2.0,
+   "fix": "Rename to 'Ranking: frozen pregame / live rest-of-game' and hide when status filter excludes live games"
+  },
+  {
+   "id": "game-detail-hidden-behind-home",
+   "title": "'Open game' jumps to Home with a pill expanded instead of a game page",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Open an in-place drawer or dedicated #/game/<pk> page with back to the filtered board"
+  },
+  {
+   "id": "no-historical-graded-export",
+   "title": "No export of graded historical reads",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Add 'Export graded reads' on Data Feed with prob, outcome, timestamp, park, hand"
+  },
+  {
+   "id": "search-results-lack-hr-context",
+   "title": "Search finds players but shows no prop/HR context in results",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Show today's P(1+ HR), fair odds and lineup status in each search hit"
+  }
+ ]
+}

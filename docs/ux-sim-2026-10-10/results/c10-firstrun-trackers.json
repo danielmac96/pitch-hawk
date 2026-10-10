@@ -1,0 +1,705 @@
+{
+ "cohort": "c10-firstrun-trackers",
+ "cohort_summary": "First-timers (5) understood the core idea quickly thanks to the one-line 'New here?' banner and a solid glossary, and found search, the player panel and URL-encoded filters genuinely good; but the first question every betting-literate visitor asked was 'vs what price?', and the Guide opens by saying nothing here is a price or pick. Jargon (FROZEN, BASE, pts, reads, 'Rank reads for') lives only in a modal, the hint shows only on Home, and the trust surfaces (single-slate Scorecard, BASE placeholders, SAMPLE-DATA feed) don't yet close the deal. Returning trackers (5) hit a harder wall: the star is a same-day watch flag (batter or game only, not a market, no pitcher props), pins are silently deleted after the slate, there is no date navigation (?date ignored) and no pick record, alerts only fire with the tab open, the watchlist is device-local, single picks can't be deep-linked or shared, and Export CSV is a one-market dump of today's board. Median NPS 5; nobody failed to understand the product, but almost nobody could complete a tracking workflow.",
+ "personas": [
+  {
+   "name": "Marcus Hale",
+   "profile": "Pro, 9 yrs, $40k bankroll, 1u=$400; books: Circa, Pinnacle (offshore ref), DK, FD; targets HR and hit props, alt totals; runs his own sheet",
+   "device": "desktop",
+   "goal": "First 3 minutes: decide whether Pitch Hawk's prop reads are worth adding as a second opinion to his model.",
+   "journey": [
+    "Lands on #/home; skims 'Today's slate' and the 'New here?' banner; understands lift = model minus league in one sentence.",
+    "Looks at the four Live Decision cards; 'DUE UP · PREGAME · FROZEN Juan Judge 23% +10.4 pts' — immediately asks 'vs what price?'.",
+    "Clicks 'How to read the board'; Guide opens with 'Nothing here is a price or a pick' — reads that as 'not for bettors'.",
+    "Jumps to Predictions > 1+ HR; sees 1+ HR calibration tile and BASE tags; no odds column, no edge sort.",
+    "Exports CSV to merge with his own sheet; the columns are clean but there is no line/price to compute edge.",
+    "Leaves at ~3 min: useful as a raw probability feed only if he joins prices himself."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 60,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "A 23% HR read is meaningless to me until I see it next to +330 — you've built the hard half and left out the half I bet on.",
+   "pain_points": [
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or edge next to any prop read",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Every first impression card is a probability with a league anchor; a pro's first question is 'edge vs the book' and the app can't answer it.",
+     "evidence": "#/pred rows show prob / league / lift only; frontend/copy.js:88 marketsNote 'model-fair probabilities · not prices'; CSV header in pitchhawk.js:1017 predCsv has no odds column",
+     "suggested_fix": "Show best-available American odds, implied/no-vig prob and edge (model − no-vig) per prop row; sort by edge; label 'no line' explicitly when a book has none."
+    },
+    {
+     "id": "guide-disclaims-price-and-pick",
+     "title": "Guide opens with 'Nothing here is a price or a pick' to an audience that came to make picks",
+     "area": "onboarding",
+     "severity": 3,
+     "detail": "The Guide's first sentence tells a betting-literate visitor this isn't for picks — undercuts the wagering-on product.",
+     "evidence": "Guide overlay ([data-act=ovOpen][data-arg=help]); frontend/copy.js:121-123 guideIntro",
+     "suggested_fix": "Keep the compliance line in the footer, but lead the Guide with a 30-second 'how to turn a read into a pick': read -> compare to the book's implied % -> edge. Add a short 'what Pitch Hawk is / isn't' section rather than opening with a negative."
+    },
+    {
+     "id": "csv-export-board-not-picks",
+     "title": "Export CSV dumps the filtered board for one market — no odds, no starred-only, no multi-market card, hidden on picks you made",
+     "area": "export",
+     "severity": 2,
+     "detail": "CSV is a good start for a pro's pipeline but lacks a stable player/game id and odds columns to join on.",
+     "evidence": "pitchhawk-hr-2026-10-10.csv header: rank,player,team,slot,opposing_starter,game,status,probability,league_rate,lift_pts,xpa,form_30d_rate,result (frontend/pitchhawk.js:1017-1054)",
+     "suggested_fix": "Add 'Export my card' (starred picks across markets, with date, line/price/stake columns) and a date-range export of past graded reads for personal tracking sheets."
+    }
+   ],
+   "delights": [
+    "Lift explained in one sentence on the banner",
+    "CSV export with result column and dated filename",
+    "Calibration tile visible on Predictions"
+   ]
+  },
+  {
+   "name": "Priya Nandakumar",
+   "profile": "Amateur, 2 seasons, $1,000 bankroll, 1u=$20; FanDuel and DraftKings; 1+ hit ladders and HR longshots; follows Twitter cappers",
+   "device": "phone",
+   "goal": "On her phone at lunch, figure out in under 3 minutes what the app is and whether she can find 2-3 hit props for tonight.",
+   "journey": [
+    "Opens on phone; header shows only icon buttons (search, ?) with no labels; sees Today's slate and a 'New here?' card.",
+    "Reads 'lift is how far above or below it the model leans' — gets the idea but 'pts' vs '%' trips her ('is +10 pts +10%?').",
+    "Taps 'How to read the board'; glossary is a long list — scrolls, finds xPA, Frozen, Base; closes.",
+    "Scrolls Live Decisions carousel; 'FROM ORDER', 'WIN PROB', 'LIVE CALL' tags read as noise.",
+    "Taps Predictions; 1+ Hit cards; can find top rows but every card says 'vs league', nothing about the FD price.",
+    "Stars two batters; WATCHING row appears at the top but runs off-screen to the right."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 110,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "Once I got that 'pts' just means points above average it was easy, but I needed the Guide open next to the board to read it.",
+   "pain_points": [
+    {
+     "id": "jargon-without-inline-definitions",
+     "title": "Lift / pts / xPA / BASE / FROZEN / 'reads' / 'Rank reads for' are only defined inside a modal",
+     "area": "onboarding",
+     "severity": 4,
+     "detail": "FROZEN, BASE, FROM ORDER, LINEUP ✓, 'pts' and 'reads' all appear in the first screen; definitions sit in a modal she has to keep reopening.",
+     "evidence": "Home cards: 'PREGAME · FROZEN', 'STRONGEST READ · LINEUP ✓ · FROZEN', 'RANK READS FOR Pregame|Live'; BASE tags in player overlay; glossary only at frontend/copy.js:124-136",
+     "suggested_fix": "Make every tag (FROZEN, BASE, LINEUP ✓, lift pills, 'pts') a tooltip/tap-target that shows its glossary line; rename 'reads' -> 'model %' and 'pts' -> 'pp vs league' at least on first visit; add a one-line caption to the Pregame/Live ranking toggle."
+    },
+    {
+     "id": "phone-watch-row-overflows",
+     "title": "On phone the WATCHING row runs off-screen; the Alerts toggle is hidden behind horizontal scroll and the toast covers the first card",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "After starring, the Watching row clips the second pill and hides the alerts toggle; toast covers the first card.",
+     "evidence": "work/c10-firstrun-trackers/phone_watch_full.png (390px): second pill cut at right edge, bell chip not visible; toast overlaps Live Decisions",
+     "suggested_fix": "On phone collapse Watching into a count chip ('★ 2') that opens a sheet with the pills and the alerts toggle; auto-dismiss the toast."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or edge next to any prop read",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "She still has to open FanDuel and eyeball whether 52% is good at the listed price.",
+     "evidence": "#/pred rows show prob / league / lift only; frontend/copy.js:88 marketsNote 'model-fair probabilities · not prices'; CSV header in pitchhawk.js:1017 predCsv has no odds column",
+     "suggested_fix": "Show best-available American odds, implied/no-vig prob and edge (model − no-vig) per prop row; sort by edge; label 'no line' explicitly when a book has none."
+    }
+   ],
+   "delights": [
+    "The New here? card is short and plain English",
+    "Bottom tab bar on phone is easy",
+    "Star is one tap"
+   ]
+  },
+  {
+   "name": "Dmitri Volkov",
+   "profile": "Pro syndicate runner, $250k shared bankroll, 1u=$2.5k; Pinnacle, Circa, BetOnline; game totals and moneylines, some K props",
+   "device": "desktop",
+   "goal": "Assess trust: does the model publish an honest track record he can audit before he spends time on it?",
+   "journey": [
+    "Lands on Home; Scorecard catches his eye first: '1+ HIT READS 10/27 · 37% model said 62%', 'TOTALS CALLED 2/2'.",
+    "Looks for a verdict / CI / season view on the Scorecard — none; 'Yesterday' column only has favourites and totals.",
+    "Opens Guide; appreciates Calibration and Brier skill definitions.",
+    "Goes to Data Feed for the long-run record; sees 'SAMPLE DATA — none of these reads are real' on this environment.",
+    "Checks Starters (K props): BASE tag says they are placeholders — discounts them entirely.",
+    "Concludes the transparency intent is good but the evidence is not there yet."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 90,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "I love that you grade yourselves in public, but a 27-read scorecard with no context and a sample-data feed isn't a track record.",
+   "pain_points": [
+    {
+     "id": "scorecard-lacks-context",
+     "title": "Scorecard / calibration tiles give raw landed-vs-predicted with no verdict, sample-size or link to the full record",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "First trust signal is a single-slate tally with no sample size, verdict or path to a full record.",
+     "evidence": "Home SCORECARD '1+ HIT READS 10/27 · 37% model said 62%' (frontend/pitchhawk.js:2026-2043); 'small sample' only appears on Predictions calibration tiles (pitchhawk.js:1462)",
+     "suggested_fix": "Add a verdict line ('ran cold vs model, n=27, within/outside expected range'), a 'see full record ›' link to Data Feed with the same market/day, and a season-to-date row so one bad slate is not the first trust signal."
+    },
+    {
+     "id": "data-feed-sample-data-label",
+     "title": "Data Feed track record is labelled SAMPLE DATA — the main long-run trust surface is not real here",
+     "area": "datafeed",
+     "severity": 3,
+     "detail": "The deep record surface is a fixture here, so he cannot audit anything long-run.",
+     "evidence": "#/data 'NOT AVAILABLE YET · SAMPLE DATA — /api/graded isn't deployed here' (frontend/copy.js:186)",
+     "suggested_fix": "Ship /graded so the record is real; until then link Home Scorecard to the per-day accuracy that is real rather than a fixture."
+    },
+    {
+     "id": "base-placeholder-models-undermine-trust",
+     "title": "BASE tag openly calls several props placeholders, mixed in with trained reads at equal visual weight",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "K/Outs props openly flagged as placeholders; no separate record to tell if they are usable.",
+     "evidence": "Player overlay: 'H+R+RBI 1+ 75% BASE', 'TB 1.5+ 40% BASE'; frontend/copy.js:98-101 startersNote; glossary 'Base' copy.js:133",
+     "suggested_fix": "Visually demote BASE values (muted, no lift pill), group them under 'experimental', and show their own graded record so a user can decide whether to trust them."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or edge next to any prop read",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Game totals/moneylines show model % but no market number or CLV to judge against.",
+     "evidence": "#/pred rows show prob / league / lift only; frontend/copy.js:88 marketsNote 'model-fair probabilities · not prices'; CSV header in pitchhawk.js:1017 predCsv has no odds column",
+     "suggested_fix": "Show best-available American odds, implied/no-vig prob and edge (model − no-vig) per prop row; sort by edge; label 'no line' explicitly when a book has none."
+    }
+   ],
+   "delights": [
+    "Scorecard 'graded after the final out' is the right instinct",
+    "Guide defines Calibration and Brier skill",
+    "'Pending is never a miss' and DNP voiding stated plainly"
+   ]
+  },
+  {
+   "name": "Keisha Brown",
+   "profile": "Amateur DFS-to-props convert, $500 bankroll, 1u=$10; PrizePicks, Underdog, DK Pick6; H+R+RBI and TB props",
+   "device": "phone",
+   "goal": "See whether the app covers the pick'em markets she plays (H+R+RBI, total bases) and how quickly she can find tonight's best.",
+   "journey": [
+    "Opens Home on phone; reads New here? card; taps 'Got it'.",
+    "Uses Search (icon) for 'Judge' — results appear instantly, taps Juan Judge; player panel shows 1+ HIT, 1+ HR, H+R+RBI 1+ 75% BASE, TB 1.5+ 40% BASE.",
+    "Doesn't know if BASE means 'baseline' or 'bad'; taps it — nothing happens; back to Guide to find 'Base'.",
+    "Goes to Predictions > 1+ HRR; sees rows, but no pick'em line (e.g. 1.5 H+R+RBI) and TB is not a market chip.",
+    "Tries to share Judge's panel with her group chat: URL is just #/home, no share button."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 75,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "Search is fast and the player card is great, but I can't send it to anyone and I don't know if BASE numbers are worth trusting.",
+   "pain_points": [
+    {
+     "id": "base-placeholder-models-undermine-trust",
+     "title": "BASE tag openly calls several props placeholders, mixed in with trained reads at equal visual weight",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Her core markets (HRR, TB) are exactly the ones tagged BASE, with no explanation inline.",
+     "evidence": "Player overlay: 'H+R+RBI 1+ 75% BASE', 'TB 1.5+ 40% BASE'; frontend/copy.js:98-101 startersNote; glossary 'Base' copy.js:133",
+     "suggested_fix": "Visually demote BASE values (muted, no lift pill), group them under 'experimental', and show their own graded record so a user can decide whether to trust them."
+    },
+    {
+     "id": "jargon-without-inline-definitions",
+     "title": "Lift / pts / xPA / BASE / FROZEN / 'reads' / 'Rank reads for' are only defined inside a modal",
+     "area": "onboarding",
+     "severity": 3,
+     "detail": "BASE tag isn't tappable; she has to hunt the glossary.",
+     "evidence": "Home cards: 'PREGAME · FROZEN', 'STRONGEST READ · LINEUP ✓ · FROZEN', 'RANK READS FOR Pregame|Live'; BASE tags in player overlay; glossary only at frontend/copy.js:124-136",
+     "suggested_fix": "Make every tag (FROZEN, BASE, LINEUP ✓, lift pills, 'pts') a tooltip/tap-target that shows its glossary line; rename 'reads' -> 'model %' and 'pts' -> 'pp vs league' at least on first visit; add a one-line caption to the Pregame/Live ranking toggle."
+    },
+    {
+     "id": "no-pick-share-or-deeplink",
+     "title": "URL keeps tab filters but not an opened row, player panel or a specific pick; no share button or shareable card",
+     "area": "other",
+     "severity": 4,
+     "detail": "Player overlay isn't in the URL; no share button for a pick.",
+     "evidence": "After [data-act=pOpen] URL stays '#/pred'; player overlay not in routeOf (frontend/pitchhawk.js:270-298); no share UI",
+     "suggested_fix": "Add 'Share' on a player row/overlay that copies a deep link (#/pred?m=hr&player=<id>) and a text/image snippet ('Judge 1+ HR · model 23% · league 13%') for Discord/X."
+    }
+   ],
+   "delights": [
+    "Search is instant and fuzzy across batters, starters, teams",
+    "Player panel puts every read + 30d form + matchup in one place"
+   ]
+  },
+  {
+   "name": "Tom Ellery",
+   "profile": "Semi-pro, 5 yrs, $8k bankroll, 1u=$80; BetMGM, Caesars, ESPN Bet; live in-game totals and next-inning bets",
+   "device": "desktop",
+   "goal": "First visit from a friend's link to #/pred?m=hr&team=NYY; figure out if live markets are usable for in-game betting.",
+   "journey": [
+    "Opens the shared deep link in a fresh browser; lands directly on Predictions filtered to NYY HR — filters survive, good.",
+    "No 'New here?' banner on this tab; 'ranked by lift over the league rate at the batter's xPA' needs decoding.",
+    "Clicks Guide; reads Lift, xPA, Frozen; understands pregame reads freeze at first pitch.",
+    "Goes to Live Markets; per-pitch calls are interesting but no live line to compare to.",
+    "Returns to Home; 'RANK READS FOR Pregame | Live' toggle — unsure what it changes."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 120,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "The link my buddy sent opened exactly the right board, but nothing on that page told me how to read it.",
+   "pain_points": [
+    {
+     "id": "onboarding-hint-home-only",
+     "title": "'New here?' banner only renders on Home; deep links into Predictions/Live get no orientation",
+     "area": "onboarding",
+     "severity": 3,
+     "detail": "Deep-link arrivals never see the onboarding hint.",
+     "evidence": "frontend/pitchhawk.js:1531-1535 (hint only in homeHtml); shared link #/pred?m=hr&team=NYY opened in a fresh browser shows no banner",
+     "suggested_fix": "Render the hint (dismissed once, globally) on whichever tab a first-time visitor lands on, with tab-specific copy (e.g. on Predictions: 'Ranked by lift = model % minus league %')."
+    },
+    {
+     "id": "pregame-live-ranking-toggle-unclear",
+     "title": "'RANK READS FOR Pregame | Live' toggle defaults to Live and is unexplained; first-timers can't tell what it changes",
+     "area": "home",
+     "severity": 2,
+     "detail": "Unlabelled ranking toggle on Home; defaults to Live mid-slate.",
+     "evidence": "Home title row toggle (desk_firstfold.png); frontend/pitchhawk.js:1957 area",
+     "suggested_fix": "Label it 'Show: Pregame picks / In-game calls' with a one-line caption, and default to Pregame before the first game starts."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or edge next to any prop read",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Live calls with no live price can't be turned into an in-game bet decision.",
+     "evidence": "#/pred rows show prob / league / lift only; frontend/copy.js:88 marketsNote 'model-fair probabilities · not prices'; CSV header in pitchhawk.js:1017 predCsv has no odds column",
+     "suggested_fix": "Show best-available American odds, implied/no-vig prob and edge (model − no-vig) per prop row; sort by edge; label 'no line' explicitly when a book has none."
+    }
+   ],
+   "delights": [
+    "Filter state in the URL works in a fresh browser",
+    "Glossary is concise and accurate",
+    "'polls every 8s' + updated timestamp are reassuring"
+   ]
+  },
+  {
+   "name": "Alicia Romero",
+   "profile": "Amateur, 4 seasons, $2,500 bankroll, 1u=$25; DraftKings and FanDuel; 3-5 HR props + a hit parlay daily",
+   "device": "desktop",
+   "goal": "Returning user: build tonight's card of 4 HR props, keep them in one place, and check how yesterday's card did.",
+   "journey": [
+    "Opens #/home; Watching row from last session is gone (yesterday's pins expired).",
+    "Looks for 'Yesterday' — Scorecard shows only PREGAME FAVOURITES 1–1 and TOTALS 2/2; her HR picks aren't there.",
+    "Tries #/home?date=2026-10-09 by hand; board silently stays on Oct 10.",
+    "Goes to Predictions > 1+ HR, stars 4 batters from rows; Watching pills appear at the top on every tab.",
+    "Wants a 'starred only' view to review her card — no such filter; Export CSV dumps all 25+ rows.",
+    "Notices a pill shows '1+ HR' for one batter, but for another shows a 1+ Hit read because that was 'stronger'."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 45,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "I starred four HR picks last night and this morning they're just gone — I have no idea how my card did.",
+   "pain_points": [
+    {
+     "id": "pins-expire-after-slate",
+     "title": "Starred batters/games silently disappear once their slate passes — no record of what you watched",
+     "area": "watchlist",
+     "severity": 5,
+     "detail": "Expired pins are deleted, so 'how did yesterday's card do' is unanswerable.",
+     "evidence": "frontend/pitchhawk.js:670-685 expirePins drops any pin whose date < today; localStorage ph-watch / ph-watch-seen",
+     "suggested_fix": "Move expired pins into a 'My past picks' list with their graded result instead of deleting them."
+    },
+    {
+     "id": "no-date-navigation-or-history",
+     "title": "No way to view yesterday's (or any past) board or picks; ?date= is silently ignored",
+     "area": "global-nav",
+     "severity": 5,
+     "detail": "No way to open yesterday's board; ?date ignored silently.",
+     "evidence": "#/pred?date=2026-10-09 and #/home?date=2026-10-09 both render today (Oct 10); routeOf has no date param (frontend/pitchhawk.js:270-298); yesterday exists only as 2 aggregate lines in the Scorecard (pitchhawk.js:2006-2017)",
+     "suggested_fix": "Add a date stepper (‹ Yesterday · Today · Tomorrow ›) on Home and Predictions, encode it as ?date=YYYY-MM-DD, and show graded results (hit/miss chips) for past slates."
+    },
+    {
+     "id": "no-watchlist-filter-on-predictions",
+     "title": "Predictions has no 'starred only' filter, so building a card means scanning 25+ rows each visit",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "No starred-only filter on Predictions or export.",
+     "evidence": "Predictions filter row (Status / Team / Lineup / Min lift) has no starred chip; routeOf has no such param (frontend/pitchhawk.js:279-287)",
+     "suggested_fix": "Add a '★ My card' status chip on Predictions and include it in CSV export."
+    },
+    {
+     "id": "pin-not-market-specific",
+     "title": "Pinning Judge from the 1+ HR board stores the batter, not the 1+ HR pick; the pill shows whichever market has higher lift",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "Pill shows the stronger market, not the HR pick she starred.",
+     "evidence": "frontend/pitchhawk.js:803-813 (watch pill picks hr vs hit by rel); pin key 'b:<id>' has no market",
+     "suggested_fix": "Store pins as b:<id>:<market> and show exactly the market the user starred."
+    }
+   ],
+   "delights": [
+    "Watching row follows her to every tab",
+    "Starring is one click from the row",
+    "Scorecard grades today automatically"
+   ]
+  },
+  {
+   "name": "Ben Okafor",
+   "profile": "Pro, 7 yrs, $60k bankroll, 1u=$600; Pinnacle, Circa, DK, FD, Caesars; player props across hits/HR/Ks; tracks CLV obsessively",
+   "device": "desktop",
+   "goal": "Returning user: log today's picks with the price he got and later compare to close (CLV) and to the model's result.",
+   "journey": [
+    "Stars 3 batters and tries to star a starter's K prop — Starters rows and the starter overlay have no star.",
+    "Looks for a way to attach price/units to a star — none; star is only a watch flag.",
+    "Exports CSV of 1+ HR filtered to his games to paste into his tracker; adds odds manually.",
+    "Wants a season record of his starred picks (W-L, units, ROI, CLV) — doesn't exist.",
+    "Reverts to his own spreadsheet; uses Pitch Hawk only as a probability source."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 60,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "Give me a bet slip that remembers my price and I'll live in this app; a star that disappears tomorrow is a bookmark, not a tracker.",
+   "pain_points": [
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "Star is a watch flag, not a pick: no market, line, odds, stake, result or running record",
+     "area": "watchlist",
+     "severity": 5,
+     "detail": "No pick object with market/price/stake/result; can't track record or CLV.",
+     "evidence": "Pin keys are only g:<pk>/b:<id> (frontend/pitchhawk.js:648, togglePin ~755); WATCHING pill shows no result/odds; no W-L/units/ROI anywhere",
+     "suggested_fix": "Turn ★ into 'Add to card': capture market + side + price (manual entry ok) + units; a 'My card' view with auto-grading from the existing result field, daily/season record, units, ROI and CLV if a closing line exists."
+    },
+    {
+     "id": "no-pitcher-prop-pins",
+     "title": "Starter props (Ks, Outs, ER…) cannot be starred at all",
+     "area": "watchlist",
+     "severity": 4,
+     "detail": "Ks/Outs props can't be starred at all.",
+     "evidence": "loadPins regex /^[gb]:\\S+$/ (frontend/pitchhawk.js:648); starter overlay has no pin button (pitchhawk.js:4372-4380)",
+     "suggested_fix": "Add a p:<id>:<market> pin type and star buttons on Starters rows and the starter overlay."
+    },
+    {
+     "id": "csv-export-board-not-picks",
+     "title": "Export CSV dumps the filtered board for one market — no odds, no starred-only, no multi-market card, hidden on picks you made",
+     "area": "export",
+     "severity": 3,
+     "detail": "CSV is board-centric, single market, no odds/pick columns.",
+     "evidence": "pitchhawk-hr-2026-10-10.csv header: rank,player,team,slot,opposing_starter,game,status,probability,league_rate,lift_pts,xpa,form_30d_rate,result (frontend/pitchhawk.js:1017-1054)",
+     "suggested_fix": "Add 'Export my card' (starred picks across markets, with date, line/price/stake columns) and a date-range export of past graded reads for personal tracking sheets."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or edge next to any prop read",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "No closing line stored or shown, so CLV is impossible in-app.",
+     "evidence": "#/pred rows show prob / league / lift only; frontend/copy.js:88 marketsNote 'model-fair probabilities · not prices'; CSV header in pitchhawk.js:1017 predCsv has no odds column",
+     "suggested_fix": "Show best-available American odds, implied/no-vig prob and edge (model − no-vig) per prop row; sort by edge; label 'no line' explicitly when a book has none."
+    }
+   ],
+   "delights": [
+    "CSV is clean and includes result once graded",
+    "Per-row 'result' grading already exists — half of a tracker is there"
+   ]
+  },
+  {
+   "name": "Hannah Cole",
+   "profile": "Amateur, 3 seasons, $800 bankroll, 1u=$10; FanDuel; same-game parlays around one or two favourite teams (NYY)",
+   "device": "phone",
+   "goal": "Returning user: pin the Yankees game and Judge, turn on alerts, and get pinged when Judge is up so she can bet live.",
+   "journey": [
+    "Searches 'yankees' -> New York Yankees team panel; pins the game; opens Juan Judge from search and stars him.",
+    "Taps 'Alerts off' chip — has to scroll the Watching row sideways to reach it on phone.",
+    "Toast says alerts only fire 'while this tab is open'; on iPhone Safari she locks the phone and gets nothing.",
+    "Later re-opens the app: Judge already batted; alert never reached her.",
+    "Watching pill does show live score and win prob — nice at a glance."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 50,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "'While this tab is open' means it's useless on my phone — I'm not going to stare at the page to get an alert.",
+   "pain_points": [
+    {
+     "id": "alerts-only-while-tab-open",
+     "title": "Alerts only fire while the tab is open; denied permission falls back to an in-page toast",
+     "area": "watchlist",
+     "severity": 5,
+     "detail": "Alerts depend on an open tab; no push/SMS/email, so the on-deck alert is missed on phone.",
+     "evidence": "frontend/copy.js:44 alertsOnBody '...while this tab is open'; copy.js:46 'notifications blocked — alerts show on this page'; toggleAlerts pitchhawk.js:692-700",
+     "suggested_fix": "Offer real push (PWA/web push) or email/SMS for pinned players at lineup-posted, on-deck and final; let the user pick which events."
+    },
+    {
+     "id": "phone-watch-row-overflows",
+     "title": "On phone the WATCHING row runs off-screen; the Alerts toggle is hidden behind horizontal scroll and the toast covers the first card",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Alerts toggle hidden off the right edge of the Watching row on 390px.",
+     "evidence": "work/c10-firstrun-trackers/phone_watch_full.png (390px): second pill cut at right edge, bell chip not visible; toast overlaps Live Decisions",
+     "suggested_fix": "On phone collapse Watching into a count chip ('★ 2') that opens a sheet with the pills and the alerts toggle; auto-dismiss the toast."
+    },
+    {
+     "id": "watchlist-device-local-no-sync",
+     "title": "Watchlist lives in localStorage — desktop pins don't exist on phone, and clearing site data loses them",
+     "area": "watchlist",
+     "severity": 2,
+     "detail": "Pins she made on her laptop last week aren't on her phone.",
+     "evidence": "frontend/pitchhawk.js:31 PINS_KEY 'ph-watch' in localStorage; no account/login anywhere",
+     "suggested_fix": "Lightweight account (magic link) or a 'sync code'/share-link that carries the card to another device."
+    }
+   ],
+   "delights": [
+    "Team search pin is quick",
+    "Watching pill shows live score + win prob swing",
+    "Clear in-page fallback when notifications are blocked"
+   ]
+  },
+  {
+   "name": "Rafael Ortiz",
+   "profile": "Amateur-to-semi-pro, $5k bankroll, 1u=$50; DK, FD, Fanatics; runs a 600-member Discord picks channel",
+   "device": "desktop",
+   "goal": "Returning user: share 3 picks with his Discord each day with a link that opens straight to each pick, then post results next day.",
+   "journey": [
+    "Opens Predictions > 1+ HR, expands Judge's row; copies URL — it's just '#/pred' (row state not encoded).",
+    "Opens player overlay via Search — URL doesn't change either; no Share button.",
+    "Falls back to sharing '#/pred?m=hr&team=NYY' — works in a fresh browser, but lands on 9 rows, not the pick.",
+    "Screenshots the row instead; no shareable card or text snippet.",
+    "Next day wants to post results: no yesterday view and his pins are gone; uses Data Feed but it's labelled SAMPLE DATA here."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 90,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Team/market filters in the URL are nice, but I need a link that opens one pick and a results page I can post tomorrow.",
+   "pain_points": [
+    {
+     "id": "no-pick-share-or-deeplink",
+     "title": "URL keeps tab filters but not an opened row, player panel or a specific pick; no share button or shareable card",
+     "area": "other",
+     "severity": 4,
+     "detail": "Can't deep-link a single pick or player; no share card.",
+     "evidence": "After [data-act=pOpen] URL stays '#/pred'; player overlay not in routeOf (frontend/pitchhawk.js:270-298); no share UI",
+     "suggested_fix": "Add 'Share' on a player row/overlay that copies a deep link (#/pred?m=hr&player=<id>) and a text/image snippet ('Judge 1+ HR · model 23% · league 13%') for Discord/X."
+    },
+    {
+     "id": "no-date-navigation-or-history",
+     "title": "No way to view yesterday's (or any past) board or picks; ?date= is silently ignored",
+     "area": "global-nav",
+     "severity": 4,
+     "detail": "Can't show yesterday's picks/results to his community.",
+     "evidence": "#/pred?date=2026-10-09 and #/home?date=2026-10-09 both render today (Oct 10); routeOf has no date param (frontend/pitchhawk.js:270-298); yesterday exists only as 2 aggregate lines in the Scorecard (pitchhawk.js:2006-2017)",
+     "suggested_fix": "Add a date stepper (‹ Yesterday · Today · Tomorrow ›) on Home and Predictions, encode it as ?date=YYYY-MM-DD, and show graded results (hit/miss chips) for past slates."
+    },
+    {
+     "id": "pins-expire-after-slate",
+     "title": "Starred batters/games silently disappear once their slate passes — no record of what you watched",
+     "area": "watchlist",
+     "severity": 4,
+     "detail": "Yesterday's starred picks deleted overnight.",
+     "evidence": "frontend/pitchhawk.js:670-685 expirePins drops any pin whose date < today; localStorage ph-watch / ph-watch-seen",
+     "suggested_fix": "Move expired pins into a 'My past picks' list with their graded result instead of deleting them."
+    }
+   ],
+   "delights": [
+    "Filtered views are shareable URLs that reproduce exactly",
+    "Back button doesn't step through every filter chip (history replaceState)"
+   ]
+  },
+  {
+   "name": "Grace Lindqvist",
+   "profile": "Pro (former trader), $25k bankroll, 1u=$250; Pinnacle, Circa, Kalshi; season-long tracking of model vs her own; desktop + phone",
+   "device": "desktop",
+   "goal": "Returning user: keep a running record of the board's top-lift reads she follows over the season and pull it into her notebook.",
+   "journey": [
+    "Exports today's 1+ Hit and 1+ HR CSVs separately — two files, one per market.",
+    "Looks for past-date export or a season CSV of graded reads — none; Data Feed has no export.",
+    "Searches a pitcher not on today's slate to check his history — 'Nothing on today's slate matches'.",
+    "Opens the app on her phone; her starred list from desktop isn't there.",
+    "Appreciates Predictions calibration tiles (7-day) but can't widen or export them."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 70,
+   "would_return": "yes",
+   "nps_0_10": 6,
+   "quote": "The data's clearly there server-side — just let me pull a date range of graded reads and sync my stars across devices.",
+   "pain_points": [
+    {
+     "id": "csv-export-board-not-picks",
+     "title": "Export CSV dumps the filtered board for one market — no odds, no starred-only, no multi-market card, hidden on picks you made",
+     "area": "export",
+     "severity": 4,
+     "detail": "Export is today-only and one market at a time; no historical/graded export.",
+     "evidence": "pitchhawk-hr-2026-10-10.csv header: rank,player,team,slot,opposing_starter,game,status,probability,league_rate,lift_pts,xpa,form_30d_rate,result (frontend/pitchhawk.js:1017-1054)",
+     "suggested_fix": "Add 'Export my card' (starred picks across markets, with date, line/price/stake columns) and a date-range export of past graded reads for personal tracking sheets."
+    },
+    {
+     "id": "search-today-only",
+     "title": "Search only finds players on today's slate — no lookup of a player/team history or a pitcher not starting today",
+     "area": "search",
+     "severity": 2,
+     "detail": "Search can't reach off-slate players or history.",
+     "evidence": "Search 'skenes' -> 'Nothing on today's slate matches' (frontend/copy.js:111, pitchhawk.js:4335-4357)",
+     "suggested_fix": "Return off-slate players with their next game and recent graded reads; let search jump to past dates once date nav exists."
+    },
+    {
+     "id": "watchlist-device-local-no-sync",
+     "title": "Watchlist lives in localStorage — desktop pins don't exist on phone, and clearing site data loses them",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "Watchlist doesn't sync desktop<->phone.",
+     "evidence": "frontend/pitchhawk.js:31 PINS_KEY 'ph-watch' in localStorage; no account/login anywhere",
+     "suggested_fix": "Lightweight account (magic link) or a 'sync code'/share-link that carries the card to another device."
+    },
+    {
+     "id": "no-date-navigation-or-history",
+     "title": "No way to view yesterday's (or any past) board or picks; ?date= is silently ignored",
+     "area": "global-nav",
+     "severity": 3,
+     "detail": "No past-date navigation to reconstruct a day.",
+     "evidence": "#/pred?date=2026-10-09 and #/home?date=2026-10-09 both render today (Oct 10); routeOf has no date param (frontend/pitchhawk.js:270-298); yesterday exists only as 2 aggregate lines in the Scorecard (pitchhawk.js:2006-2017)",
+     "suggested_fix": "Add a date stepper (‹ Yesterday · Today · Tomorrow ›) on Home and Predictions, encode it as ?date=YYYY-MM-DD, and show graded results (hit/miss chips) for past slates."
+    }
+   ],
+   "delights": [
+    "CSV includes league_rate, lift, xPA, form and result — analyst-friendly",
+    "Calibration tiles with 'small sample' caveat",
+    "Responsible-gambling footer is present but unobtrusive"
+   ]
+  }
+ ],
+ "top_cohort_issues": [
+  {
+   "id": "no-sportsbook-odds-on-props",
+   "title": "No sportsbook line, price or edge next to any prop read",
+   "personas_affected": 5,
+   "avg_severity": 4.0,
+   "fix": "Show best-available American odds, implied/no-vig prob and edge (model − no-vig) per prop row; sort by edge; label 'no line' explicitly when a book has none."
+  },
+  {
+   "id": "no-date-navigation-or-history",
+   "title": "No way to view yesterday's (or any past) board or picks; ?date= is silently ignored",
+   "personas_affected": 3,
+   "avg_severity": 4.0,
+   "fix": "Add a date stepper (‹ Yesterday · Today · Tomorrow ›) on Home and Predictions, encode it as ?date=YYYY-MM-DD, and show graded results (hit/miss chips) for past slates."
+  },
+  {
+   "id": "pins-expire-after-slate",
+   "title": "Starred batters/games silently disappear once their slate passes — no record of what you watched",
+   "personas_affected": 2,
+   "avg_severity": 4.5,
+   "fix": "Move expired pins into a 'My past picks' list with their graded result instead of deleting them."
+  },
+  {
+   "id": "csv-export-board-not-picks",
+   "title": "Export CSV dumps the filtered board for one market — no odds, no starred-only, no multi-market card, hidden on picks you made",
+   "personas_affected": 3,
+   "avg_severity": 3.0,
+   "fix": "Add 'Export my card' (starred picks across markets, with date, line/price/stake columns) and a date-range export of past graded reads for personal tracking sheets."
+  },
+  {
+   "id": "no-pick-share-or-deeplink",
+   "title": "URL keeps tab filters but not an opened row, player panel or a specific pick; no share button or shareable card",
+   "personas_affected": 2,
+   "avg_severity": 4.0,
+   "fix": "Add 'Share' on a player row/overlay that copies a deep link (#/pred?m=hr&player=<id>) and a text/image snippet ('Judge 1+ HR · model 23% · league 13%') for Discord/X."
+  },
+  {
+   "id": "jargon-without-inline-definitions",
+   "title": "Lift / pts / xPA / BASE / FROZEN / 'reads' / 'Rank reads for' are only defined inside a modal",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Make every tag (FROZEN, BASE, LINEUP ✓, lift pills, 'pts') a tooltip/tap-target that shows its glossary line; rename 'reads' -> 'model %' and 'pts' -> 'pp vs league' at least on first visit; add a one-line caption to the Pregame/Live ranking toggle."
+  },
+  {
+   "id": "phone-watch-row-overflows",
+   "title": "On phone the WATCHING row runs off-screen; the Alerts toggle is hidden behind horizontal scroll and the toast covers the first card",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "On phone collapse Watching into a count chip ('★ 2') that opens a sheet with the pills and the alerts toggle; auto-dismiss the toast."
+  },
+  {
+   "id": "base-placeholder-models-undermine-trust",
+   "title": "BASE tag openly calls several props placeholders, mixed in with trained reads at equal visual weight",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Visually demote BASE values (muted, no lift pill), group them under 'experimental', and show their own graded record so a user can decide whether to trust them."
+  },
+  {
+   "id": "no-bet-slip-or-pick-tracking",
+   "title": "Star is a watch flag, not a pick: no market, line, odds, stake, result or running record",
+   "personas_affected": 1,
+   "avg_severity": 5.0,
+   "fix": "Turn ★ into 'Add to card': capture market + side + price (manual entry ok) + units; a 'My card' view with auto-grading from the existing result field, daily/season record, units, ROI and CLV if a closing line exists."
+  },
+  {
+   "id": "alerts-only-while-tab-open",
+   "title": "Alerts only fire while the tab is open; denied permission falls back to an in-page toast",
+   "personas_affected": 1,
+   "avg_severity": 5.0,
+   "fix": "Offer real push (PWA/web push) or email/SMS for pinned players at lineup-posted, on-deck and final; let the user pick which events."
+  },
+  {
+   "id": "watchlist-device-local-no-sync",
+   "title": "Watchlist lives in localStorage — desktop pins don't exist on phone, and clearing site data loses them",
+   "personas_affected": 2,
+   "avg_severity": 2.5,
+   "fix": "Lightweight account (magic link) or a 'sync code'/share-link that carries the card to another device."
+  },
+  {
+   "id": "scorecard-lacks-context",
+   "title": "Scorecard / calibration tiles give raw landed-vs-predicted with no verdict, sample-size or link to the full record",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Add a verdict line ('ran cold vs model, n=27, within/outside expected range'), a 'see full record ›' link to Data Feed with the same market/day, and a season-to-date row so one bad slate is not the first trust signal."
+  },
+  {
+   "id": "no-pitcher-prop-pins",
+   "title": "Starter props (Ks, Outs, ER…) cannot be starred at all",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Add a p:<id>:<market> pin type and star buttons on Starters rows and the starter overlay."
+  },
+  {
+   "id": "guide-disclaims-price-and-pick",
+   "title": "Guide opens with 'Nothing here is a price or a pick' to an audience that came to make picks",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Keep the compliance line in the footer, but lead the Guide with a 30-second 'how to turn a read into a pick': read -> compare to the book's implied % -> edge. Add a short 'what Pitch Hawk is / isn't' section rather than opening with a negative."
+  },
+  {
+   "id": "data-feed-sample-data-label",
+   "title": "Data Feed track record is labelled SAMPLE DATA — the main long-run trust surface is not real here",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Ship /graded so the record is real; until then link Home Scorecard to the per-day accuracy that is real rather than a fixture."
+  },
+  {
+   "id": "onboarding-hint-home-only",
+   "title": "'New here?' banner only renders on Home; deep links into Predictions/Live get no orientation",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Render the hint (dismissed once, globally) on whichever tab a first-time visitor lands on, with tab-specific copy (e.g. on Predictions: 'Ranked by lift = model % minus league %')."
+  },
+  {
+   "id": "no-watchlist-filter-on-predictions",
+   "title": "Predictions has no 'starred only' filter, so building a card means scanning 25+ rows each visit",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Add a '★ My card' status chip on Predictions and include it in CSV export."
+  },
+  {
+   "id": "pin-not-market-specific",
+   "title": "Pinning Judge from the 1+ HR board stores the batter, not the 1+ HR pick; the pill shows whichever market has higher lift",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Store pins as b:<id>:<market> and show exactly the market the user starred."
+  },
+  {
+   "id": "pregame-live-ranking-toggle-unclear",
+   "title": "'RANK READS FOR Pregame | Live' toggle defaults to Live and is unexplained; first-timers can't tell what it changes",
+   "personas_affected": 1,
+   "avg_severity": 2.0,
+   "fix": "Label it 'Show: Pregame picks / In-game calls' with a one-line caption, and default to Pregame before the first game starts."
+  },
+  {
+   "id": "search-today-only",
+   "title": "Search only finds players on today's slate — no lookup of a player/team history or a pitcher not starting today",
+   "personas_affected": 1,
+   "avg_severity": 2.0,
+   "fix": "Return off-slate players with their next game and recent graded reads; let search jump to past dates once date nav exists."
+  }
+ ]
+}

@@ -1,0 +1,675 @@
+{
+ "cohort": "c05-dfs-pickem",
+ "cohort_summary": "Pick'em players (3 pros, 7 amateurs, 8 on phone) found real value in the 1+ Hit / 1+ HR boards sorted by Prob (1+ Hit maps to Hits 0.5 More) plus Upcoming/Lineup-confirmed filters and fast search. But the product does not speak pick'em: no posted line, every starter has the same fixed O 5.5 Ks / O 16.5 outs, only the over side, no breakeven (54.2%/57.7%) framing, key stats missing (HRR 1.5, fantasy score, rankable TB), starters not sortable, and no way to build or save a 2-6 pick entry. Pros can salvage the 'exp' means; amateurs mostly stall or abandon. 0 full successes, 8 partial, 2 failed.",
+ "personas": [
+  {
+   "name": "Marcus Bell",
+   "profile": "PRO. 7 yrs, full-time DFS/pick'em grinder. $25k bankroll, $200 units on 5/6-pick flex. PrizePicks, Underdog, Sleeper, Dabble. Has his own projections and scrapes boards.",
+   "device": "desktop",
+   "goal": "Before the 8:48/9:18 games, find every MLB prop where an outside projection disagrees with the posted line by enough to beat 54.2%, to blend with his own numbers.",
+   "journey": [
+    "Opens Predictions on desktop, sees ranking by 'lift over league rate' and immediately looks for a line column; none.",
+    "Switches to Starters: every pitcher shows 'O 5.5' Ks and 'O 16.5' outs, the same line for everyone, so it's clearly not PrizePicks' line (Bobby Henderson is 4.5 there in his head).",
+    "Notices 'exp 5.0' subtext and realizes the mean projection is the only usable output; has to derive P(less at 4.5) himself.",
+    "Tries Export CSV to join to his scraped board; gets probabilities at fixed thresholds, no mean+SD per stat for batters, so he can't reprice at other lines.",
+    "Checks MODEL RECORD; sees landed/predicted, not side hit-rate at pick'em lines; can't tell if it is worth weighting."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 240,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "Give me a mean and a distribution for every stat and I'll do the rest \u2014 a fixed O 5.5 for every starter is useless to me.",
+   "pain_points": [
+    {
+     "id": "no-posted-line-input-or-sync",
+     "title": "Can't enter or see the actual pick'em line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Every SP has the same 5.5 K line; he needs P at the actual posted line (4.5, 5.5, 6.5) to compare to breakeven.",
+     "evidence": "Predictions > Starters cards show fixed 'O 5.5 / O 16.5 / O 1.5' for every pitcher (work/c05-dfs-pickem/sp_open2.png); propCellHtml pitchhawk.js:2439-2442 renders only the model's own line",
+     "suggested_fix": "Let the user type or pick the posted line per player/stat (or ingest PrizePicks/Underdog boards); recompute P(more)/P(less) from the projected distribution at that line"
+    },
+    {
+     "id": "csv-lacks-line-side-fields",
+     "title": "Export CSV lacks line/side and starter prop columns for spreadsheet pros",
+     "area": "export",
+     "severity": 4,
+     "detail": "CSV can't be repriced at other lines; no SD or distribution.",
+     "evidence": "pExport pitchhawk.js:462/974; starter export includes props[k].line only (pitchhawk.js:1035)",
+     "suggested_fix": "Include P(more) and P(less) at each line, projected mean and SD per stat, so pros can join to scraped pick'em boards"
+    },
+    {
+     "id": "missing-pickem-stat-markets",
+     "title": "Core pick'em stats missing (HRR 1.5, TB 0.5/1.5 rankable, fantasy score, singles, pitcher fantasy)",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "Fantasy score and HRR 1.5 are his volume markets; neither exists.",
+     "evidence": "PRED_MARKETS pitchhawk.js:864 = 1+ Hit / 1+ HR / 1+ HRR / Win prob / Totals / Starters; TB 1.5+ only inside an expanded row (pitchhawk.js:1343); no fantasy score anywhere",
+     "suggested_fix": "Add rankable markets for H+R+RBI 1.5/2.5, Total Bases 0.5/1.5, Hitter Fantasy Score, Singles, Runs, RBI, Pitcher Fantasy Score; each with projection (mean) and P(more/less) at the line"
+    },
+    {
+     "id": "calibration-not-tied-to-pickem-hit-rate",
+     "title": "Record shows landed/predicted %, not 'how often the model side won'",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Can't assess model value at pick'em lines.",
+     "evidence": "MODEL RECORD '1+ HIT 37% / 62%' (desk_pred_rowopen.txt); no record at pick'em lines or by More/Less side",
+     "suggested_fix": "Report 'picks above 54.2%: X-Y (Z%)' by stat and line, with sample size and CI"
+    }
+   ],
+   "delights": [
+    "Expected Ks/outs/hits-allowed/ER/BB are all exposed for every starter.",
+    "Export CSV exists and respects filters.",
+    "WHY line with 30d per-PA rates and opposing SP allowed rate is good context."
+   ]
+  },
+  {
+   "name": "Priya Nandakumar",
+   "profile": "PRO. Ex-quant, pick'em + some sharp sportsbook play. $15k bankroll, $100 units on 2-pick and 3-pick power plays on Underdog and Betr. Thinks in terms of 57.7% (2-pick power) breakeven.",
+   "device": "desktop",
+   "goal": "Find 2-3 legs above 58% each with correlation awareness for an Underdog 3-pick, during the evening slate.",
+   "journey": [
+    "Lands on Home; Live Decisions cards are about win prob and next-pitch calls \u2014 irrelevant to her.",
+    "Goes to Predictions > 1+ Hit, sorts by Prob: top rows 77% \u2014 this maps cleanly to Hits 0.5 MORE, which she likes.",
+    "Wants to filter to upcoming games only; finds Status chips under Filters, sets Upcoming \u2014 2 games left.",
+    "Wants a 'min prob 58%' filter; only MIN LIFT exists, so she eyeballs.",
+    "Picks 2 hitters from TOR @ CLE plus the CLE starter's Ks LESS; no way to mark side or see correlation between batter hits and opposing SP Ks.",
+    "Writes legs on paper; no entry tray or EV for a 3-pick power."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "1+ Hit sorted by prob is basically Hits 0.5 More, which is great, but I need a breakeven line and a slip that tells me if three legs clear 57.7% each.",
+   "pain_points": [
+    {
+     "id": "no-breakeven-threshold-highlight",
+     "title": "Nothing measured against the 54.2% (or 57.7% 2-pick power) breakeven",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "Has to manually compare each prob to 57.7%; there is no breakeven toggle or min-prob filter.",
+     "evidence": "Board ranks by LIFT vs league (phone__pred.txt 'ranked by lift over the league rate'); MIN LIFT is the only threshold filter (pitchhawk.js:977-980)",
+     "suggested_fix": "Add 'Edge vs breakeven' column: max(P_more,P_less) minus a selectable breakeven (54.2% 6-flex, 54.3% 5-flex, 57.7% 2-power, 55% 3-power...) and a 'min win prob' filter"
+    },
+    {
+     "id": "no-correlation-guidance",
+     "title": "No same-game correlation info for stacking legs",
+     "area": "other",
+     "severity": 4,
+     "detail": "Same-game stacking is central to her approach; no joint probability.",
+     "evidence": "Nothing pairs batter props with the opposing starter's K/hits projection beyond the WHY line",
+     "suggested_fix": "In the entry tray, flag correlated/anti-correlated legs (e.g. batter MORE hits + opposing SP MORE Ks) and estimate joint prob"
+    },
+    {
+     "id": "no-entry-builder-or-pick-tracking",
+     "title": "No way to build a 2-6 pick entry",
+     "area": "other",
+     "severity": 4,
+     "detail": "No tray for legs, no EV per entry type.",
+     "evidence": "No slip/entry UI anywhere; star (data-act=pin) only accepts game/batter keys (pitchhawk.js:755 regex ^[gb]:) and does not carry a market or side",
+     "suggested_fix": "Add a 'Pick' (+) button per prop that adds player+stat+line+side to a sticky bottom tray; tray shows legs, joint hit prob, EV per entry type (power/flex), and copy/share"
+    },
+    {
+     "id": "over-only-no-less-side",
+     "title": "Only P(over) shown, no More/Less framing",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "Starter K LESS side must be computed as 1 minus the shown over %.",
+     "evidence": "pitchhawk.js:2441 '% over \u00b7 exp' text; batter markets are 1+ thresholds only (pitchhawk.js:864-868)",
+     "suggested_fix": "Show both sides as 'MORE 57% / LESS 43%' with the stronger side highlighted and a More/Less filter"
+    }
+   ],
+   "delights": [
+    "Prob sort on 1+ Hit gives a clean Hits 0.5 More ranking.",
+    "Status filter (Upcoming) and Lineup confirmed only filter are exactly what a pre-lock builder needs.",
+    "Opposing starter named on every batter row makes correlation reasoning possible manually."
+   ]
+  },
+  {
+   "name": "Dmitri Volkov",
+   "profile": "PRO. Lines-shopper across PrizePicks, Underdog, Sleeper, Dabble looking for stale/discrepant lines; $10k bankroll, $50-150 entries, 6-pick flex volume.",
+   "device": "phone",
+   "goal": "On phone, between games, check whether the pitcher Ks projection disagrees with a Dabble line he thinks is stale.",
+   "journey": [
+    "Opens app on phone, taps search icon, types pitcher name \u2014 search returns the starter instantly (good).",
+    "Tapping the result takes him to the game context, not a prop card with all K info and line; he hunts for the Ks number.",
+    "Goes to Predictions > Starters instead; chip row is cut off at 390px ('St...'), has to scroll the chips sideways to find it.",
+    "Expands the card: Ks O 5.5 46% over, exp 4.7. Dabble line is 4.5 \u2014 the app can't tell him P(more 4.5).",
+    "Gives up and uses his own Poisson estimate from the exp value."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 120,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "Search is fast, but the one number I need \u2014 probability at THIS line \u2014 isn't there.",
+   "pain_points": [
+    {
+     "id": "no-posted-line-input-or-sync",
+     "title": "Can't enter or see the actual pick'em line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Discrepancy hunting needs P at arbitrary lines.",
+     "evidence": "Predictions > Starters cards show fixed 'O 5.5 / O 16.5 / O 1.5' for every pitcher (work/c05-dfs-pickem/sp_open2.png); propCellHtml pitchhawk.js:2439-2442 renders only the model's own line",
+     "suggested_fix": "Let the user type or pick the posted line per player/stat (or ingest PrizePicks/Underdog boards); recompute P(more)/P(less) from the projected distribution at that line"
+    },
+    {
+     "id": "phone-market-chips-and-count-clipped",
+     "title": "Market chip row and result count clip off-screen on phone",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Starters chip and result count clipped at 390 wide.",
+     "evidence": "sp_open2.png at 390w: 'Starters' chip cut to 'St', result count cut to '14 r'",
+     "suggested_fix": "Make chip row a visible horizontal scroller with fade hint, or wrap to two rows; move count below"
+    },
+    {
+     "id": "projection-mean-buried",
+     "title": "Projection (expected count) is small grey subtext",
+     "area": "player-detail",
+     "severity": 3,
+     "detail": "exp value tiny grey subtext.",
+     "evidence": "'exp 4.7' rendered as ph-base-sub under 'O 5.5' (pitchhawk.js:2441; sp_open2.png)",
+     "suggested_fix": "Lead with 'Proj 4.7 vs line 5.5 \u2192 LESS' and show the delta; pick'em players compare projection to line first"
+    },
+    {
+     "id": "starters-not-sortable-or-rankable",
+     "title": "Starter props list can't be sorted by edge/prob",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Can't rank starters by strongest K side.",
+     "evidence": "predStarterTableHtml pitchhawk.js:1294-1320 has no sortHeadHtml; mobile cards just list 14 starters in game order",
+     "suggested_fix": "Sort starters by strongest side probability per stat (Ks default) and allow choosing the stat chip (Ks, Outs, Hits, ER, BB)"
+    }
+   ],
+   "delights": [
+    "Search overlay is fast and groups Batters vs Starting pitchers.",
+    "Expanded starter card on phone shows all five stats with exp values compactly."
+   ]
+  },
+  {
+   "name": "Jaylen Harris",
+   "profile": "AMATEUR. 24, plays PrizePicks nightly, $20 entries, 5-pick flex, ~$400 bankroll. Follows Twitter touts.",
+   "device": "phone",
+   "goal": "Quickly find 5 'locks' for a $20 5-pick flex before the 8:48 game.",
+   "journey": [
+    "Opens Home; sees win-prob cards and 'TOP CALL NOW' next-pitch \u2014 confused, he wants player props.",
+    "Taps Predictions; sees 1+ Hit list ranked by 'LIFT +12 pts', doesn't know if +12 is good for a More pick.",
+    "Sees '77%' and figures that's the More chance; isn't sure the line on PrizePicks (Hits 0.5) matches '1+ Hit'.",
+    "Wants H+R+RBI 1.5 (his favorite); 1+ HRR is a different line; gives up on that stat.",
+    "Stars 5 players; the star doesn't record stat or More/Less; screenshots the screen instead to build on PrizePicks."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 180,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "I just want to see 'More 77%' next to the line I'm looking at on PrizePicks \u2014 what's 'lift'?",
+   "pain_points": [
+    {
+     "id": "lift-jargon-not-pickem-language",
+     "title": "'Lift vs league' isn't how pick'em players think",
+     "area": "onboarding",
+     "severity": 4,
+     "detail": "Lift/league framing doesn't map to More/Less.",
+     "evidence": "Home 'New here?' card explains lift (phone__home.txt); no mention of More/Less or lines",
+     "suggested_fix": "Add a pick'em mode toggle that relabels the board: 'Hits 0.5 MORE 77%' instead of 'P(1+ HIT) 77% +12 pts'"
+    },
+    {
+     "id": "hrr-threshold-mismatch",
+     "title": "1+ H+R+RBI = 0.5 line; apps post 1.5",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "HRR 1.5 is the line he plays; app answers 0.5 only.",
+     "evidence": "probHead 'P(1+ H+R+RBI)' pitchhawk.js:868; apps almost always post HRR 1.5 (sometimes 2.5)",
+     "suggested_fix": "Add P(2+) and P(3+) HRR, or full distribution, so 1.5/2.5 lines are answerable"
+    },
+    {
+     "id": "no-entry-builder-or-pick-tracking",
+     "title": "No way to build a 2-6 pick entry",
+     "area": "other",
+     "severity": 4,
+     "detail": "Star is not a pick; no way to build the 5 legs.",
+     "evidence": "No slip/entry UI anywhere; star (data-act=pin) only accepts game/batter keys (pitchhawk.js:755 regex ^[gb]:) and does not carry a market or side",
+     "suggested_fix": "Add a 'Pick' (+) button per prop that adds player+stat+line+side to a sticky bottom tray; tray shows legs, joint hit prob, EV per entry type (power/flex), and copy/share"
+    },
+    {
+     "id": "pregame-frozen-reads-confuse-late-entry",
+     "title": "Reads freeze at first pitch; late-slate entry builders unsure what's current",
+     "area": "predictions",
+     "severity": 2,
+     "detail": "Live/Pregame toggle and 'reads froze' notice confuse him.",
+     "evidence": "'reads froze at first pitch' in Live mode banner (phone__pred.txt); Live/Pregame toggle default is Live",
+     "suggested_fix": "Default to Pregame/Upcoming-only when building entries; badge 'locks in 3h 29m' per game"
+    }
+   ],
+   "delights": [
+    "Big readable probability number on each card.",
+    "Bottom tab bar is easy to thumb."
+   ]
+  },
+  {
+   "name": "Kayla Ortiz",
+   "profile": "AMATEUR. 31, nurse, plays Underdog on weekends, $10 entries, 3-pick, $150 bankroll. Prefers pitcher strikeouts.",
+   "device": "phone",
+   "goal": "Pick 2 pitcher K props plus 1 hitter for a 3-pick, at lunch break, in under 5 minutes.",
+   "journey": [
+    "Goes to Predictions, has to swipe market chips sideways to find 'Starters' (clipped).",
+    "Sees list of 14 starters including FINAL and live games mixed in; no sort, has to scroll and mentally skip finished ones.",
+    "Reads 'O 5.5 \u00b7 BASE \u00b7 46% over' \u2014 doesn't know what BASE means; footnote says 'placeholders' which scares her off.",
+    "Underdog line for Henderson is 4.5; app shows 5.5 \u2014 thinks app is wrong.",
+    "Abandons and picks from Underdog's own 'trending' list."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 300,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "It says these are placeholders and the lines don't match my app, so why would I trust it?",
+   "pain_points": [
+    {
+     "id": "starter-props-labelled-placeholder",
+     "title": "Starter props tagged BASE / 'placeholders' undermines trust",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "'Placeholders' copy kills trust for starter props, her main market.",
+     "evidence": "copy.js:97 startersNote 'placeholders until trained models replace them'; 'props reserved until modeled' header",
+     "suggested_fix": "Either ship trained K/Outs models or show model backtest hit-rate at common lines so users know whether BASE is usable"
+    },
+    {
+     "id": "no-posted-line-input-or-sync",
+     "title": "Can't enter or see the actual pick'em line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Line mismatch reads as a bug.",
+     "evidence": "Predictions > Starters cards show fixed 'O 5.5 / O 16.5 / O 1.5' for every pitcher (work/c05-dfs-pickem/sp_open2.png); propCellHtml pitchhawk.js:2439-2442 renders only the model's own line",
+     "suggested_fix": "Let the user type or pick the posted line per player/stat (or ingest PrizePicks/Underdog boards); recompute P(more)/P(less) from the projected distribution at that line"
+    },
+    {
+     "id": "starters-not-sortable-or-rankable",
+     "title": "Starter props list can't be sorted by edge/prob",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "No sort; finals mixed in.",
+     "evidence": "predStarterTableHtml pitchhawk.js:1294-1320 has no sortHeadHtml; mobile cards just list 14 starters in game order",
+     "suggested_fix": "Sort starters by strongest side probability per stat (Ks default) and allow choosing the stat chip (Ks, Outs, Hits, ER, BB)"
+    },
+    {
+     "id": "phone-market-chips-and-count-clipped",
+     "title": "Market chip row and result count clip off-screen on phone",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Starters chip clipped.",
+     "evidence": "sp_open2.png at 390w: 'Starters' chip cut to 'St', result count cut to '14 r'",
+     "suggested_fix": "Make chip row a visible horizontal scroller with fade hint, or wrap to two rows; move count below"
+    }
+   ],
+   "delights": [
+    "Expanded card shows all 5 pitcher stats on one screen.",
+    "Status chips (Upcoming) exist once she found Filters."
+   ]
+  },
+  {
+   "name": "Tyler Brooks",
+   "profile": "AMATEUR. 27, sales rep, plays Sleeper picks + PrizePicks, $25 entries, 2-pick power and 4-pick. $500 bankroll. Knows 54.2% breakeven idea from YouTube.",
+   "device": "phone",
+   "goal": "Find picks that 'beat 54.2%' across hits and Ks for a 4-pick and a 2-pick tonight.",
+   "journey": [
+    "Opens Predictions, sorts by Prob on 1+ Hit; lots of 70%+ \u2014 thinks these are all 'auto' picks but realizes Hits 0.5 More on apps is often juiced/demon/goblin-adjusted.",
+    "Wants a filter 'only show > 54.2%'; only MIN LIFT slider, which is in points vs league \u2014 not the same.",
+    "Looks for Ks: Starters shows 5.5 for all; can't find the less side; does 100-46=54 in his head for Witt LESS \u2014 right at breakeven.",
+    "No place to tally the 4 legs and see combined odds vs 4-pick payout."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 200,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Show me which side beats 54.2% and let me stack them in a slip \u2014 that's literally the whole job.",
+   "pain_points": [
+    {
+     "id": "no-breakeven-threshold-highlight",
+     "title": "Nothing measured against the 54.2% (or 57.7% 2-pick power) breakeven",
+     "area": "predictions",
+     "severity": 5,
+     "detail": "Core mental model unsupported.",
+     "evidence": "Board ranks by LIFT vs league (phone__pred.txt 'ranked by lift over the league rate'); MIN LIFT is the only threshold filter (pitchhawk.js:977-980)",
+     "suggested_fix": "Add 'Edge vs breakeven' column: max(P_more,P_less) minus a selectable breakeven (54.2% 6-flex, 54.3% 5-flex, 57.7% 2-power, 55% 3-power...) and a 'min win prob' filter"
+    },
+    {
+     "id": "over-only-no-less-side",
+     "title": "Only P(over) shown, no More/Less framing",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Less side math done manually.",
+     "evidence": "pitchhawk.js:2441 '% over \u00b7 exp' text; batter markets are 1+ thresholds only (pitchhawk.js:864-868)",
+     "suggested_fix": "Show both sides as 'MORE 57% / LESS 43%' with the stronger side highlighted and a More/Less filter"
+    },
+    {
+     "id": "no-entry-builder-or-pick-tracking",
+     "title": "No way to build a 2-6 pick entry",
+     "area": "other",
+     "severity": 4,
+     "detail": "No entry builder.",
+     "evidence": "No slip/entry UI anywhere; star (data-act=pin) only accepts game/batter keys (pitchhawk.js:755 regex ^[gb]:) and does not carry a market or side",
+     "suggested_fix": "Add a 'Pick' (+) button per prop that adds player+stat+line+side to a sticky bottom tray; tray shows legs, joint hit prob, EV per entry type (power/flex), and copy/share"
+    },
+    {
+     "id": "no-posted-line-input-or-sync",
+     "title": "Can't enter or see the actual pick'em line",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Fixed 5.5 lines.",
+     "evidence": "Predictions > Starters cards show fixed 'O 5.5 / O 16.5 / O 1.5' for every pitcher (work/c05-dfs-pickem/sp_open2.png); propCellHtml pitchhawk.js:2439-2442 renders only the model's own line",
+     "suggested_fix": "Let the user type or pick the posted line per player/stat (or ingest PrizePicks/Underdog boards); recompute P(more)/P(less) from the projected distribution at that line"
+    }
+   ],
+   "delights": [
+    "1+ Hit probabilities are easy to compare once sorted by Prob.",
+    "Model record card is visible and honest about small samples."
+   ]
+  },
+  {
+   "name": "Sofia Reyes",
+   "profile": "AMATEUR. 35, teacher, Betr picks casual player, $5-10 entries, mostly hitters, total bases. $100 bankroll.",
+   "device": "phone",
+   "goal": "Find 3 total-bases More picks (TB 1.5) for a Betr entry before first pitch.",
+   "journey": [
+    "Opens Predictions; no Total Bases chip.",
+    "Expands a batter row by chance and discovers 'TB 1.5+ 51% \u00b7 exp 2.0 TB' inside the detail \u2014 buried.",
+    "Would need to expand 25+ rows one by one to compare TB; no sort on TB.",
+    "Gives up after expanding ~6 rows."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 420,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "The total bases number is in there, but I had to open every single player to find it.",
+   "pain_points": [
+    {
+     "id": "missing-pickem-stat-markets",
+     "title": "Core pick'em stats missing (HRR 1.5, TB 0.5/1.5 rankable, fantasy score, singles, pitcher fantasy)",
+     "area": "predictions",
+     "severity": 5,
+     "detail": "TB is only in row expand; not rankable/sortable.",
+     "evidence": "PRED_MARKETS pitchhawk.js:864 = 1+ Hit / 1+ HR / 1+ HRR / Win prob / Totals / Starters; TB 1.5+ only inside an expanded row (pitchhawk.js:1343); no fantasy score anywhere",
+     "suggested_fix": "Add rankable markets for H+R+RBI 1.5/2.5, Total Bases 0.5/1.5, Hitter Fantasy Score, Singles, Runs, RBI, Pitcher Fantasy Score; each with projection (mean) and P(more/less) at the line"
+    },
+    {
+     "id": "projection-mean-buried",
+     "title": "Projection (expected count) is small grey subtext",
+     "area": "player-detail",
+     "severity": 3,
+     "detail": "exp TB in subtext.",
+     "evidence": "'exp 4.7' rendered as ph-base-sub under 'O 5.5' (pitchhawk.js:2441; sp_open2.png)",
+     "suggested_fix": "Lead with 'Proj 4.7 vs line 5.5 \u2192 LESS' and show the delta; pick'em players compare projection to line first"
+    },
+    {
+     "id": "over-only-no-less-side",
+     "title": "Only P(over) shown, no More/Less framing",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "TB LESS side not shown.",
+     "evidence": "pitchhawk.js:2441 '% over \u00b7 exp' text; batter markets are 1+ thresholds only (pitchhawk.js:864-868)",
+     "suggested_fix": "Show both sides as 'MORE 57% / LESS 43%' with the stronger side highlighted and a More/Less filter"
+    }
+   ],
+   "delights": [
+    "Expanded row is rich: 1+ Hit, HR, HRR, TB, 30d rates, opposing SP in one card."
+   ]
+  },
+  {
+   "name": "Andre Lewis",
+   "profile": "AMATEUR. 22, college student, Dabble + PrizePicks, $5 6-pick flex lottos, chases HR and fantasy score. $60 bankroll.",
+   "device": "phone",
+   "goal": "Build a 6-pick flex with hitter fantasy score Mores and a couple HR picks.",
+   "journey": [
+    "Opens Predictions > 1+ HR: easy to find, sorted by lift \u2014 likes the HR list.",
+    "Looks for Fantasy Score; doesn't exist.",
+    "Stars 6 players; Watching list on Home shows them but not which stat/side he chose.",
+    "Goes to PrizePicks; can't remember which ones were HR vs fantasy."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "yes",
+   "nps_0_10": 6,
+   "quote": "HR list is fire, but no fantasy score and the star doesn't remember what I picked.",
+   "pain_points": [
+    {
+     "id": "missing-pickem-stat-markets",
+     "title": "Core pick'em stats missing (HRR 1.5, TB 0.5/1.5 rankable, fantasy score, singles, pitcher fantasy)",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "Fantasy score is PrizePicks/Dabble's flagship MLB stat.",
+     "evidence": "PRED_MARKETS pitchhawk.js:864 = 1+ Hit / 1+ HR / 1+ HRR / Win prob / Totals / Starters; TB 1.5+ only inside an expanded row (pitchhawk.js:1343); no fantasy score anywhere",
+     "suggested_fix": "Add rankable markets for H+R+RBI 1.5/2.5, Total Bases 0.5/1.5, Hitter Fantasy Score, Singles, Runs, RBI, Pitcher Fantasy Score; each with projection (mean) and P(more/less) at the line"
+    },
+    {
+     "id": "no-entry-builder-or-pick-tracking",
+     "title": "No way to build a 2-6 pick entry",
+     "area": "other",
+     "severity": 4,
+     "detail": "Star loses stat/side.",
+     "evidence": "No slip/entry UI anywhere; star (data-act=pin) only accepts game/batter keys (pitchhawk.js:755 regex ^[gb]:) and does not carry a market or side",
+     "suggested_fix": "Add a 'Pick' (+) button per prop that adds player+stat+line+side to a sticky bottom tray; tray shows legs, joint hit prob, EV per entry type (power/flex), and copy/share"
+    },
+    {
+     "id": "no-correlation-guidance",
+     "title": "No same-game correlation info for stacking legs",
+     "area": "other",
+     "severity": 2,
+     "detail": "No guidance for 6-leg stacking.",
+     "evidence": "Nothing pairs batter props with the opposing starter's K/hits projection beyond the WHY line",
+     "suggested_fix": "In the entry tray, flag correlated/anti-correlated legs (e.g. batter MORE hits + opposing SP MORE Ks) and estimate joint prob"
+    }
+   ],
+   "delights": [
+    "1+ HR board with opposing SP's HR/PA allowed in WHY is genuinely useful.",
+    "Star/watchlist persists across tabs."
+   ]
+  },
+  {
+   "name": "Megan Cho",
+   "profile": "AMATEUR. 29, data analyst, PrizePicks + Underdog, $20 5-pick flex, $800 bankroll; likes to verify models before trusting them.",
+   "device": "desktop",
+   "goal": "Decide whether the model is trustworthy enough to use for More/Less on hits tonight.",
+   "journey": [
+    "On desktop, Predictions shows calibration tiles: 1+ HIT 37%/62% landed/predicted, small sample.",
+    "Wants to know how picks above 54.2% performed as More/Less, not overall calibration; not available.",
+    "Looks for a reliability chart or history by line; Data Feed is SAMPLE DATA on localhost.",
+    "Decides she can't judge it this session."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 180,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Show me the hit-rate of the side you'd have recommended at the actual lines, not just average calibration.",
+   "pain_points": [
+    {
+     "id": "calibration-not-tied-to-pickem-hit-rate",
+     "title": "Record shows landed/predicted %, not 'how often the model side won'",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "Calibration shown but not in pick'em-decision terms.",
+     "evidence": "MODEL RECORD '1+ HIT 37% / 62%' (desk_pred_rowopen.txt); no record at pick'em lines or by More/Less side",
+     "suggested_fix": "Report 'picks above 54.2%: X-Y (Z%)' by stat and line, with sample size and CI"
+    },
+    {
+     "id": "starter-props-labelled-placeholder",
+     "title": "Starter props tagged BASE / 'placeholders' undermines trust",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "BASE tags without backtest.",
+     "evidence": "copy.js:97 startersNote 'placeholders until trained models replace them'; 'props reserved until modeled' header",
+     "suggested_fix": "Either ship trained K/Outs models or show model backtest hit-rate at common lines so users know whether BASE is usable"
+    },
+    {
+     "id": "no-breakeven-threshold-highlight",
+     "title": "Nothing measured against the 54.2% (or 57.7% 2-pick power) breakeven",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "No breakeven framing.",
+     "evidence": "Board ranks by LIFT vs league (phone__pred.txt 'ranked by lift over the league rate'); MIN LIFT is the only threshold filter (pitchhawk.js:977-980)",
+     "suggested_fix": "Add 'Edge vs breakeven' column: max(P_more,P_less) minus a selectable breakeven (54.2% 6-flex, 54.3% 5-flex, 57.7% 2-power, 55% 3-power...) and a 'min win prob' filter"
+    }
+   ],
+   "delights": [
+    "Up-front calibration tiles with 'small sample' disclaimers build honesty.",
+    "DNP counts shown explicitly."
+   ]
+  },
+  {
+   "name": "Chris Patel",
+   "profile": "AMATEUR. 40, plays Underdog pick'em while watching games, $10-20 entries, mostly 2-pick, $300 bankroll; sometimes builds entries mid-evening for late games.",
+   "device": "phone",
+   "goal": "At ~5:30pm with 3 games live, build a 2-pick from the two late games only.",
+   "journey": [
+    "Predictions defaults to Live mode with 'in-progress games first' \u2014 first 20 rows are games he can't play.",
+    "Opens Filters, taps Upcoming; now useful, 2 games.",
+    "Sorts by Prob; picks two 1+ Hit Mores. Wants to know lineup confirmed \u2014 LINEUP \u2713 only on desktop table, Lineup confirmed only filter helps.",
+    "Wants countdown to lock per game; sees time but not 'locks in'.",
+    "Builds on Underdog manually."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 90,
+   "would_return": "yes",
+   "nps_0_10": 7,
+   "quote": "Once I filtered to Upcoming it was quick \u2014 but it should start there when I'm building picks.",
+   "pain_points": [
+    {
+     "id": "pregame-frozen-reads-confuse-late-entry",
+     "title": "Reads freeze at first pitch; late-slate entry builders unsure what's current",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Default ordering puts unplayable live games first.",
+     "evidence": "'reads froze at first pitch' in Live mode banner (phone__pred.txt); Live/Pregame toggle default is Live",
+     "suggested_fix": "Default to Pregame/Upcoming-only when building entries; badge 'locks in 3h 29m' per game"
+    },
+    {
+     "id": "over-only-no-less-side",
+     "title": "Only P(over) shown, no More/Less framing",
+     "area": "pricing-odds",
+     "severity": 2,
+     "detail": "No More/Less labels.",
+     "evidence": "pitchhawk.js:2441 '% over \u00b7 exp' text; batter markets are 1+ thresholds only (pitchhawk.js:864-868)",
+     "suggested_fix": "Show both sides as 'MORE 57% / LESS 43%' with the stronger side highlighted and a More/Less filter"
+    },
+    {
+     "id": "no-entry-builder-or-pick-tracking",
+     "title": "No way to build a 2-6 pick entry",
+     "area": "other",
+     "severity": 3,
+     "detail": "Can't save the 2-pick.",
+     "evidence": "No slip/entry UI anywhere; star (data-act=pin) only accepts game/batter keys (pitchhawk.js:755 regex ^[gb]:) and does not carry a market or side",
+     "suggested_fix": "Add a 'Pick' (+) button per prop that adds player+stat+line+side to a sticky bottom tray; tray shows legs, joint hit prob, EV per entry type (power/flex), and copy/share"
+    }
+   ],
+   "delights": [
+    "Upcoming filter + Lineup confirmed only = fast late-slate shortlist.",
+    "Times shown with 'use my time' toggle."
+   ]
+  }
+ ],
+ "top_cohort_issues": [
+  {
+   "id": "no-posted-line-input-or-sync",
+   "title": "Can't enter or see the actual pick'em line",
+   "personas_affected": 4,
+   "avg_severity": 4.75,
+   "fix": "Let the user type or pick the posted line per player/stat (or ingest PrizePicks/Underdog boards); recompute P(more)/P(less) from the projected distribution at that line"
+  },
+  {
+   "id": "no-entry-builder-or-pick-tracking",
+   "title": "No way to build a 2-6 pick entry",
+   "personas_affected": 5,
+   "avg_severity": 3.8,
+   "fix": "Add a 'Pick' (+) button per prop that adds player+stat+line+side to a sticky bottom tray; tray shows legs, joint hit prob, EV per entry type (power/flex), and copy/share"
+  },
+  {
+   "id": "missing-pickem-stat-markets",
+   "title": "Core pick'em stats missing (HRR 1.5, TB 0.5/1.5 rankable, fantasy score, singles, pitcher fantasy)",
+   "personas_affected": 3,
+   "avg_severity": 4.33,
+   "fix": "Add rankable markets for H+R+RBI 1.5/2.5, Total Bases 0.5/1.5, Hitter Fantasy Score, Singles, Runs, RBI, Pitcher Fantasy Score; each with projection (mean) and P(more/less) at the line"
+  },
+  {
+   "id": "no-breakeven-threshold-highlight",
+   "title": "Nothing measured against the 54.2% (or 57.7% 2-pick power) breakeven",
+   "personas_affected": 3,
+   "avg_severity": 4.0,
+   "fix": "Add 'Edge vs breakeven' column: max(P_more,P_less) minus a selectable breakeven (54.2% 6-flex, 54.3% 5-flex, 57.7% 2-power, 55% 3-power...) and a 'min win prob' filter"
+  },
+  {
+   "id": "over-only-no-less-side",
+   "title": "Only P(over) shown, no More/Less framing",
+   "personas_affected": 4,
+   "avg_severity": 3.0,
+   "fix": "Show both sides as 'MORE 57% / LESS 43%' with the stronger side highlighted and a More/Less filter"
+  },
+  {
+   "id": "calibration-not-tied-to-pickem-hit-rate",
+   "title": "Record shows landed/predicted %, not 'how often the model side won'",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Report 'picks above 54.2%: X-Y (Z%)' by stat and line, with sample size and CI"
+  },
+  {
+   "id": "starter-props-labelled-placeholder",
+   "title": "Starter props tagged BASE / 'placeholders' undermines trust",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Either ship trained K/Outs models or show model backtest hit-rate at common lines so users know whether BASE is usable"
+  },
+  {
+   "id": "no-correlation-guidance",
+   "title": "No same-game correlation info for stacking legs",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "In the entry tray, flag correlated/anti-correlated legs (e.g. batter MORE hits + opposing SP MORE Ks) and estimate joint prob"
+  },
+  {
+   "id": "phone-market-chips-and-count-clipped",
+   "title": "Market chip row and result count clip off-screen on phone",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Make chip row a visible horizontal scroller with fade hint, or wrap to two rows; move count below"
+  },
+  {
+   "id": "projection-mean-buried",
+   "title": "Projection (expected count) is small grey subtext",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Lead with 'Proj 4.7 vs line 5.5 \u2192 LESS' and show the delta; pick'em players compare projection to line first"
+  },
+  {
+   "id": "starters-not-sortable-or-rankable",
+   "title": "Starter props list can't be sorted by edge/prob",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Sort starters by strongest side probability per stat (Ks default) and allow choosing the stat chip (Ks, Outs, Hits, ER, BB)"
+  },
+  {
+   "id": "pregame-frozen-reads-confuse-late-entry",
+   "title": "Reads freeze at first pitch; late-slate entry builders unsure what's current",
+   "personas_affected": 2,
+   "avg_severity": 2.5,
+   "fix": "Default to Pregame/Upcoming-only when building entries; badge 'locks in 3h 29m' per game"
+  },
+  {
+   "id": "csv-lacks-line-side-fields",
+   "title": "Export CSV lacks line/side and starter prop columns for spreadsheet pros",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Include P(more) and P(less) at each line, projected mean and SD per stat, so pros can join to scraped pick'em boards"
+  },
+  {
+   "id": "lift-jargon-not-pickem-language",
+   "title": "'Lift vs league' isn't how pick'em players think",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Add a pick'em mode toggle that relabels the board: 'Hits 0.5 MORE 77%' instead of 'P(1+ HIT) 77% +12 pts'"
+  },
+  {
+   "id": "hrr-threshold-mismatch",
+   "title": "1+ H+R+RBI = 0.5 line; apps post 1.5",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Add P(2+) and P(3+) HRR, or full distribution, so 1.5/2.5 lines are answerable"
+  }
+ ]
+}

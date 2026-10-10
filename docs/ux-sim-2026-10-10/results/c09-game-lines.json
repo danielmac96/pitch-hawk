@@ -1,0 +1,714 @@
+{
+ "cohort": "c09-game-lines",
+ "cohort_summary": "Game-market bettors find Pitch Hawk's Home slate fast and legible (WP, total pick, projected runs, strongest read per row) and the expanded game drawer usefully puts weather/wind/roof/ump/park in one grid, with home/away batter tabs, batting-order sort and starter O/U lines. But nothing is priced: win prob shows only the favourite as a %, with no fair American odds, no market line, no no-vig implied prob and no edge, even though Kalshi/ESPN odds and /edge/{pk} exist server-side. Markets this cohort lives on — F5, NRFI/YRFI, team totals, run line — are absent despite team-run means (mu_home/mu_away) already being computed. Every total shows 8.5 with unclear provenance, and the live total keeps a cashed 8.5 line. Game detail is an accordion on Home, not a page; the starter matchup is two last names with pregame form cells as dashes; there is no bullpen state (the model assumes a league-average pen) and no lineup news. Navigating game -> its props works only one way (Open game ›); WP/Total cells are inert, batter names in the pill aren't links, and Predictions has no game filter. Pros use it as a second-opinion number at best; amateurs like the weather grid and readability but can't tell if a % beats their price.",
+ "personas": [
+  {
+   "name": "Marcus Hale",
+   "profile": "PRO · 11 yrs · $150k roll, $1.5k unit · Pinnacle, Circa, Kalshi, BetOnline · sides & totals off his own power ratings",
+   "device": "desktop",
+   "goal": "Pre-lock (5:20 PM) sweep: compare the model's fair ML for TOR@CLE and NYM@WSH to his numbers and Pinnacle, fire anything >2% edge.",
+   "journey": [
+    "Lands on #/home; skips Live Decisions, scrolls to UPCOMING rows.",
+    "Reads 'CLE 57% · WIN PROB · PREGAME' — mentally converts to -133; looks for TOR side and a market line; neither exists.",
+    "Clicks the 57% cell expecting a breakdown; nothing happens.",
+    "Clicks matchup name; pill opens with meta grid then 9 TOR batters — scrolls past props looking for a lines block; none.",
+    "Goes to Predictions > Win prob: same numbers, 'BOS 52% → NYY 64%' format, no prices, no edge column.",
+    "Leaves to compare in his own sheet; uses PH only as a second opinion number."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 240,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "A 57 with no price next to it is a number I have to do all the work on — show me fair, Pinnacle no-vig, and the gap.",
+   "pain_points": [
+    {
+     "id": "no-market-odds-on-game-lines",
+     "title": "Win prob / total show no market price, implied prob or edge",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "His entire workflow is model-vs-market; with no market or edge column the board cannot surface a single play by itself.",
+     "evidence": "frontend/pitchhawk.js:1815 gameWp() only reads model probs; frontend/pitchhawk.js:2341-2352 pill cells; copy.js:88 'model-fair probabilities · not prices'; /edge/{game_pk} exists in backend but is never fetched by the frontend",
+     "suggested_fix": "Fetch /edge/{pk} and render per side: market ML (book + timestamp), no-vig implied %, model %, edge pts, EV per $100; colour the chip by edge, not by favourite."
+    },
+    {
+     "id": "no-fair-american-odds",
+     "title": "Model % never converted to fair American odds",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "Has to convert 57% to -133 by hand for every game.",
+     "evidence": "frontend/pitchhawk.js:1838-1845 gameWp returns pct only; pill shows 'CLE 57%'",
+     "suggested_fix": "Show fair line beside every probability (57% -> -133 / +133) and a toggle for American/decimal; show both sides, not just the favourite."
+    },
+    {
+     "id": "win-prob-shows-favourite-only",
+     "title": "Win prob chip shows only the favourite's side",
+     "area": "home",
+     "severity": 3,
+     "detail": "He bets dogs often; TOR side is never shown.",
+     "evidence": "frontend/pitchhawk.js:1838-1840 favHome picks the side >=50%; pill shows 'CLE 57%' with no TOR price",
+     "suggested_fix": "Render both teams (TOR 43% +133 | CLE 57% -133) so dog bettors can read their side directly."
+    },
+    {
+     "id": "home-wp-total-cells-not-clickable",
+     "title": "Win prob / Total cells on Home rows are inert",
+     "area": "home",
+     "severity": 2,
+     "detail": "Expected the WP cell to drill into the model inputs.",
+     "evidence": "frontend/pitchhawk.js:2341-2352 cells are <span>; clicking a cell does nothing (verified: hash unchanged); only matchup name and chevron toggle",
+     "suggested_fix": "Make the WP cell open the win-prob chart/edge breakdown and the Total cell open the run distribution (P(over) at 7.5..10.5, team totals)."
+    },
+    {
+     "id": "no-line-movement-or-clv",
+     "title": "No line movement, open/close or CLV tracking",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "No open/close or CLV so he can't tell if the model was already priced in.",
+     "evidence": "Pregame WP is frozen with 'opened 48%' only for the model; there is no market open/current/close history",
+     "suggested_fix": "Store market snapshots per game; show open -> now -> close sparkline beside model fair, and grade picks by CLV in the Scorecard."
+    }
+   ],
+   "delights": [
+    "Pregame win prob is frozen at first pitch and graded — honest.",
+    "Scorecard 'PREGAME FAVOURITES 1–1 · TOTALS CALLED 2/2' is a start on accountability.",
+    "Fast load, dense desktop rows."
+   ]
+  },
+  {
+   "name": "Elena Voss",
+   "profile": "PRO · totals specialist · $80k roll, $800 unit · Circa, DK, FD, Caesars · full-game + F5 totals, weather-driven",
+   "device": "desktop",
+   "goal": "Find tonight's totals where wind/park/ump move the number more than the market has; size bets on TOR@CLE (wind out).",
+   "journey": [
+    "Home: sees 'O 8.5 60% · TOTAL · 7.4 R PROJ' for TOR@CLE — notices projection 7.4 but pick is OVER 8.5 at 60%, which looks contradictory.",
+    "Notices every game is 8.5; can't tell if 8.5 is a market line or a default.",
+    "Opens pill: meta grid shows 'Partly Cloudy · 71°F', '9 mph Out To CF', 'Pat Hoberg', '+4% HR'. Useful, but no run impact or ump O/U tendency.",
+    "Looks for F5 total or team totals — none; Predictions > Totals tab only has full game.",
+    "Checks Totals tab calibration tile — 'nothing graded yet' for WP; nothing specific to totals.",
+    "Gives up on F5; logs weather manually."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 180,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Show me what the wind is worth in runs and give me F5 and team totals — a full-game 8.5 on every game tells me nothing.",
+   "pain_points": [
+    {
+     "id": "total-line-not-market-line",
+     "title": "Total line source unclear; every game shows 8.5",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "All 7 games show 8.5; she cannot tell whether the probability is at the market number. Also the 7.4 R projection vs 'O 8.5 60%' looks contradictory with no explanation.",
+     "evidence": "Home pill 'O 8.5' on all 7 games; frontend/pitchhawk.js:2752 totPickOf uses mkt.line with no provenance; scripts/dev_mock_api.py:79 line 8.5",
+     "suggested_fix": "Label the line's source and timestamp (e.g. 'DK 8.5 o-110 · 4:58 PM' vs 'model default 8.5'), and show P(over) at the actual market line plus alternate lines (7.5/8/9)."
+    },
+    {
+     "id": "no-f5-nrfi-team-total-runline-markets",
+     "title": "No F5, NRFI/YRFI, team totals or run line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "F5 totals and team totals are her core markets; team-run means are computed in game-predict but hidden.",
+     "evidence": "frontend/pitchhawk.js:864 PRED_MARKETS = hit/hr/hrr/wp/tot/sp only; grep for nrfi/f5/run line/team_total in frontend returns nothing; game-predict/index.ts:629-641 already computes mu_home/mu_away team-run means and an alpha that are stored in probs but never shown",
+     "suggested_fix": "Expose team totals from mu_home/mu_away immediately; add F5 ML/total and NRFI from a 1st-inning/5-inning split of the same run model; add run line (-1.5) from the run-diff distribution. Add them as chips next to Win prob / Totals."
+    },
+    {
+     "id": "weather-park-not-quantified",
+     "title": "Weather/park/ump shown as raw facts, not run impact",
+     "area": "game-detail",
+     "severity": 4,
+     "detail": "Raw weather without runs impact means she still runs her own model.",
+     "evidence": "frontend/pitchhawk.js:2391-2420 meta grid: 'Partly Cloudy · 71°F', '9 mph Out To CF', 'Pat Hoberg', '+4% HR' — no runs impact, no ump K/BB or O/U history",
+     "suggested_fix": "Add impact numbers: 'wind +0.4 R', 'park +3% runs', 'ump: 52% overs, +0.3 K/9 over 3y', and show how much each moved the projected total."
+    },
+    {
+     "id": "no-market-odds-on-game-lines",
+     "title": "Win prob / total show no market price, implied prob or edge",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "No total price / juice so no edge at the actual book number.",
+     "evidence": "frontend/pitchhawk.js:1815 gameWp() only reads model probs; frontend/pitchhawk.js:2341-2352 pill cells; copy.js:88 'model-fair probabilities · not prices'; /edge/{game_pk} exists in backend but is never fetched by the frontend",
+     "suggested_fix": "Fetch /edge/{pk} and render per side: market ML (book + timestamp), no-vig implied %, model %, edge pts, EV per $100; colour the chip by edge, not by favourite."
+    },
+    {
+     "id": "win-prob-total-calibration-missing",
+     "title": "No track record for win prob / totals",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "No totals Brier/ROI history.",
+     "evidence": "Predictions trust tiles 'WIN PROB · 7 DAYS — nothing graded yet'; Home Scorecard shows only 'PREGAME FAVOURITES 1–1, TOTALS CALLED 2/2'",
+     "suggested_fix": "Show season-long Brier/log-loss and ROI vs closing line for ML and totals, by confidence bucket, linked from the chips."
+    }
+   ],
+   "delights": [
+    "Weather/wind/roof/ump/park in one grid is genuinely handy — one place instead of three sites.",
+    "'WEATHER · FORECAST' vs 'WEATHER' labelling distinguishes pregame vs boxscore source."
+   ]
+  },
+  {
+   "name": "Dmitri Okafor",
+   "profile": "PRO · ex-trader · $250k roll, $2.5k unit · Kalshi, Polymarket, Pinnacle · live moneylines & in-game totals",
+   "device": "desktop",
+   "goal": "Trade live ML on NYY@BOS when model win prob diverges from Kalshi by >4 pts after a big inning.",
+   "journey": [
+    "Home Live Decisions 'BIGGEST SWING NYY @ BOS 64% +16 pts' — good hook; clicks it, goes to Live tab.",
+    "Live tab: at-bat/pitch calls dominate; win prob is a small rail 'LIVE WIN PROB NYY 64% ▲16'.",
+    "Looks for Kalshi price (backend ingests Kalshi ML) — not displayed.",
+    "Checks live total: rail shows only 'TOTAL · PREGAME O 8.5 frozen'. Predictions > Totals has LIVE TOTAL 'O 8.5 · 44%' BASE.",
+    "Sees PHI@ATL 6–6 'LIVE TOTAL 14.7 O 8.5 · 40%' — line already over; loses trust.",
+    "Uses the sparkline only."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 60,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "You ingest Kalshi and then don't show it next to your own number — that's the whole trade.",
+   "pain_points": [
+    {
+     "id": "no-market-odds-on-game-lines",
+     "title": "Win prob / total show no market price, implied prob or edge",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Kalshi moneylines are ingested server-side but never shown live; can't see divergence.",
+     "evidence": "frontend/pitchhawk.js:1815 gameWp() only reads model probs; frontend/pitchhawk.js:2341-2352 pill cells; copy.js:88 'model-fair probabilities · not prices'; /edge/{game_pk} exists in backend but is never fetched by the frontend",
+     "suggested_fix": "Fetch /edge/{pk} and render per side: market ML (book + timestamp), no-vig implied %, model %, edge pts, EV per $100; colour the chip by edge, not by favourite."
+    },
+    {
+     "id": "live-total-line-static",
+     "title": "Live total keeps the pregame 8.5 line once it is decided",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "Live total line static at 8.5 even after it's cashed — makes the live total unusable.",
+     "evidence": "Predictions > Totals: PHI @ ATL 6–6 shows LIVE TOTAL 14.7 'O 8.5 · 40%' (line already cashed); frontend/pitchhawk.js:1243-1245",
+     "suggested_fix": "Re-anchor the live total to the live market line (or show P(over) at current runs + n), and suppress lines already decided."
+    },
+    {
+     "id": "live-win-prob-buried-in-at-bat-view",
+     "title": "Live tab is pitch/at-bat centric; game-line trader gets a small rail",
+     "area": "live",
+     "severity": 3,
+     "detail": "Win prob and total are a side rail under PITCHING (desk_live_game.txt); no full-size WP chart with market overlay",
+     "evidence": "Live tab Selected game rail; frontend/pitchhawk.js:3546",
+     "suggested_fix": "Add a 'Game lines' mode on Live: big WP chart with market overlay, live total distribution, next-half-inning run probs."
+    },
+    {
+     "id": "no-line-movement-or-clv",
+     "title": "No line movement, open/close or CLV tracking",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "Wants model vs market history through the game.",
+     "evidence": "Pregame WP is frozen with 'opened 48%' only for the model; there is no market open/current/close history",
+     "suggested_fix": "Store market snapshots per game; show open -> now -> close sparkline beside model fair, and grade picks by CLV in the Scorecard."
+    }
+   ],
+   "delights": [
+    "Biggest Swing card is a great discovery hook for live ML.",
+    "Win-prob-by-at-bat sparkline is clean and fast (8s poll).",
+    "Closest game card surfaces coin-flip spots."
+   ]
+  },
+  {
+   "name": "Priya Raman",
+   "profile": "PRO · $60k roll, $600 unit · DK, FD, MGM, ESPN Bet · NRFI/YRFI grinder plus 1st-inning props",
+   "device": "desktop",
+   "goal": "Build a daily NRFI card: both starters' 1st-inning profile, top-of-order matchups, ump, weather.",
+   "journey": [
+    "Home: scans rows for any 1st-inning signal; none.",
+    "Opens TOR@CLE pill > Starters tab: Ks/Outs/Hits/ER/BB O/U all BASE; 30D K%, WHIFF, HR/PA, FB VELO all '—'.",
+    "Switches to 'CLE batters' sort Batting order to see slots 1-3 vs Henderson — works.",
+    "Wants each top-3 hitter's OBP vs starter and 1st-inning runs allowed by SP — not there.",
+    "No NRFI market at all; leaves."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 2,
+   "quote": "I can see who hits 1-2-3, but there's no first-inning anything — this isn't built for NRFI.",
+   "pain_points": [
+    {
+     "id": "no-f5-nrfi-team-total-runline-markets",
+     "title": "No F5, NRFI/YRFI, team totals or run line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "NRFI/YRFI is her entire market and doesn't exist.",
+     "evidence": "frontend/pitchhawk.js:864 PRED_MARKETS = hit/hr/hrr/wp/tot/sp only; grep for nrfi/f5/run line/team_total in frontend returns nothing; game-predict/index.ts:629-641 already computes mu_home/mu_away team-run means and an alpha that are stored in probs but never shown",
+     "suggested_fix": "Expose team totals from mu_home/mu_away immediately; add F5 ML/total and NRFI from a 1st-inning/5-inning split of the same run model; add run line (-1.5) from the run-diff distribution. Add them as chips next to Win prob / Totals."
+    },
+    {
+     "id": "starter-matchup-thin-pregame",
+     "title": "Starter matchup is two last names; SP form columns are dashes pregame",
+     "area": "game-detail",
+     "severity": 4,
+     "detail": "Starter form columns blank pregame; no 1st-inning splits.",
+     "evidence": "Meta grid 'PROBABLE STARTERS Henderson · Harper' (frontend/pitchhawk.js:2409); Starters tab 30D K%, WHIFF, HR/PA, FB VELO, FATIGUE all '—' for TOR@CLE (frontend/pitchhawk.js:2588); no handedness, season ERA/xFIP, pitch mix, days rest",
+     "suggested_fix": "Make the starter matchup a side-by-side card at the top of game detail: hand, season + 30d K%, BB%, xFIP, HR/9, avg IP, pitch count last start, days rest, team splits vs hand; link names to the starter overlay (ovStarter)."
+    },
+    {
+     "id": "no-market-odds-on-game-lines",
+     "title": "Win prob / total show no market price, implied prob or edge",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "Even if she built the read, no price to compare.",
+     "evidence": "frontend/pitchhawk.js:1815 gameWp() only reads model probs; frontend/pitchhawk.js:2341-2352 pill cells; copy.js:88 'model-fair probabilities · not prices'; /edge/{game_pk} exists in backend but is never fetched by the frontend",
+     "suggested_fix": "Fetch /edge/{pk} and render per side: market ML (book + timestamp), no-vig implied %, model %, edge pts, EV per $100; colour the chip by edge, not by favourite."
+    }
+   ],
+   "delights": [
+    "Batting-order sort in the pill is exactly the view she wants for top-of-order.",
+    "Starter O/U lines are tagged BASE — honest about being placeholders."
+   ]
+  },
+  {
+   "name": "Carlos Mendes",
+   "profile": "PRO · $40k roll, $400 unit · DK, FD, Bet365 · run lines and alt run lines, uses HR props as a correlated signal",
+   "device": "phone",
+   "goal": "On train home: check NYM@WSH run line and whether WSH power bats are strong (correlates with -1.5).",
+   "journey": [
+    "Opens Home on phone; rows compress to 'ML WSH 55% · TOT O 8.5 58% · READ Alvarez-Longname 20%'.",
+    "Taps row; pill expands into long list (page 4,000+ px) with meta grid then 9 batter cards.",
+    "No run line or margin distribution anywhere.",
+    "Wants WSH batters only for HR context — tabs exist (NYM/WSH batters) which works.",
+    "Wants to jump to Predictions filtered to this game — no button; uses team filter manually (2 taps + dropdown)."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 120,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Win prob alone doesn't price -1.5 — give me the margin distribution and I'll do the rest.",
+   "pain_points": [
+    {
+     "id": "no-f5-nrfi-team-total-runline-markets",
+     "title": "No F5, NRFI/YRFI, team totals or run line",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Run line (-1.5/+1.5) not modelled or displayed.",
+     "evidence": "frontend/pitchhawk.js:864 PRED_MARKETS = hit/hr/hrr/wp/tot/sp only; grep for nrfi/f5/run line/team_total in frontend returns nothing; game-predict/index.ts:629-641 already computes mu_home/mu_away team-run means and an alpha that are stored in probs but never shown",
+     "suggested_fix": "Expose team totals from mu_home/mu_away immediately; add F5 ML/total and NRFI from a 1st-inning/5-inning split of the same run model; add run line (-1.5) from the run-diff distribution. Add them as chips next to Win prob / Totals."
+    },
+    {
+     "id": "mobile-game-detail-long-scroll",
+     "title": "Phone game detail is a very long scroll with batters before lines",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Lines appear only in one cramped row; batters dominate the sheet.",
+     "evidence": "phone_home_pill_pre.png: 4,186px page; expanded pill stacks meta grid then 9 batter cards; ML/TOT only in one compressed m3 line (frontend/pitchhawk.js:2318-2321)",
+     "suggested_fix": "On phone, open a full-screen game sheet with sticky header (ML/total/fair odds) and segmented tabs Lines | Pitchers | Lineups | Props."
+    },
+    {
+     "id": "game-to-props-navigation-gaps",
+     "title": "Hard to go from a game to all its props and back",
+     "area": "global-nav",
+     "severity": 3,
+     "detail": "No game filter; had to use team multi-select.",
+     "evidence": "Pill batter names are not links (no ovPlayer in pill table; ovPlayer only from Search frontend/pitchhawk.js:4346); Predictions has team filter but no game filter (frontend/pitchhawk.js:267 route); no 'see all props for this game' from pill or Win prob/Totals rows",
+     "suggested_fix": "Add 'All props for TOR @ CLE ›' in the game detail that routes to #/pred?game=<pk>; add a game filter chip on Predictions; make batter names open the player overlay; add 'Back to game' breadcrumb."
+    }
+   ],
+   "delights": [
+    "Home/away batter tabs in the pill make correlated-prop scanning quick.",
+    "Strongest read on the row is a nice 'who to look at' teaser."
+   ]
+  },
+  {
+   "name": "Jake Thornton",
+   "profile": "AMATEUR · $1,500 roll, $25 unit · FanDuel, DraftKings · moneyline favourites + same-game parlays",
+   "device": "phone",
+   "goal": "Pick 2-3 moneylines for tonight and add a player prop from the same game to make an SGP.",
+   "journey": [
+    "Opens Home on phone; dismisses 'New here?' hint.",
+    "Reads 'ML CLE 57%' — not sure if 57% is good vs FanDuel's -150; doesn't know what the book implies.",
+    "Taps TOR@CLE; scrolls a long way through batter cards; likes 'Corey Alonso 1+ HR 23% +11.5 pts'.",
+    "Taps Alonso's name expecting a player page — nothing.",
+    "Can't tell whether CLE ML + Alonso HR correlate or whether the parlay is +EV; gives up and picks by feel."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "I like the percentages but I don't know if 57% beats my -150 — just tell me if it's a good bet.",
+   "pain_points": [
+    {
+     "id": "no-market-odds-on-game-lines",
+     "title": "Win prob / total show no market price, implied prob or edge",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Can't compare model % to his book line; doesn't know -150 implies 60%.",
+     "evidence": "frontend/pitchhawk.js:1815 gameWp() only reads model probs; frontend/pitchhawk.js:2341-2352 pill cells; copy.js:88 'model-fair probabilities · not prices'; /edge/{game_pk} exists in backend but is never fetched by the frontend",
+     "suggested_fix": "Fetch /edge/{pk} and render per side: market ML (book + timestamp), no-vig implied %, model %, edge pts, EV per $100; colour the chip by edge, not by favourite."
+    },
+    {
+     "id": "no-fair-american-odds",
+     "title": "Model % never converted to fair American odds",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Fair odds would answer his question immediately.",
+     "evidence": "frontend/pitchhawk.js:1838-1845 gameWp returns pct only; pill shows 'CLE 57%'",
+     "suggested_fix": "Show fair line beside every probability (57% -> -133 / +133) and a toggle for American/decimal; show both sides, not just the favourite."
+    },
+    {
+     "id": "game-to-props-navigation-gaps",
+     "title": "Hard to go from a game to all its props and back",
+     "area": "global-nav",
+     "severity": 3,
+     "detail": "Batter names inside the pill aren't tappable; no player page from game.",
+     "evidence": "Pill batter names are not links (no ovPlayer in pill table; ovPlayer only from Search frontend/pitchhawk.js:4346); Predictions has team filter but no game filter (frontend/pitchhawk.js:267 route); no 'see all props for this game' from pill or Win prob/Totals rows",
+     "suggested_fix": "Add 'All props for TOR @ CLE ›' in the game detail that routes to #/pred?game=<pk>; add a game filter chip on Predictions; make batter names open the player overlay; add 'Back to game' breadcrumb."
+    },
+    {
+     "id": "mobile-game-detail-long-scroll",
+     "title": "Phone game detail is a very long scroll with batters before lines",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Long scroll on phone to find props.",
+     "evidence": "phone_home_pill_pre.png: 4,186px page; expanded pill stacks meta grid then 9 batter cards; ML/TOT only in one compressed m3 line (frontend/pitchhawk.js:2318-2321)",
+     "suggested_fix": "On phone, open a full-screen game sheet with sticky header (ML/total/fair odds) and segmented tabs Lines | Pitchers | Lineups | Props."
+    }
+   ],
+   "delights": [
+    "Clean, readable mobile rows.",
+    "'Strongest read' tells him which prop to look at without thinking.",
+    "Star to watch the game is simple."
+   ]
+  },
+  {
+   "name": "Sofia Alvarez",
+   "profile": "AMATEUR · $800 roll, $10 unit · DraftKings · overs and team totals, weather curious",
+   "device": "phone",
+   "goal": "Find an over for tonight with good weather and a hitter-friendly park.",
+   "journey": [
+    "Home on phone: sees 'TOT O 8.5 60%' for TOR@CLE and 'O 8.5 58%' for NYM@WSH.",
+    "Opens TOR@CLE: weather 'Partly Cloudy · 71°F', wind '9 mph Out To CF', park '+4% HR' — happy, this is what she wanted.",
+    "Looks for CLE team total — none.",
+    "Unsure why projection 7.4 R but pick is O 8.5 at 60%.",
+    "Bets the over based on the wind blurb."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 90,
+   "would_return": "yes",
+   "nps_0_10": 7,
+   "quote": "The weather box is great — I just wish it told me if the wind actually matters and gave me team totals.",
+   "pain_points": [
+    {
+     "id": "no-f5-nrfi-team-total-runline-markets",
+     "title": "No F5, NRFI/YRFI, team totals or run line",
+     "area": "pricing-odds",
+     "severity": 3,
+     "detail": "No team totals.",
+     "evidence": "frontend/pitchhawk.js:864 PRED_MARKETS = hit/hr/hrr/wp/tot/sp only; grep for nrfi/f5/run line/team_total in frontend returns nothing; game-predict/index.ts:629-641 already computes mu_home/mu_away team-run means and an alpha that are stored in probs but never shown",
+     "suggested_fix": "Expose team totals from mu_home/mu_away immediately; add F5 ML/total and NRFI from a 1st-inning/5-inning split of the same run model; add run line (-1.5) from the run-diff distribution. Add them as chips next to Win prob / Totals."
+    },
+    {
+     "id": "total-line-not-market-line",
+     "title": "Total line source unclear; every game shows 8.5",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "7.4 R projected vs O 8.5 60% is confusing; same 8.5 everywhere.",
+     "evidence": "Home pill 'O 8.5' on all 7 games; frontend/pitchhawk.js:2752 totPickOf uses mkt.line with no provenance; scripts/dev_mock_api.py:79 line 8.5",
+     "suggested_fix": "Label the line's source and timestamp (e.g. 'DK 8.5 o-110 · 4:58 PM' vs 'model default 8.5'), and show P(over) at the actual market line plus alternate lines (7.5/8/9)."
+    },
+    {
+     "id": "weather-park-not-quantified",
+     "title": "Weather/park/ump shown as raw facts, not run impact",
+     "area": "game-detail",
+     "severity": 3,
+     "detail": "Doesn't know how much 9 mph out matters.",
+     "evidence": "frontend/pitchhawk.js:2391-2420 meta grid: 'Partly Cloudy · 71°F', '9 mph Out To CF', 'Pat Hoberg', '+4% HR' — no runs impact, no ump K/BB or O/U history",
+     "suggested_fix": "Add impact numbers: 'wind +0.4 R', 'park +3% runs', 'ump: 52% overs, +0.3 K/9 over 3y', and show how much each moved the projected total."
+    }
+   ],
+   "delights": [
+    "Weather/park/ump grid in the game drawer.",
+    "Scorecard 'TOTALS CALLED 2/2' gives her confidence.",
+    "Time-zone toggle ('use my time')."
+   ]
+  },
+  {
+   "name": "Tyler Brooks",
+   "profile": "AMATEUR · $3k roll, $50 unit · Caesars, BetMGM · moneyline dogs, follows pitching matchups",
+   "device": "desktop",
+   "goal": "Find an underdog where the model likes the starter more than the public does.",
+   "journey": [
+    "Home desktop: every WP cell shows only the favourite ('CLE 57%', 'WSH 55%'); has to subtract for dogs.",
+    "Opens NYM@WSH pill: probable starters listed as last names only.",
+    "Clicks Starters tab: Ks/Outs etc. O/U lines BASE; 30D K% / WHIFF / FB VELO dashes.",
+    "Searches the starter via Search > overlay — gets the same 10 numbers, no ERA/xFIP/handedness splits.",
+    "Can't evaluate matchup; skips."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 200,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "I bet dogs — show me the dog's number and a real pitching matchup, not two last names.",
+   "pain_points": [
+    {
+     "id": "win-prob-shows-favourite-only",
+     "title": "Win prob chip shows only the favourite's side",
+     "area": "home",
+     "severity": 4,
+     "detail": "Dog side never displayed.",
+     "evidence": "frontend/pitchhawk.js:1838-1840 favHome picks the side >=50%; pill shows 'CLE 57%' with no TOR price",
+     "suggested_fix": "Render both teams (TOR 43% +133 | CLE 57% -133) so dog bettors can read their side directly."
+    },
+    {
+     "id": "starter-matchup-thin-pregame",
+     "title": "Starter matchup is two last names; SP form columns are dashes pregame",
+     "area": "game-detail",
+     "severity": 4,
+     "detail": "Starter matchup lacks basics (hand, ERA/xFIP, recent starts).",
+     "evidence": "Meta grid 'PROBABLE STARTERS Henderson · Harper' (frontend/pitchhawk.js:2409); Starters tab 30D K%, WHIFF, HR/PA, FB VELO, FATIGUE all '—' for TOR@CLE (frontend/pitchhawk.js:2588); no handedness, season ERA/xFIP, pitch mix, days rest",
+     "suggested_fix": "Make the starter matchup a side-by-side card at the top of game detail: hand, season + 30d K%, BB%, xFIP, HR/9, avg IP, pitch count last start, days rest, team splits vs hand; link names to the starter overlay (ovStarter)."
+    },
+    {
+     "id": "no-bullpen-state",
+     "title": "No bullpen usage/fatigue anywhere; model assumes league-average pen",
+     "area": "game-detail",
+     "severity": 3,
+     "detail": "No idea if the favourite's pen is gassed.",
+     "evidence": "supabase/functions/_shared/model.ts:404 'the bullpen behind him is assumed league-average'; game detail meta grid frontend/pitchhawk.js:2391 has no bullpen cell",
+     "suggested_fix": "Add a Bullpen block to game detail: relievers' pitches last 3 days, availability flags, pen xFIP/K-BB 30d, and say in the win-prob tooltip that pen is league-average until modelled."
+    },
+    {
+     "id": "no-dedicated-game-page",
+     "title": "No game page — game detail is an inline accordion on Home",
+     "area": "game-detail",
+     "severity": 2,
+     "detail": "Game info is an accordion, so the matchup has no proper page.",
+     "evidence": "openGame -> openPill() expands a Home pill (frontend/pitchhawk.js:484, 2369); route is #/home?open=<pk>, no #/game/<pk>",
+     "suggested_fix": "Add a #/game/<pk> page: header with lines + fair odds, SP matchup, bullpen, lineups, weather/park/ump, then tabs for game markets, batter props, starter props, live."
+    }
+   ],
+   "delights": [
+    "Search finds starters fast.",
+    "Open game › link from Predictions lands on the right game pill and scrolls to it."
+   ]
+  },
+  {
+   "name": "Hannah Kim",
+   "profile": "AMATEUR · $500 roll, $10 unit · FanDuel · learns by reading; likes NRFI and F5 because games finish early",
+   "device": "phone",
+   "goal": "Learn whether tonight's starters make a good F5 under / NRFI, then bet one.",
+   "journey": [
+    "Opens Guide; reads glossary (lift, frozen, base).",
+    "Home: finds no F5 or NRFI anything.",
+    "Opens TOR@CLE Starters tab on phone — cards show Ks/Outs O/U; form stats dashes.",
+    "Looks for bullpen or innings-limit info to judge F5 — none.",
+    "Leaves to an Action Network article."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "The guide taught me what lift means, but there's nothing for the first five innings.",
+   "pain_points": [
+    {
+     "id": "no-f5-nrfi-team-total-runline-markets",
+     "title": "No F5, NRFI/YRFI, team totals or run line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "F5 and NRFI absent.",
+     "evidence": "frontend/pitchhawk.js:864 PRED_MARKETS = hit/hr/hrr/wp/tot/sp only; grep for nrfi/f5/run line/team_total in frontend returns nothing; game-predict/index.ts:629-641 already computes mu_home/mu_away team-run means and an alpha that are stored in probs but never shown",
+     "suggested_fix": "Expose team totals from mu_home/mu_away immediately; add F5 ML/total and NRFI from a 1st-inning/5-inning split of the same run model; add run line (-1.5) from the run-diff distribution. Add them as chips next to Win prob / Totals."
+    },
+    {
+     "id": "starter-matchup-thin-pregame",
+     "title": "Starter matchup is two last names; SP form columns are dashes pregame",
+     "area": "game-detail",
+     "severity": 3,
+     "detail": "Starter cards pregame show dashes.",
+     "evidence": "Meta grid 'PROBABLE STARTERS Henderson · Harper' (frontend/pitchhawk.js:2409); Starters tab 30D K%, WHIFF, HR/PA, FB VELO, FATIGUE all '—' for TOR@CLE (frontend/pitchhawk.js:2588); no handedness, season ERA/xFIP, pitch mix, days rest",
+     "suggested_fix": "Make the starter matchup a side-by-side card at the top of game detail: hand, season + 30d K%, BB%, xFIP, HR/9, avg IP, pitch count last start, days rest, team splits vs hand; link names to the starter overlay (ovStarter)."
+    },
+    {
+     "id": "no-bullpen-state",
+     "title": "No bullpen usage/fatigue anywhere; model assumes league-average pen",
+     "area": "game-detail",
+     "severity": 2,
+     "detail": "Can't tell when the pen enters.",
+     "evidence": "supabase/functions/_shared/model.ts:404 'the bullpen behind him is assumed league-average'; game detail meta grid frontend/pitchhawk.js:2391 has no bullpen cell",
+     "suggested_fix": "Add a Bullpen block to game detail: relievers' pitches last 3 days, availability flags, pen xFIP/K-BB 30d, and say in the win-prob tooltip that pen is league-average until modelled."
+    }
+   ],
+   "delights": [
+    "Guide/glossary is approachable.",
+    "BASE tags make clear which numbers are placeholders."
+   ]
+  },
+  {
+   "name": "Ray Donnelly",
+   "profile": "AMATEUR · $2k roll, $20 unit · DraftKings, Hard Rock · bets totals and checks lineups before locking",
+   "device": "desktop",
+   "goal": "Wait for lineups on NYM@WSH (pending) and see how the total/WP changes once posted.",
+   "journey": [
+    "Home: 'lineups confirmed 6/7' header; NYM@WSH row says 'LINEUP PENDING'. Good.",
+    "Opens pill: CLE-style batter list with 'lineup pending' note.",
+    "Wants to know if a star is sitting and how much the total will move — no lineup news, no scratch flags.",
+    "Refreshes later; WP/total change but no 'changed because of lineup' marker; can't tell what moved.",
+    "No alert option for 'lineup posted' on a game (alerts are batter at-bat / swings)."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "Tell me who sat and how much it moved the number — a ✓ isn't news.",
+   "pain_points": [
+    {
+     "id": "no-lineup-news-feed",
+     "title": "Lineup status is a flag, not news",
+     "area": "game-detail",
+     "severity": 4,
+     "detail": "Lineup status is a binary flag with no change attribution.",
+     "evidence": "'LINEUP ✓ / LINEUP PENDING' caption (frontend/pitchhawk.js:2297); no scratches, injuries, rest days, catcher, or time of lineup post; model re-score time shown only as 'updated 5:06 PM'",
+     "suggested_fix": "Add a lineup panel per team with confirmed order, changes vs typical (who sat), posting time, and 'model re-scored after lineup at HH:MM' with the WP/total delta that the lineup caused."
+    },
+    {
+     "id": "no-lineup-posted-alert",
+     "title": "No alert when a watched game's lineup posts or line moves",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "Alerts cover pinned batters coming up and big live swings only (copy.js:41)",
+     "evidence": "copy.js:41 alertsOnTip",
+     "suggested_fix": "Add 'notify on lineup posted / model total moved >0.3 R / WP moved >3 pts' for starred games."
+    },
+    {
+     "id": "total-line-not-market-line",
+     "title": "Total line source unclear; every game shows 8.5",
+     "area": "trust-calibration",
+     "severity": 2,
+     "detail": "Line source unknown.",
+     "evidence": "Home pill 'O 8.5' on all 7 games; frontend/pitchhawk.js:2752 totPickOf uses mkt.line with no provenance; scripts/dev_mock_api.py:79 line 8.5",
+     "suggested_fix": "Label the line's source and timestamp (e.g. 'DK 8.5 o-110 · 4:58 PM' vs 'model default 8.5'), and show P(over) at the actual market line plus alternate lines (7.5/8/9)."
+    }
+   ],
+   "delights": [
+    "'lineups confirmed 6/7' in the header is a smart at-a-glance status.",
+    "Pregame reads re-score until lineup locks, and the footer says so."
+   ]
+  }
+ ],
+ "top_cohort_issues": [
+  {
+   "id": "no-f5-nrfi-team-total-runline-markets",
+   "title": "No F5, NRFI/YRFI, team totals or run line",
+   "personas_affected": 5,
+   "avg_severity": 4.4,
+   "fix": "Expose team totals from mu_home/mu_away immediately; add F5 ML/total and NRFI from a 1st-inning/5-inning split of the same run model; add run line (-1.5) from the run-diff distribution. Add them as chips next to Win prob / Totals."
+  },
+  {
+   "id": "no-market-odds-on-game-lines",
+   "title": "Win prob / total show no market price, implied prob or edge",
+   "personas_affected": 5,
+   "avg_severity": 4.2,
+   "fix": "Fetch /edge/{pk} and render per side: market ML (book + timestamp), no-vig implied %, model %, edge pts, EV per $100; colour the chip by edge, not by favourite."
+  },
+  {
+   "id": "starter-matchup-thin-pregame",
+   "title": "Starter matchup is two last names; SP form columns are dashes pregame",
+   "personas_affected": 3,
+   "avg_severity": 3.7,
+   "fix": "Make the starter matchup a side-by-side card at the top of game detail: hand, season + 30d K%, BB%, xFIP, HR/9, avg IP, pitch count last start, days rest, team splits vs hand; link names to the starter overlay (ovStarter)."
+  },
+  {
+   "id": "total-line-not-market-line",
+   "title": "Total line source unclear; every game shows 8.5",
+   "personas_affected": 3,
+   "avg_severity": 3.0,
+   "fix": "Label the line's source and timestamp (e.g. 'DK 8.5 o-110 · 4:58 PM' vs 'model default 8.5'), and show P(over) at the actual market line plus alternate lines (7.5/8/9)."
+  },
+  {
+   "id": "no-fair-american-odds",
+   "title": "Model % never converted to fair American odds",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Show fair line beside every probability (57% -> -133 / +133) and a toggle for American/decimal; show both sides, not just the favourite."
+  },
+  {
+   "id": "win-prob-shows-favourite-only",
+   "title": "Win prob chip shows only the favourite's side",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Render both teams (TOR 43% +133 | CLE 57% -133) so dog bettors can read their side directly."
+  },
+  {
+   "id": "no-line-movement-or-clv",
+   "title": "No line movement, open/close or CLV tracking",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Store market snapshots per game; show open -> now -> close sparkline beside model fair, and grade picks by CLV in the Scorecard."
+  },
+  {
+   "id": "weather-park-not-quantified",
+   "title": "Weather/park/ump shown as raw facts, not run impact",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Add impact numbers: 'wind +0.4 R', 'park +3% runs', 'ump: 52% overs, +0.3 K/9 over 3y', and show how much each moved the projected total."
+  },
+  {
+   "id": "mobile-game-detail-long-scroll",
+   "title": "Phone game detail is a very long scroll with batters before lines",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "On phone, open a full-screen game sheet with sticky header (ML/total/fair odds) and segmented tabs Lines | Pitchers | Lineups | Props."
+  },
+  {
+   "id": "game-to-props-navigation-gaps",
+   "title": "Hard to go from a game to all its props and back",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Add 'All props for TOR @ CLE ›' in the game detail that routes to #/pred?game=<pk>; add a game filter chip on Predictions; make batter names open the player overlay; add 'Back to game' breadcrumb."
+  },
+  {
+   "id": "no-bullpen-state",
+   "title": "No bullpen usage/fatigue anywhere; model assumes league-average pen",
+   "personas_affected": 2,
+   "avg_severity": 2.5,
+   "fix": "Add a Bullpen block to game detail: relievers' pitches last 3 days, availability flags, pen xFIP/K-BB 30d, and say in the win-prob tooltip that pen is league-average until modelled."
+  },
+  {
+   "id": "live-total-line-static",
+   "title": "Live total keeps the pregame 8.5 line once it is decided",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Re-anchor the live total to the live market line (or show P(over) at current runs + n), and suppress lines already decided."
+  },
+  {
+   "id": "no-lineup-news-feed",
+   "title": "Lineup status is a flag, not news",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Add a lineup panel per team with confirmed order, changes vs typical (who sat), posting time, and 'model re-scored after lineup at HH:MM' with the WP/total delta that the lineup caused."
+  },
+  {
+   "id": "win-prob-total-calibration-missing",
+   "title": "No track record for win prob / totals",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Show season-long Brier/log-loss and ROI vs closing line for ML and totals, by confidence bucket, linked from the chips."
+  },
+  {
+   "id": "live-win-prob-buried-in-at-bat-view",
+   "title": "Live tab is pitch/at-bat centric; game-line trader gets a small rail",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Add a 'Game lines' mode on Live: big WP chart with market overlay, live total distribution, next-half-inning run probs."
+  },
+  {
+   "id": "no-lineup-posted-alert",
+   "title": "No alert when a watched game's lineup posts or line moves",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Add 'notify on lineup posted / model total moved >0.3 R / WP moved >3 pts' for starred games."
+  },
+  {
+   "id": "home-wp-total-cells-not-clickable",
+   "title": "Win prob / Total cells on Home rows are inert",
+   "personas_affected": 1,
+   "avg_severity": 2.0,
+   "fix": "Make the WP cell open the win-prob chart/edge breakdown and the Total cell open the run distribution (P(over) at 7.5..10.5, team totals)."
+  },
+  {
+   "id": "no-dedicated-game-page",
+   "title": "No game page — game detail is an inline accordion on Home",
+   "personas_affected": 1,
+   "avg_severity": 2.0,
+   "fix": "Add a #/game/<pk> page: header with lines + fair odds, SP matchup, bullpen, lineups, weather/park/ump, then tabs for game markets, batter props, starter props, live."
+  }
+ ]
+}

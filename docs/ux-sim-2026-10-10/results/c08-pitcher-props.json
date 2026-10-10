@@ -1,0 +1,683 @@
+{
+ "cohort": "c08-pitcher-props",
+ "cohort_summary": "Pitcher-prop specialists found the Starters chip a promising scaffold (all five markets, exp value, BASE tags, CSV export, search-to-starter overlay, live pitch count/velo) but could not complete the core loop. The single line shown is the model's own floor(mean)+0.5 rather than the book line, there is no alt-line ladder despite a Poisson distribution being available, no book odds/edge, no sort/filter on the Starters table, and none of the inputs K bettors key on (opp lineup K% vs hand, leash/projected pitches, days rest, ump zone, velo trend). Starter props are graded in the backend but have no calibration tile, Data Feed market or result column. Live, the pitching rail lacks the pitcher's running line. Phone users struggle to even find the clipped Starters chip. 0/10 full success; pros mostly would not return until ladders + book lines exist.",
+ "personas": [
+  {
+   "name": "Marcus Hale",
+   "profile": "Pro, 9 yrs, K-prop specialist; $60k bankroll, $1.2k units; DK, FD, Circa, Pinnacle for steam; runs own K model in Python",
+   "device": "desktop",
+   "goal": "Find 3-4 overs on strikeouts where model P(over) beats the no-vig price at the book line, including alt 7+ K ladders on aces.",
+   "journey": [
+    "1. Opens #/pred, sees 1+ Hit default; clicks Starters chip.",
+    "2. Scans STRIKEOUTS column: every row shows 'O 5.5' with ~45-57% over; his books have lines 4.5-7.5.",
+    "3. Looks for a way to set his own line or see 6+/7+ rungs; none. Opens a row: only matchup text + methodology note + Open game.",
+    "4. Tries to sort by Ks P(over) - headers not clickable; MIN LIFT slider gone.",
+    "5. Exports CSV hoping for a distribution; gets one line per market.",
+    "6. Concludes he would have to back out the Poisson mean from 'exp 4.7' and price ladders himself in his own sheet."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 2,
+   "quote": "You've got a Poisson mean sitting right there and you show me one rung at a line nobody's hanging - give me the ladder or I'm back in my notebook.",
+   "pain_points": [
+    {
+     "id": "no-alt-line-ladder",
+     "title": "No alt-line probability ladder for starter props",
+     "area": "predictions",
+     "severity": 5,
+     "detail": "Each starter market shows exactly one line (O 5.5 Ks) and one P(over). There is no 3+/4+/5+/6+/7+/8+ K ladder or outs ladder, even though the base model is a Poisson count with a known mean, so the full distribution is free to compute. Alt-ladder bettors cannot price any rung but the one the model picked.",
+     "evidence": "frontend/pitchhawk.js:2439-2443 propCellHtml renders a single line; supabase/functions/_shared/basemodels.ts:109-125 starterProp returns only {line, expected_value, probability}",
+     "suggested_fix": "Return the PMF (or P(X>=k) for k=0..12) per starter market and render an expandable ladder row in the Starters detail / phone card: 3+ 4+ 5+ 6+ 7+ 8+ with P and fair American odds per rung."
+    },
+    {
+     "id": "starter-line-is-model-mean-not-book",
+     "title": "The prop line is the model's own floor(mean)+0.5, not the book's line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "The line shown is derived from the model mean (always the half-point just below expectation), so P(over) clusters around 40-60% and never lines up with the number posted at DK/FD. A bettor whose book has Ks at 6.5 has no P(over 6.5) anywhere in the UI.",
+     "evidence": "supabase/functions/_shared/basemodels.ts:124 `const line = Math.floor(mean) + 0.5`; Starters table every cell 'O 5.5 / 46% over'",
+     "suggested_fix": "Price the sportsbook's posted line (Odds API pitcher props) and let the user type a line: show P(over/under) at any half-point from the same distribution."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob, no-vig fair or edge on pitcher props",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Starter cells show P(over) only. No book odds, no implied probability, no no-vig fair price, no edge %, no best-book comparison. The value step has to happen in a separate tab/spreadsheet.",
+     "evidence": "Predictions > Starters (work/c08-pitcher-props/desk_sp.png); BRIEF: /edge only covers game markets",
+     "suggested_fix": "Add BOOK / IMPLIED / FAIR / EDGE sub-columns per prop (Odds API player-props ingest already exists behind a flag); colour-code edge and sort by it."
+    },
+    {
+     "id": "starters-cannot-sort-or-filter",
+     "title": "Starters table has no sort, min-edge or market filter",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "On the Starters chip the MIN LIFT slider disappears, there is no pSort control, and rows are fixed-sorted by 30D K% (which is '\u2014' for every row in this env, so order is effectively arbitrary). Cannot sort by P(over Ks), expected Ks, or 'most over-lean' to find the best spot on a 14-starter slate.",
+     "evidence": "frontend/pitchhawk.js:1093-1102 predStarterRows sorts only by k; [data-act=pSort] count = 0 on #/pred?m=sp (desktop and phone)",
+     "suggested_fix": "Clickable column headers (sort by any market's P or exp), a market sub-selector (Ks/Outs/Hits/ER/BB), and an 'edge vs line' min filter."
+    },
+    {
+     "id": "export-csv-starters-good-but-no-dist",
+     "title": "Starter CSV exports one line per market only",
+     "area": "export",
+     "severity": 2,
+     "detail": "Export on Starters works (line + p_over per market) but omits expected value, the ladder and inputs, so modelers can't rebuild the distribution.",
+     "evidence": "pitchhawk.js:1031-1036",
+     "suggested_fix": "Include exp_* and P(X>=k) columns for k in a sensible range."
+    }
+   ],
+   "delights": [
+    "Exp value shown next to every line ('exp 4.7') - at least the mean is exposed.",
+    "BASE tag and methodology note are honest about the model stage."
+   ]
+  },
+  {
+   "name": "Priya Raman",
+   "profile": "Pro, ex-sportsbook trader; $40k bankroll, $500 units; Pinnacle, BetMGM, Caesars; targets outs recorded and walks unders",
+   "device": "desktop",
+   "goal": "Find outs-recorded unders on short-leash starters (high pitch counts, recent injury returns) and walks overs vs patient lineups.",
+   "journey": [
+    "1. Goes to Predictions > Starters, finds OUTS REC. column all at O 16.5.",
+    "2. Wants projected pitch count/BF and last-5 pitch counts - no columns for leash, days rest or IL status.",
+    "3. Opens Search, types starter name, gets starter overlay - same 10 values, no workload history.",
+    "4. Opens game view: weather/wind/ump all '\u2014'.",
+    "5. Checks Data Feed for how outs props have graded - no pitcher markets exist there."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "maybe",
+   "nps_0_10": 3,
+   "quote": "Outs is a leash market - if you can't tell me the expected pitch count and who's coming off 4 days' rest, the 57% means nothing.",
+   "pain_points": [
+    {
+     "id": "no-leash-pitch-count-days-rest",
+     "title": "No projected pitch count / leash, days rest or recent IP trend",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "Outs and K props hinge on leash. No projected pitches or BF, no last-5-starts pitch counts/IP, no days rest, no IL-return / opener flag. The model uses one global starter_bf constant for everyone.",
+     "evidence": "basemodels.ts:115 `const bf = p.starter_bf`; Starters table columns pitchhawk.js:1313",
+     "suggested_fix": "Add PROJ BF/PITCHES, LAST 5 (pitches, IP), DAYS REST columns; feed per-pitcher leash into the mean and show it in the detail."
+    },
+    {
+     "id": "starter-line-is-model-mean-not-book",
+     "title": "The prop line is the model's own floor(mean)+0.5, not the book's line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "The line shown is derived from the model mean (always the half-point just below expectation), so P(over) clusters around 40-60% and never lines up with the number posted at DK/FD. A bettor whose book has Ks at 6.5 has no P(over 6.5) anywhere in the UI.",
+     "evidence": "supabase/functions/_shared/basemodels.ts:124 `const line = Math.floor(mean) + 0.5`; Starters table every cell 'O 5.5 / 46% over'",
+     "suggested_fix": "Price the sportsbook's posted line (Odds API pitcher props) and let the user type a line: show P(over/under) at any half-point from the same distribution."
+    },
+    {
+     "id": "no-starter-prop-grading-or-calibration",
+     "title": "Starter props are graded in backend but no track record is shown",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "Calibration tiles cover Hit/HR/HRR/WP/at-bat/velo only; Data Feed markets have no pitcher_* entries; FINAL starter rows have no RESULT column. A pro cannot see whether P(over Ks) has been calibrated before staking.",
+     "evidence": "pitchhawk.js:1462-1476 tiles; pitchhawk.js:3640-3649 D_MARKETS lacks pitcher_*; basemodels.ts:187-212 gradeBase grades pitcher markets",
+     "suggested_fix": "Add a STARTER PROPS calibration tile, pitcher markets in Data Feed, and an actual (e.g. '7 K \u2713') column for final/live starters."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob, no-vig fair or edge on pitcher props",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Starter cells show P(over) only. No book odds, no implied probability, no no-vig fair price, no edge %, no best-book comparison. The value step has to happen in a separate tab/spreadsheet.",
+     "evidence": "Predictions > Starters (work/c08-pitcher-props/desk_sp.png); BRIEF: /edge only covers game markets",
+     "suggested_fix": "Add BOOK / IMPLIED / FAIR / EDGE sub-columns per prop (Odds API player-props ingest already exists behind a flag); colour-code edge and sort by it."
+    },
+    {
+     "id": "starter-form-columns-all-dashes",
+     "title": "Supporting-form columns render as a wall of dashes",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "30D K%, WHIFF, HR/PA, FB VELO, FATIGUE are '\u2014' on every starter row, with no reason given (loading? not served? too few BF?). The batter tables use a typed missing marker; the starter table uses bare dashes for most columns.",
+     "evidence": "work/c08-pitcher-props/desk_sp_open.png; pitchhawk.js:2562-2571 uses plain '\u2014' except HR/PA",
+     "suggested_fix": "Use missingHtml(kind) for every starter stat so the reason shows, and hide columns with no data slate-wide."
+    }
+   ],
+   "delights": [
+    "Search finds starters by name and opens a compact overlay with all five props.",
+    "FATIGUE (velo change at pitches 75-99) is a genuinely novel leash proxy if populated."
+   ]
+  },
+  {
+   "name": "Diego Castillo",
+   "profile": "Pro, syndicate runner; $150k bankroll, $3k units; Circa, Westgate, offshore; strikeout overs/unders and alt K ladders",
+   "device": "desktop",
+   "goal": "Pre-lock: compare model K distribution to Circa ladder (4+ through 8+), stake on rungs with >3% edge.",
+   "journey": [
+    "1. Starters chip; sees one line per pitcher.",
+    "2. Looks for opponent lineup K% vs RHP/LHP - absent; Lineup confirmed toggle disappears on Starters.",
+    "3. Searches Guide for 'ladder'/'alt' - nothing.",
+    "4. Checks calibration tiles for a starter K track record - only batter + game tiles.",
+    "5. Gives up on the product for pricing; notes he might use it as a quick slate sanity list."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 2,
+   "quote": "No ladder, no opp K%, no calibration on the K model - this is a batter tool with a pitcher tab bolted on.",
+   "pain_points": [
+    {
+     "id": "no-alt-line-ladder",
+     "title": "No alt-line probability ladder for starter props",
+     "area": "predictions",
+     "severity": 5,
+     "detail": "Each starter market shows exactly one line (O 5.5 Ks) and one P(over). There is no 3+/4+/5+/6+/7+/8+ K ladder or outs ladder, even though the base model is a Poisson count with a known mean, so the full distribution is free to compute. Alt-ladder bettors cannot price any rung but the one the model picked.",
+     "evidence": "frontend/pitchhawk.js:2439-2443 propCellHtml renders a single line; supabase/functions/_shared/basemodels.ts:109-125 starterProp returns only {line, expected_value, probability}",
+     "suggested_fix": "Return the PMF (or P(X>=k) for k=0..12) per starter market and render an expandable ladder row in the Starters detail / phone card: 3+ 4+ 5+ 6+ 7+ 8+ with P and fair American odds per rung."
+    },
+    {
+     "id": "no-opponent-lineup-k-context",
+     "title": "No opposing-lineup K%, handedness split or lineup-confirmed signal for starters",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "K props are mostly about the opposing lineup's K% vs that hand. The starter row shows only the pitcher's own 30D K% / whiff; the model itself uses only the pitcher's shrunk K rate times a fixed batters-faced constant. The 'Lineup confirmed only' toggle also vanishes on the Starters chip.",
+     "evidence": "basemodels.ts:111-118 (mean = bf * k, no opponent term); Starters header pitchhawk.js:1313 has no OPP K% column",
+     "suggested_fix": "Add OPP K% vs hand (season/30d), lineup-confirmed badge, and a 'model inputs' strip in the detail showing pitcher K%, opp K%, projected BF."
+    },
+    {
+     "id": "no-starter-prop-grading-or-calibration",
+     "title": "Starter props are graded in backend but no track record is shown",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "Calibration tiles cover Hit/HR/HRR/WP/at-bat/velo only; Data Feed markets have no pitcher_* entries; FINAL starter rows have no RESULT column. A pro cannot see whether P(over Ks) has been calibrated before staking.",
+     "evidence": "pitchhawk.js:1462-1476 tiles; pitchhawk.js:3640-3649 D_MARKETS lacks pitcher_*; basemodels.ts:187-212 gradeBase grades pitcher markets",
+     "suggested_fix": "Add a STARTER PROPS calibration tile, pitcher markets in Data Feed, and an actual (e.g. '7 K \u2713') column for final/live starters."
+    },
+    {
+     "id": "starters-cannot-sort-or-filter",
+     "title": "Starters table has no sort, min-edge or market filter",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "On the Starters chip the MIN LIFT slider disappears, there is no pSort control, and rows are fixed-sorted by 30D K% (which is '\u2014' for every row in this env, so order is effectively arbitrary). Cannot sort by P(over Ks), expected Ks, or 'most over-lean' to find the best spot on a 14-starter slate.",
+     "evidence": "frontend/pitchhawk.js:1093-1102 predStarterRows sorts only by k; [data-act=pSort] count = 0 on #/pred?m=sp (desktop and phone)",
+     "suggested_fix": "Clickable column headers (sort by any market's P or exp), a market sub-selector (Ks/Outs/Hits/ER/BB), and an 'edge vs line' min filter."
+    }
+   ],
+   "delights": [
+    "Dense desktop table fits all 5 starter markets + form in one row - good layout to build on."
+   ]
+  },
+  {
+   "name": "Kenji Watanabe",
+   "profile": "Pro, data engineer turned bettor; $25k bankroll, $300 units; DK, FD, ESPN Bet; hits allowed and ER",
+   "device": "desktop",
+   "goal": "Find hits-allowed overs in hitter-friendly parks/warm weather against high-contact lineups.",
+   "journey": [
+    "1. Starters chip, scans HITS ALLOWED.",
+    "2. Wants park/weather next to the starter; opens row - only 'NYY vs BOS \u00b7 Fenway Park \u00b7 2:48 PM'.",
+    "3. Clicks Open game - leaves Predictions to Home pill; weather/wind/park factor '\u2014'.",
+    "4. Back to Predictions, filters reset? (state held) - fine.",
+    "5. Exports CSV to join with his own weather feed."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 240,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "Export works and the hits column is there, but I'm doing the weather and park join myself.",
+   "pain_points": [
+    {
+     "id": "no-weather-in-starter-view",
+     "title": "Weather/wind and park not on the starter row",
+     "area": "predictions",
+     "severity": 2,
+     "detail": "Weather/wind/park factor live only in the game meta grid (two clicks away and '\u2014' here). Hits/ER bettors want them next to the pitcher.",
+     "evidence": "pitchhawk.js:2398-2419 vs predStarterDetailHtml 1356",
+     "suggested_fix": "Reuse pillMetaGridHtml cells (weather, wind, park) inside the starter detail."
+    },
+    {
+     "id": "starter-line-is-model-mean-not-book",
+     "title": "The prop line is the model's own floor(mean)+0.5, not the book's line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "The line shown is derived from the model mean (always the half-point just below expectation), so P(over) clusters around 40-60% and never lines up with the number posted at DK/FD. A bettor whose book has Ks at 6.5 has no P(over 6.5) anywhere in the UI.",
+     "evidence": "supabase/functions/_shared/basemodels.ts:124 `const line = Math.floor(mean) + 0.5`; Starters table every cell 'O 5.5 / 46% over'",
+     "suggested_fix": "Price the sportsbook's posted line (Odds API pitcher props) and let the user type a line: show P(over/under) at any half-point from the same distribution."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob, no-vig fair or edge on pitcher props",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Starter cells show P(over) only. No book odds, no implied probability, no no-vig fair price, no edge %, no best-book comparison. The value step has to happen in a separate tab/spreadsheet.",
+     "evidence": "Predictions > Starters (work/c08-pitcher-props/desk_sp.png); BRIEF: /edge only covers game markets",
+     "suggested_fix": "Add BOOK / IMPLIED / FAIR / EDGE sub-columns per prop (Odds API player-props ingest already exists behind a flag); colour-code edge and sort by it."
+    },
+    {
+     "id": "export-csv-starters-good-but-no-dist",
+     "title": "Starter CSV exports one line per market only",
+     "area": "export",
+     "severity": 2,
+     "detail": "Export on Starters works (line + p_over per market) but omits expected value, the ladder and inputs, so modelers can't rebuild the distribution.",
+     "evidence": "pitchhawk.js:1031-1036",
+     "suggested_fix": "Include exp_* and P(X>=k) columns for k in a sensible range."
+    }
+   ],
+   "delights": [
+    "Export CSV on Starters gives starter/team/opponent/game_time and all five line+P columns.",
+    "Open game keeps the market tab ('sp') when jumping to the game."
+   ]
+  },
+  {
+   "name": "Alicia Brennan",
+   "profile": "Pro, live-betting specialist; $35k bankroll, $400 units; FD, DK, bet365 live; in-game K and outs props",
+   "device": "desktop",
+   "goal": "Watch three live starters and hit live K overs when a pitcher is ahead of pace with a low pitch count.",
+   "journey": [
+    "1. Opens Live Markets; PITCHING card shows Guerrero O 5.5 Ks 43%, pitch count 24.",
+    "2. Looks for his current K/outs line - not shown (only batter's '0 BB \u00b7 1 K').",
+    "3. P(over) numbers are pregame, not re-priced live; no 'frozen' label on the pitching card.",
+    "4. Wants to star the pitcher for pitch-count alerts - no pin on pitchers.",
+    "5. Uses per-pitch velo calls as a fatigue tell - useful but not tied to the props."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 120,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Pitch count and next-pitch velo live are great, but show me he's at 4 K through 52 pitches and re-price the over.",
+   "pain_points": [
+    {
+     "id": "no-live-pitcher-line-in-rail",
+     "title": "Live pitching rail lacks the pitcher's running line and live prop update",
+     "area": "live",
+     "severity": 4,
+     "detail": "The Live Markets PITCHING card shows pregame O 5.5 / 43% and a pitch count, but not current K/outs/H/ER/BB, pitches per inning, or a re-priced live P(over). Live K-prop bettors can't see 'needs 3 more K in ~60 pitches'.",
+     "evidence": "pitchhawk.js:3517-3539 railPitchingHtml; work/c08-pitcher-props/desk_live.txt 'PITCHING ... O 5.5 43% ... PITCH COUNT 24'",
+     "suggested_fix": "Show 'Today: 3 K \u00b7 9 outs \u00b7 2 H \u00b7 1 ER \u00b7 1 BB \u00b7 48 P' and a live rest-of-start P(over) per prop, with 'pregame' labels on frozen numbers."
+    },
+    {
+     "id": "cannot-watch-a-starter",
+     "title": "No star/watchlist for pitchers",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "Pin keys exist for batters (b:) and games (g:) only. A K-prop bettor cannot star the 3 starters they bet and get alerts on scratches, velo dips or pitch-count milestones.",
+     "evidence": "pitchhawk.js pinBtnHtml calls at 1153,1188,1231,1348,2502 (no starter key)",
+     "suggested_fix": "Add pin 'sp:<id>' on starter rows/cards with alerts for scratch, velo drop, and pitch-count thresholds."
+    },
+    {
+     "id": "no-recent-velo-trend",
+     "title": "FB velo is a single 30-day average; no last-start velo trend",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Velo-drop is a key K/injury tell. Only a 30-day mean and a 75-99 pitch fatigue delta exist; no last-start vs season delta or sparkline.",
+     "evidence": "pitchhawk.js:2541-2552 starterStats velo = d30 avg_fastball_velo",
+     "suggested_fix": "Add 'VELO \u0394 last start vs season' with a 5-start sparkline and red flag below -1.0 mph."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob, no-vig fair or edge on pitcher props",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Starter cells show P(over) only. No book odds, no implied probability, no no-vig fair price, no edge %, no best-book comparison. The value step has to happen in a separate tab/spreadsheet.",
+     "evidence": "Predictions > Starters (work/c08-pitcher-props/desk_sp.png); BRIEF: /edge only covers game markets",
+     "suggested_fix": "Add BOOK / IMPLIED / FAIR / EDGE sub-columns per prop (Odds API player-props ingest already exists behind a flag); colour-code edge and sort by it."
+    }
+   ],
+   "delights": [
+    "Live next-pitch velo call and pitch log are unique and fast.",
+    "Pitching rail sits right next to the at-bat, all five props visible."
+   ]
+  },
+  {
+   "name": "Tom Okafor",
+   "profile": "Pro, small-market grinder; $12k bankroll, $150 units; Pinnacle reference + 4 US books; K unders on velo-down starters",
+   "device": "phone",
+   "goal": "Before work, scan for starters with velo drops and fade their Ks.",
+   "journey": [
+    "1. Opens #/pred on phone; market chips overflow - 'Starters' clipped to 'St'; swipes to find it.",
+    "2. Cards show Ks and Outs only; FB VELO hidden behind each card's chevron.",
+    "3. Expands a card: FB VELO '\u2014', FATIGUE '\u2014', no last-start delta.",
+    "4. No sort by velo; would have to open all 14 cards.",
+    "5. Gives up and checks Baseball Savant."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "On my phone I had to swipe to even find Starters and then open every card to see a velo that wasn't there.",
+   "pain_points": [
+    {
+     "id": "phone-starters-chip-offscreen",
+     "title": "On phone the Starters chip and result count are clipped off the right edge",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "The market chip row overflows at 390px: 'Starters' renders as 'St' and '14 results' as '14 r', with no scroll affordance. Users who don't know to swipe never find the pitcher view.",
+     "evidence": "work/c08-pitcher-props/phone_sp_open.png (filters expanded)",
+     "suggested_fix": "Wrap chips to two rows or add a fade + arrow scroll hint; put Starters first for pitcher-mode users (remember last market)."
+    },
+    {
+     "id": "phone-card-hides-hits-er-bb",
+     "title": "Phone starter card only shows Ks and Outs; Hits/ER/BB behind a chevron per card",
+     "area": "mobile",
+     "severity": 2,
+     "detail": "Card shows 2 of 5 props; scanning walks or hits-allowed across the slate means tapping open 14 cards.",
+     "evidence": "pitchhawk.js:2577-2586 starterCardHtml pairs.slice(0,2)",
+     "suggested_fix": "Let the user pick which prop is pinned on the card face (a market selector on the Starters chip)."
+    },
+    {
+     "id": "no-recent-velo-trend",
+     "title": "FB velo is a single 30-day average; no last-start velo trend",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "Velo-drop is a key K/injury tell. Only a 30-day mean and a 75-99 pitch fatigue delta exist; no last-start vs season delta or sparkline.",
+     "evidence": "pitchhawk.js:2541-2552 starterStats velo = d30 avg_fastball_velo",
+     "suggested_fix": "Add 'VELO \u0394 last start vs season' with a 5-start sparkline and red flag below -1.0 mph."
+    },
+    {
+     "id": "starter-form-columns-all-dashes",
+     "title": "Supporting-form columns render as a wall of dashes",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "30D K%, WHIFF, HR/PA, FB VELO, FATIGUE are '\u2014' on every starter row, with no reason given (loading? not served? too few BF?). The batter tables use a typed missing marker; the starter table uses bare dashes for most columns.",
+     "evidence": "work/c08-pitcher-props/desk_sp_open.png; pitchhawk.js:2562-2571 uses plain '\u2014' except HR/PA",
+     "suggested_fix": "Use missingHtml(kind) for every starter stat so the reason shows, and hide columns with no data slate-wide."
+    },
+    {
+     "id": "starters-cannot-sort-or-filter",
+     "title": "Starters table has no sort, min-edge or market filter",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "On the Starters chip the MIN LIFT slider disappears, there is no pSort control, and rows are fixed-sorted by 30D K% (which is '\u2014' for every row in this env, so order is effectively arbitrary). Cannot sort by P(over Ks), expected Ks, or 'most over-lean' to find the best spot on a 14-starter slate.",
+     "evidence": "frontend/pitchhawk.js:1093-1102 predStarterRows sorts only by k; [data-act=pSort] count = 0 on #/pred?m=sp (desktop and phone)",
+     "suggested_fix": "Clickable column headers (sort by any market's P or exp), a market sub-selector (Ks/Outs/Hits/ER/BB), and an 'edge vs line' min filter."
+    }
+   ],
+   "delights": [
+    "Phone cards are clean and the live status chip (TOP 2) is legible."
+   ]
+  },
+  {
+   "name": "Jasmine Ortiz",
+   "profile": "Amateur, 2 seasons; $1,500 bankroll, $25 units; DK, FD; K overs on favourite aces",
+   "device": "phone",
+   "goal": "Decide whether tonight's ace goes over 6.5 Ks at -120.",
+   "journey": [
+    "1. Searches the pitcher by name - starter overlay opens, nice.",
+    "2. Sees 'O 5.5 \u00b7 46% over' and doesn't know what that means for 6.5.",
+    "3. Reads section subtitle 'props reserved until modeled' while props are visible - confused whether to trust them.",
+    "4. No implied-prob conversion of -120 anywhere, no edge.",
+    "5. Bets on gut."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 90,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "My book says 6.5 and you say 5.5 - so is the over good or not?",
+   "pain_points": [
+    {
+     "id": "starter-line-is-model-mean-not-book",
+     "title": "The prop line is the model's own floor(mean)+0.5, not the book's line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "The line shown is derived from the model mean (always the half-point just below expectation), so P(over) clusters around 40-60% and never lines up with the number posted at DK/FD. A bettor whose book has Ks at 6.5 has no P(over 6.5) anywhere in the UI.",
+     "evidence": "supabase/functions/_shared/basemodels.ts:124 `const line = Math.floor(mean) + 0.5`; Starters table every cell 'O 5.5 / 46% over'",
+     "suggested_fix": "Price the sportsbook's posted line (Odds API pitcher props) and let the user type a line: show P(over/under) at any half-point from the same distribution."
+    },
+    {
+     "id": "starters-subtitle-contradicts-table",
+     "title": "'props reserved until modeled' subtitle contradicts props shown",
+     "area": "onboarding",
+     "severity": 2,
+     "detail": "The section header says props are reserved until modeled, yet every row shows a line and P(over) with a BASE tag. Users can't tell whether to trust the numbers.",
+     "evidence": "frontend/copy.js:59 predSubSp",
+     "suggested_fix": "Reword to 'base-model props (league rates x 30-day form) \u00b7 not yet trained' and link to the Guide entry."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No book price, implied prob, no-vig fair or edge on pitcher props",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Starter cells show P(over) only. No book odds, no implied probability, no no-vig fair price, no edge %, no best-book comparison. The value step has to happen in a separate tab/spreadsheet.",
+     "evidence": "Predictions > Starters (work/c08-pitcher-props/desk_sp.png); BRIEF: /edge only covers game markets",
+     "suggested_fix": "Add BOOK / IMPLIED / FAIR / EDGE sub-columns per prop (Odds API player-props ingest already exists behind a flag); colour-code edge and sort by it."
+    },
+    {
+     "id": "no-alt-line-ladder",
+     "title": "No alt-line probability ladder for starter props",
+     "area": "predictions",
+     "severity": 5,
+     "detail": "Each starter market shows exactly one line (O 5.5 Ks) and one P(over). There is no 3+/4+/5+/6+/7+/8+ K ladder or outs ladder, even though the base model is a Poisson count with a known mean, so the full distribution is free to compute. Alt-ladder bettors cannot price any rung but the one the model picked.",
+     "evidence": "frontend/pitchhawk.js:2439-2443 propCellHtml renders a single line; supabase/functions/_shared/basemodels.ts:109-125 starterProp returns only {line, expected_value, probability}",
+     "suggested_fix": "Return the PMF (or P(X>=k) for k=0..12) per starter market and render an expandable ladder row in the Starters detail / phone card: 3+ 4+ 5+ 6+ 7+ 8+ with P and fair American odds per rung."
+    }
+   ],
+   "delights": [
+    "Search found the pitcher instantly and showed all five props in one panel."
+   ]
+  },
+  {
+   "name": "Ben Fitzgerald",
+   "profile": "Amateur, weekend bettor; $800 bankroll, $10 units; FD, Hard Rock; same-game parlays with pitcher Ks",
+   "device": "phone",
+   "goal": "Build a 3-leg SGP: starter 5+ Ks, a batter 1+ hit, game under.",
+   "journey": [
+    "1. Home -> taps a game -> Starters tab in game view; sees O 5.5.",
+    "2. Wants P(5+ K) i.e. over 4.5 - not available.",
+    "3. Switches tabs to batters for the hit leg - works well.",
+    "4. No correlated/joint probability or bet slip to assemble legs.",
+    "5. Screenshots and builds in FanDuel."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Batter side is easy; for the pitcher leg I needed 5+ and you only gave me 6+.",
+   "pain_points": [
+    {
+     "id": "no-alt-line-ladder",
+     "title": "No alt-line probability ladder for starter props",
+     "area": "predictions",
+     "severity": 5,
+     "detail": "Each starter market shows exactly one line (O 5.5 Ks) and one P(over). There is no 3+/4+/5+/6+/7+/8+ K ladder or outs ladder, even though the base model is a Poisson count with a known mean, so the full distribution is free to compute. Alt-ladder bettors cannot price any rung but the one the model picked.",
+     "evidence": "frontend/pitchhawk.js:2439-2443 propCellHtml renders a single line; supabase/functions/_shared/basemodels.ts:109-125 starterProp returns only {line, expected_value, probability}",
+     "suggested_fix": "Return the PMF (or P(X>=k) for k=0..12) per starter market and render an expandable ladder row in the Starters detail / phone card: 3+ 4+ 5+ 6+ 7+ 8+ with P and fair American odds per rung."
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a pick, stake or CLV",
+     "area": "other",
+     "severity": 3,
+     "detail": "No bet slip, no 'track this' on a prop, no CLV vs closing line. Export CSV is the only bridge to a tracker.",
+     "evidence": "Starters row actions: only 'Open game \u203a' (pitchhawk.js:1359)",
+     "suggested_fix": "Add 'Track' on each prop cell capturing line, price, book, stake; settle automatically from gradeBase; show ROI/CLV."
+    },
+    {
+     "id": "phone-card-hides-hits-er-bb",
+     "title": "Phone starter card only shows Ks and Outs; Hits/ER/BB behind a chevron per card",
+     "area": "mobile",
+     "severity": 2,
+     "detail": "Card shows 2 of 5 props; scanning walks or hits-allowed across the slate means tapping open 14 cards.",
+     "evidence": "pitchhawk.js:2577-2586 starterCardHtml pairs.slice(0,2)",
+     "suggested_fix": "Let the user pick which prop is pinned on the card face (a market selector on the Starters chip)."
+    }
+   ],
+   "delights": [
+    "Game view tabs (away batters / home batters / Starters) make SGP leg-hunting quick.",
+    "1+ Hit probabilities with league baseline are easy to read."
+   ]
+  },
+  {
+   "name": "Rachel Kim",
+   "profile": "Amateur, stats-literate; $2,000 bankroll, $20 units; DK, BetMGM; walks props and umpire angles",
+   "device": "desktop",
+   "goal": "Find walks overs where a tight-zone umpire meets a wild starter.",
+   "journey": [
+    "1. Starters chip, WALKS column O 1.5 for everyone.",
+    "2. Looks for ump on row - none; opens game meta grid - HP UMPIRE '\u2014'.",
+    "3. Wants BB% for the starter - only 30D K% and whiff columns, no BB%.",
+    "4. Checks Guide for umpire info - none."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "An umpire field that's blank and no walk rate for the pitcher - I can't run my walks angle here.",
+   "pain_points": [
+    {
+     "id": "no-umpire-in-starter-view",
+     "title": "HP umpire / zone tendency not shown with the starter",
+     "area": "game-detail",
+     "severity": 3,
+     "detail": "HP umpire exists only in the game meta grid (and reads '\u2014' here); it is not on the Starters row/detail and there is no zone/K-rate tendency for the ump, so it cannot feed the K decision.",
+     "evidence": "pitchhawk.js:2418 HP UMPIRE only in pillMetaGridHtml; predStarterDetailHtml 1356-1361 shows only matchup + note",
+     "suggested_fix": "Show ump name + K%/BB% delta vs league in the starter detail and as a small chip on the row."
+    },
+    {
+     "id": "starter-form-columns-all-dashes",
+     "title": "Supporting-form columns render as a wall of dashes",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "30D K%, WHIFF, HR/PA, FB VELO, FATIGUE are '\u2014' on every starter row, with no reason given (loading? not served? too few BF?). The batter tables use a typed missing marker; the starter table uses bare dashes for most columns.",
+     "evidence": "work/c08-pitcher-props/desk_sp_open.png; pitchhawk.js:2562-2571 uses plain '\u2014' except HR/PA",
+     "suggested_fix": "Use missingHtml(kind) for every starter stat so the reason shows, and hide columns with no data slate-wide."
+    },
+    {
+     "id": "starters-cannot-sort-or-filter",
+     "title": "Starters table has no sort, min-edge or market filter",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "On the Starters chip the MIN LIFT slider disappears, there is no pSort control, and rows are fixed-sorted by 30D K% (which is '\u2014' for every row in this env, so order is effectively arbitrary). Cannot sort by P(over Ks), expected Ks, or 'most over-lean' to find the best spot on a 14-starter slate.",
+     "evidence": "frontend/pitchhawk.js:1093-1102 predStarterRows sorts only by k; [data-act=pSort] count = 0 on #/pred?m=sp (desktop and phone)",
+     "suggested_fix": "Clickable column headers (sort by any market's P or exp), a market sub-selector (Ks/Outs/Hits/ER/BB), and an 'edge vs line' min filter."
+    }
+   ],
+   "delights": [
+    "The game meta grid at least has an HP UMPIRE slot, so the intent is there.",
+    "BASE tags make it clear these are early models."
+   ]
+  },
+  {
+   "name": "Sam Delgado",
+   "profile": "Amateur, 1 season, tracks everything in Google Sheets; $500 bankroll, $5 units; FD, DK; Ks and outs",
+   "device": "desktop",
+   "goal": "Pick two K props for tonight and log them to his sheet with result tracking.",
+   "journey": [
+    "1. Starters chip; picks two pitchers with highest P(over) by eye (no sort).",
+    "2. Wants to star them - no pin on starters.",
+    "3. Exports CSV - gets the slate, pastes into sheet.",
+    "4. Looks for yesterday's starter results to see if model was right - FINAL rows have no result column; Data Feed has no pitcher markets."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 180,
+   "would_return": "yes",
+   "nps_0_10": 6,
+   "quote": "Export is handy, but I can't star a pitcher or see if yesterday's K calls hit.",
+   "pain_points": [
+    {
+     "id": "cannot-watch-a-starter",
+     "title": "No star/watchlist for pitchers",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "Pin keys exist for batters (b:) and games (g:) only. A K-prop bettor cannot star the 3 starters they bet and get alerts on scratches, velo dips or pitch-count milestones.",
+     "evidence": "pitchhawk.js pinBtnHtml calls at 1153,1188,1231,1348,2502 (no starter key)",
+     "suggested_fix": "Add pin 'sp:<id>' on starter rows/cards with alerts for scratch, velo drop, and pitch-count thresholds."
+    },
+    {
+     "id": "no-starter-prop-grading-or-calibration",
+     "title": "Starter props are graded in backend but no track record is shown",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "Calibration tiles cover Hit/HR/HRR/WP/at-bat/velo only; Data Feed markets have no pitcher_* entries; FINAL starter rows have no RESULT column. A pro cannot see whether P(over Ks) has been calibrated before staking.",
+     "evidence": "pitchhawk.js:1462-1476 tiles; pitchhawk.js:3640-3649 D_MARKETS lacks pitcher_*; basemodels.ts:187-212 gradeBase grades pitcher markets",
+     "suggested_fix": "Add a STARTER PROPS calibration tile, pitcher markets in Data Feed, and an actual (e.g. '7 K \u2713') column for final/live starters."
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a pick, stake or CLV",
+     "area": "other",
+     "severity": 3,
+     "detail": "No bet slip, no 'track this' on a prop, no CLV vs closing line. Export CSV is the only bridge to a tracker.",
+     "evidence": "Starters row actions: only 'Open game \u203a' (pitchhawk.js:1359)",
+     "suggested_fix": "Add 'Track' on each prop cell capturing line, price, book, stake; settle automatically from gradeBase; show ROI/CLV."
+    },
+    {
+     "id": "starters-cannot-sort-or-filter",
+     "title": "Starters table has no sort, min-edge or market filter",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "On the Starters chip the MIN LIFT slider disappears, there is no pSort control, and rows are fixed-sorted by 30D K% (which is '\u2014' for every row in this env, so order is effectively arbitrary). Cannot sort by P(over Ks), expected Ks, or 'most over-lean' to find the best spot on a 14-starter slate.",
+     "evidence": "frontend/pitchhawk.js:1093-1102 predStarterRows sorts only by k; [data-act=pSort] count = 0 on #/pred?m=sp (desktop and phone)",
+     "suggested_fix": "Clickable column headers (sort by any market's P or exp), a market sub-selector (Ks/Outs/Hits/ER/BB), and an 'edge vs line' min filter."
+    }
+   ],
+   "delights": [
+    "Export CSV is one click and the columns are clean.",
+    "Five pitcher markets side by side is more than most free tools give."
+   ]
+  }
+ ],
+ "top_cohort_issues": [
+  {
+   "id": "no-sportsbook-odds-on-props",
+   "title": "No book price, implied prob, no-vig fair or edge on pitcher props",
+   "personas_affected": 5,
+   "avg_severity": 5.0,
+   "fix": "Add BOOK / IMPLIED / FAIR / EDGE sub-columns per prop (Odds API player-props ingest already exists behind a flag); colour-code edge and sort by it."
+  },
+  {
+   "id": "no-alt-line-ladder",
+   "title": "No alt-line probability ladder for starter props",
+   "personas_affected": 4,
+   "avg_severity": 5.0,
+   "fix": "Return the PMF (or P(X>=k) for k=0..12) per starter market and render an expandable ladder row in the Starters detail / phone card: 3+ 4+ 5+ 6+ 7+ 8+ with P and fair American odds per rung."
+  },
+  {
+   "id": "starter-line-is-model-mean-not-book",
+   "title": "The prop line is the model's own floor(mean)+0.5, not the book's line",
+   "personas_affected": 4,
+   "avg_severity": 5.0,
+   "fix": "Price the sportsbook's posted line (Odds API pitcher props) and let the user type a line: show P(over/under) at any half-point from the same distribution."
+  },
+  {
+   "id": "starters-cannot-sort-or-filter",
+   "title": "Starters table has no sort, min-edge or market filter",
+   "personas_affected": 5,
+   "avg_severity": 4.0,
+   "fix": "Clickable column headers (sort by any market's P or exp), a market sub-selector (Ks/Outs/Hits/ER/BB), and an 'edge vs line' min filter."
+  },
+  {
+   "id": "no-starter-prop-grading-or-calibration",
+   "title": "Starter props are graded in backend but no track record is shown",
+   "personas_affected": 3,
+   "avg_severity": 4.0,
+   "fix": "Add a STARTER PROPS calibration tile, pitcher markets in Data Feed, and an actual (e.g. '7 K \u2713') column for final/live starters."
+  },
+  {
+   "id": "starter-form-columns-all-dashes",
+   "title": "Supporting-form columns render as a wall of dashes",
+   "personas_affected": 3,
+   "avg_severity": 3.0,
+   "fix": "Use missingHtml(kind) for every starter stat so the reason shows, and hide columns with no data slate-wide."
+  },
+  {
+   "id": "cannot-watch-a-starter",
+   "title": "No star/watchlist for pitchers",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Add pin 'sp:<id>' on starter rows/cards with alerts for scratch, velo drop, and pitch-count thresholds."
+  },
+  {
+   "id": "no-bet-slip-or-pick-tracking",
+   "title": "No way to log a pick, stake or CLV",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Add 'Track' on each prop cell capturing line, price, book, stake; settle automatically from gradeBase; show ROI/CLV."
+  },
+  {
+   "id": "no-recent-velo-trend",
+   "title": "FB velo is a single 30-day average; no last-start velo trend",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Add 'VELO \u0394 last start vs season' with a 5-start sparkline and red flag below -1.0 mph."
+  },
+  {
+   "id": "export-csv-starters-good-but-no-dist",
+   "title": "Starter CSV exports one line per market only",
+   "personas_affected": 2,
+   "avg_severity": 2.0,
+   "fix": "Include exp_* and P(X>=k) columns for k in a sensible range."
+  }
+ ]
+}

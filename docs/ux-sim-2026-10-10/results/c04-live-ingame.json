@@ -1,0 +1,738 @@
+{
+ "cohort": "c04-live-ingame",
+ "cohort_summary": "Live/in-game bettors found the Live Markets tab's pitch-by-pitch log, graded calls and win-prob sparklines genuinely novel, and Home's Live Decisions cards (Biggest Swing, Due Up) a strong glance surface. But the cohort's core loop - see a live number, compare to the live book price, act within seconds - breaks at every step: no live prices anywhere, the Live tab shows a frozen pregame total while the live total hides in a Home pill, no next-inning runs model, freshness shows fetch time not pitch time, and alerts are silenced exactly when needed because polling stops when the tab is hidden (and there is no push on phones). Multi-game monitoring is weaker on the Live tab than on Home. 0/10 full success; 6 partial, 4 failed.",
+ "personas": [
+  {
+   "name": "Marcus Feld",
+   "profile": "Pro, 9 yrs live MLB; $40k bankroll, $400 units; DraftKings, FanDuel, Circa, BetMGM; live totals and next-inning runs; trades line moves after pitching changes",
+   "device": "desktop",
+   "goal": "On a 2nd monitor during 3 simultaneous games, find live total mispricings after each half-inning and fire within ~10s of the book reopening.",
+   "journey": [
+    "Opens Home on second monitor; status bar 'polls every 8s' and 3 LIVE cards visible — good glance density.",
+    "Live Now rows show 'U 8.5 56% TOTAL · 9.2 R PROJ' — but can't tell if that's live or pregame; expands nothing.",
+    "Clicks Live Markets; lands on 'Top call now' NYY@BOS next-pitch call — irrelevant to totals.",
+    "Looks at GAME rail: 'TOTAL · PREGAME O 8.5 52% frozen at first pitch' — the one number he came for is frozen.",
+    "Goes back to Home, expands the LAD@SD pill, finds LIVE TOTAL in the 'more' block — 4 clicks per game per half-inning.",
+    "No book price anywhere, so he alt-tabs to DK/Circa and computes no-vig himself; gives up on using the app as a trigger."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "The live total exists somewhere in here but the Live tab shows me the pregame one with 'frozen' stamped on it — that's backwards for a live bettor.",
+   "pain_points": [
+    {
+     "id": "live-total-frozen-on-live-tab",
+     "title": "Live Markets shows only the frozen pregame total; the live total is buried on Home",
+     "area": "live",
+     "severity": 5,
+     "detail": "Core market for him; live projection is hidden behind Home pill expansion while Live tab shows the stale number.",
+     "evidence": "pitchhawk.js:3551-3555 railGameHtml renders 'TOTAL · PREGAME … frozen at first pitch'; live total (g.liveModels.total) only in Home pill 'more' block pitchhawk.js:1242-1244",
+     "suggested_fix": "Render LIVE TOTAL (projected runs, line, P(over)) in the Live game rail and Other-live cards, with pregame as a small 'opened' reference like win prob."
+    },
+    {
+     "id": "no-live-book-price-vs-model",
+     "title": "No live sportsbook price next to any live model number",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Can't compare model live total to DK/Circa price; the entire value step happens outside the app.",
+     "evidence": "Live Markets hero/rail (desk__live.png); pitchhawk.js:22 'no odds are fetched'; pitchhawk-data.js:361-366 /edge only for game markets and not served by mock",
+     "suggested_fix": "Next to every live probability show the best live book price, implied/no-vig prob, edge in pts, and the quote's age (e.g. 'DK -115 · 52.1% nv · +4.3 · 6s ago'); sort Top Call by edge vs book, not lift vs league."
+    },
+    {
+     "id": "no-multi-game-live-grid",
+     "title": "Only one game is detailed at a time; other games are thin cards",
+     "area": "live",
+     "severity": 4,
+     "detail": "Needs all 3 games' live totals side by side; has to click each game.",
+     "evidence": "liveHtml pitchhawk.js:3218-3250 renders one selected game + otherLiveHtml cards (score, count, WP, generic 'In Play 20% · Next pitch')",
+     "suggested_fix": "Add a compact multi-game grid/'cockpit' mode on desktop: per game WP, live total P(over), next-half-inning runs, current AB call, pitch count, last-event age, each with book price."
+    },
+    {
+     "id": "no-next-inning-runs-market",
+     "title": "No next-inning / half-inning runs model (NRFI-style live)",
+     "area": "live",
+     "severity": 4,
+     "detail": "His second market (next-inning runs) has no model at all.",
+     "evidence": "Live Markets view shows only next pitch, at-bat outcome, velo, pitches-in-AB, WP and totals (desk__live.txt); grep for 'next inning' in frontend returns nothing",
+     "suggested_fix": "Add 'NEXT HALF-INNING: P(≥1 run)' and expected runs with due-up hitters, on the hero and other-live cards."
+    }
+   ],
+   "delights": [
+    "8s poll cadence and 'updated' clock are visible",
+    "Win-prob sparkline per game is a quick game-script read"
+   ]
+  },
+  {
+   "name": "Priya Raman",
+   "profile": "Pro, ex-trader; $25k bankroll, $250 units; Pinnacle reference, FanDuel, Caesars, Fliff; live moneyline + win-prob arbitrage vs market",
+   "device": "desktop",
+   "goal": "Spot live ML where model WP diverges ≥4 pts from no-vig market after big swings; wants alerts so she can watch other sports.",
+   "journey": [
+    "Home: BIGGEST SWING card 'NYY 64% +16 pts' — nice, but no market WP next to it.",
+    "Pins NYY@BOS and LAD@SD with ☆, turns on '🔔 Alerts on'; toast says alerts work 'while this tab is open'.",
+    "Switches to another tab to watch NBA odds screen; expects an OS notification on a swing.",
+    "Nothing ever arrives — polling pauses while the tab is hidden, so checkAlerts never runs.",
+    "Returns, sees WP moved; has to diff against Pinnacle by hand."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "I turned alerts on, tabbed away, and it went silent — an alert that only works while I'm staring at it is just a page.",
+   "pain_points": [
+    {
+     "id": "alerts-dead-when-tab-hidden",
+     "title": "Alerts can't fire when the tab is in the background, which is the only time OS notifications are used",
+     "area": "watchlist",
+     "severity": 5,
+     "detail": "Defeats the core use case of alerts for a multi-screen trader.",
+     "evidence": "pitchhawk.js:4660-4663 _pollTick skips poll()/checkAlerts while document.hidden; pitchhawk.js:701-704 notify only uses Notification when document.hidden; copy.js:44 'while this tab is open'",
+     "suggested_fix": "Keep a slow poll (or SSE/push via service worker) while hidden and evaluate alerts there; offer web-push/PWA so phones get alerts with the app closed."
+    },
+    {
+     "id": "alerts-limited-to-due-up-and-wp-swing",
+     "title": "Alert triggers are fixed: batter up/on deck, final, ≥15-pt WP swing",
+     "area": "watchlist",
+     "severity": 4,
+     "detail": "Wants 'model WP − no-vig ≥ 4 pts' trigger, not a fixed 15-pt WP swing.",
+     "evidence": "pitchhawk.js:710-750 checkAlerts hard-codes up/deck/final/0.15 swing; single on/off bell pitchhawk.js:829",
+     "suggested_fix": "Rule builder: 'notify when model vs book edge ≥ X on market M', 'live total P(over) crosses Y', 'pitcher at N pitches', 'top call lift ≥ Z'; per-pin toggles and snooze."
+    },
+    {
+     "id": "no-live-book-price-vs-model",
+     "title": "No live sportsbook price next to any live model number",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "WP vs market is her whole edge; no market WP shown.",
+     "evidence": "Live Markets hero/rail (desk__live.png); pitchhawk.js:22 'no odds are fetched'; pitchhawk-data.js:361-366 /edge only for game markets and not served by mock",
+     "suggested_fix": "Next to every live probability show the best live book price, implied/no-vig prob, edge in pts, and the quote's age (e.g. 'DK -115 · 52.1% nv · +4.3 · 6s ago'); sort Top Call by edge vs book, not lift vs league."
+    },
+    {
+     "id": "live-lift-vs-league-not-vs-market",
+     "title": "Live 'Top call' ranks by lift over league, not edge vs market",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Biggest Swing ranks by movement since open, not by divergence from market.",
+     "evidence": "pitchhawk.js:3255-3268 liveSelGame picks max topCallOf().lift; hero copy 'strongest lean over league of 3 live at-bats'",
+     "suggested_fix": "Offer a rank toggle: 'vs league' | 'vs book'; when no price exists say so explicitly on the card."
+    }
+   ],
+   "delights": [
+    "Pin + bell flow is 2 clicks and the Watching row follows across tabs",
+    "'opened 48%' reference on WP is exactly the right framing"
+   ]
+  },
+  {
+   "name": "Dmitri Volkov",
+   "profile": "Pro micro-market bettor; $15k bankroll, $100 units; BetMGM and Caesars pitch/at-bat markets, Kalshi; next-pitch outcome and at-bat result props",
+   "device": "desktop",
+   "goal": "Use per-pitch and at-bat calls to bet next-pitch / at-bat result micro-markets, which close within seconds.",
+   "journey": [
+    "Live Markets: hero shows NEXT PITCH 'Strike/Foul 45%' with lg 46% and HOW THIS AT-BAT ENDS bars — exactly his markets.",
+    "Pitch-by-pitch log with called vs actual velo and ✗ MISSED/PENDING grades — loves it.",
+    "Wants to know how fresh the call is relative to the last pitch; 'updated' ticks every 8s even when nothing changed.",
+    "8s poll + jitter means the call may lag a pitch; no 'model as of pitch #N' stamp.",
+    "No book price for the micro-market and track record panel shows '—' early, so no confidence to size."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 20,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "The pitch log is the best thing here, but I need to know the call is for THIS pitch, not the one that just happened.",
+   "pain_points": [
+    {
+     "id": "updated-clock-is-fetch-time-not-event-time",
+     "title": "'updated' clock ticks every poll even when nothing changed",
+     "area": "performance",
+     "severity": 4,
+     "detail": "Freshness signal measures fetch time, not pitch time; in micro-markets that's the difference between +EV and stale.",
+     "evidence": "Observed in run.js: game state identical over 30s while 'updated' advanced 5:21:53→5:22:28; pitchhawk.js:4624-4627 patchClocks on unchanged poll; statusbar pitchhawk.js:1975",
+     "suggested_fix": "Show 'last pitch 12s ago' / 'model as of pitch #2' (event time from the feed) plus a separate connection dot; turn amber when the last event is older than the expected pitch cadence."
+    },
+    {
+     "id": "poll-cadence-too-slow-for-micro-markets",
+     "title": "8s jittered poll is slower than pitch cadence for pitch-level markets",
+     "area": "performance",
+     "severity": 4,
+     "detail": "POLL_MS=8000 with ±20% jitter (up to ~9.6s); pitches arrive every ~15-25s and books close next-pitch markets in seconds, so half the time the call shown is for the previous state.",
+     "evidence": "pitchhawk.js:28 POLL_MS; pitchhawk.js:4646-4658 _jitter/pollDelay",
+     "suggested_fix": "SSE/WebSocket push for the selected game; show a 'pitch #N' sequence id on the hero."
+    },
+    {
+     "id": "no-live-book-price-vs-model",
+     "title": "No live sportsbook price next to any live model number",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "No micro-market price to compare to 45% Strike/Foul.",
+     "evidence": "Live Markets hero/rail (desk__live.png); pitchhawk.js:22 'no odds are fetched'; pitchhawk-data.js:361-366 /edge only for game markets and not served by mock",
+     "suggested_fix": "Next to every live probability show the best live book price, implied/no-vig prob, edge in pts, and the quote's age (e.g. 'DK -115 · 52.1% nv · +4.3 · 6s ago'); sort Top Call by edge vs book, not lift vs league."
+    },
+    {
+     "id": "live-call-track-record-empty-early",
+     "title": "At-bat/pitch call accuracy shows '—' early, so no confidence in micro-markets",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Can't size without calibration history.",
+     "evidence": "desk__live.txt 'AT-BAT CALLS THIS GAME —', 'PITCH CALLS THIS GAME —'",
+     "suggested_fix": "Show season/last-7-day calibration for each micro-market (Brier, hit rate by bucket) when the per-game sample is empty."
+    }
+   ],
+   "delights": [
+    "Pitch-by-pitch table with grades and velo Δ",
+    "'pending calls never count as misses' — honest grading",
+    "lg % next to every outcome"
+   ]
+  },
+  {
+   "name": "Hannah Cole",
+   "profile": "Pro, props syndicate runner; $60k bankroll, $500 units; FanDuel, DK, ESPN Bet, Bet365; live batter HR/hit props and pitcher K overs mid-game",
+   "device": "desktop",
+   "goal": "Monitor 6+ pinned batters across games and fire rest-of-game HR props when they're due up and the live price lags.",
+   "journey": [
+    "Stars batters from Live rail ('Watch this batter') — pins appear in Watching row.",
+    "Watching pill shows pregame-frozen 1+ HR %, not rest-of-game.",
+    "On Live rail, PREGAME FROZEN 18% is big; REST OF GAME 22%/14% is small below.",
+    "Gets 'X is on deck' toast only when tab is focused.",
+    "Pitcher K line is base model with '—' for 30d K% / whiff; can't re-project Ks with pitch count 24."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 60,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Due-up alerts are exactly right — now show me his rest-of-game HR price versus FanDuel's in the same toast.",
+   "pain_points": [
+    {
+     "id": "batter-props-frozen-at-first-pitch-labeling",
+     "title": "Batter rail mixes frozen pregame and live rest-of-game numbers",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Watching pills and rail lead with frozen pregame numbers.",
+     "evidence": "railPlateHtml pitchhawk.js:3497 'PREGAME · FROZEN AT FIRST PITCH' 76%/18% big, REST OF GAME 22%/14% small (desk__live.png)",
+     "suggested_fix": "Lead with REST OF GAME (the live-bettable number) large; demote frozen pregame to a reference line."
+    },
+    {
+     "id": "pitcher-lines-not-updated-live",
+     "title": "Pitcher K/Outs lines on Live are base pregame models; no in-game re-projection vs pitch count",
+     "area": "live",
+     "severity": 4,
+     "detail": "Live K overs need pitch-count-aware projection.",
+     "evidence": "desk__live.txt PITCHING rail: 'base models · line and P(over) from league rates × 30-day form'; 30D K% and WHIFF show '—'",
+     "suggested_fix": "Re-project remaining Ks/Outs from current pitch count, Ks so far, and leash; show 'needs 3 more Ks in ~38 pitches'."
+    },
+    {
+     "id": "alerts-dead-when-tab-hidden",
+     "title": "Alerts can't fire when the tab is in the background, which is the only time OS notifications are used",
+     "area": "watchlist",
+     "severity": 5,
+     "detail": "Runs 4 screens; the Pitch Hawk tab is rarely focused.",
+     "evidence": "pitchhawk.js:4660-4663 _pollTick skips poll()/checkAlerts while document.hidden; pitchhawk.js:701-704 notify only uses Notification when document.hidden; copy.js:44 'while this tab is open'",
+     "suggested_fix": "Keep a slow poll (or SSE/push via service worker) while hidden and evaluate alerts there; offer web-push/PWA so phones get alerts with the app closed."
+    },
+    {
+     "id": "no-live-book-price-vs-model",
+     "title": "No live sportsbook price next to any live model number",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "No price for rest-of-game props.",
+     "evidence": "Live Markets hero/rail (desk__live.png); pitchhawk.js:22 'no odds are fetched'; pitchhawk-data.js:361-366 /edge only for game markets and not served by mock",
+     "suggested_fix": "Next to every live probability show the best live book price, implied/no-vig prob, edge in pts, and the quote's age (e.g. 'DK -115 · 52.1% nv · +4.3 · 6s ago'); sort Top Call by edge vs book, not lift vs league."
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a live bet, its price, or track CLV",
+     "area": "other",
+     "severity": 3,
+     "detail": "Can't log fills to track CLV by book.",
+     "evidence": "No slip/log surface anywhere; star pins only track entities (pitchhawk.js:754-767)",
+     "suggested_fix": "Quick 'log bet' from any live number (market, price, stake, timestamp) with auto-grading and CLV vs the next quote."
+    }
+   ],
+   "delights": [
+    "On-deck alerts computed from batting order",
+    "REST OF GAME with PA left is the right live prop framing"
+   ]
+  },
+  {
+   "name": "Luis Ortega",
+   "profile": "Pro, live in-play generalist; $10k bankroll, $100 units; DK, FanDuel, Kalshi; live ML, run line, totals across the full slate",
+   "device": "desktop",
+   "goal": "Run a 'cockpit' of every live game on one screen and triage which game to focus on each half-inning.",
+   "journey": [
+    "Home LIVE NOW rows: score, base diamond, count, WP, total, strongest read — good scan density.",
+    "Goes to Live Markets; leaves default 'Top call now'.",
+    "Hero swaps games when another game's lift beats it — loses context mid-read.",
+    "Pins LAD@SD via chip (#/live/800001) — stable now, but only one game detailed.",
+    "Other-live cards each say 'In Play 20% · Next pitch' — not actionable; no keyboard way to cycle games."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 40,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Home is a better multi-game monitor than the Live tab, which is weird.",
+   "pain_points": [
+    {
+     "id": "no-multi-game-live-grid",
+     "title": "Only one game is detailed at a time; other games are thin cards",
+     "area": "live",
+     "severity": 4,
+     "detail": "Needs grid of all live games with markets.",
+     "evidence": "liveHtml pitchhawk.js:3218-3250 renders one selected game + otherLiveHtml cards (score, count, WP, generic 'In Play 20% · Next pitch')",
+     "suggested_fix": "Add a compact multi-game grid/'cockpit' mode on desktop: per game WP, live total P(over), next-half-inning runs, current AB call, pitch count, last-event age, each with book price."
+    },
+    {
+     "id": "top-call-view-jumps-between-games",
+     "title": "Default 'Top call now' view silently switches games as the leader changes",
+     "area": "live",
+     "severity": 3,
+     "detail": "Disorienting while reading.",
+     "evidence": "pitchhawk.js:3255-3268 'top' recomputes best game every render; default state liveSel:'top' pitchhawk.js:144",
+     "suggested_fix": "Default to the last game the user picked; show 'Top call moved to LAD@SD →' as a nudge instead of swapping the whole hero."
+    },
+    {
+     "id": "other-live-cards-lack-actionable-markets",
+     "title": "Other-live cards show a generic next-pitch call, no totals/edges",
+     "area": "live",
+     "severity": 3,
+     "detail": "Cards give no reason to switch.",
+     "evidence": "otherLiveHtml pitchhawk.js:3560-3585; desk__live.txt 'TOP CALL In Play 20% · Next pitch — at-bat calls'",
+     "suggested_fix": "Show each card's strongest market-relevant number (live total P(over), next-inning run prob, batter rest-of-game HR) and its edge, and sort cards by edge."
+    },
+    {
+     "id": "no-keyboard-shortcuts-for-game-switching",
+     "title": "No hotkeys to switch games on a second screen",
+     "area": "global-nav",
+     "severity": 2,
+     "detail": "Second-screen use wants hotkeys.",
+     "evidence": "keydown handler pitchhawk.js:237-243 only handles Esc and '/'",
+     "suggested_fix": "1-9 to jump to live game N, T for Top call, A to toggle alerts, ←/→ to cycle games."
+    },
+    {
+     "id": "no-live-book-price-vs-model",
+     "title": "No live sportsbook price next to any live model number",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "No prices anywhere.",
+     "evidence": "Live Markets hero/rail (desk__live.png); pitchhawk.js:22 'no odds are fetched'; pitchhawk-data.js:361-366 /edge only for game markets and not served by mock",
+     "suggested_fix": "Next to every live probability show the best live book price, implied/no-vig prob, edge in pts, and the quote's age (e.g. 'DK -115 · 52.1% nv · +4.3 · 6s ago'); sort Top Call by edge vs book, not lift vs league."
+    }
+   ],
+   "delights": [
+    "Home live rows with base-runner diamond and count",
+    "Deep-linkable #/live/<pk> routes",
+    "Live cards sort 'latest inning first'"
+   ]
+  },
+  {
+   "name": "Tyler Brooks",
+   "profile": "Amateur; $1,500 bankroll, $15 units; FanDuel, DK app; live ML and 'next inning run' props while watching the Yankees",
+   "device": "phone",
+   "goal": "During the NYY game on his couch, decide whether to bet 'run scored in the next inning' when the Yankees bat.",
+   "journey": [
+    "Opens on phone; header truncated '3 games live · aut…'.",
+    "Taps Live Markets; Top call happens to be NYY@BOS — lucky.",
+    "Scrolls past huge next-pitch/at-bat bars looking for innings/runs; nothing about next inning.",
+    "Finds win prob and frozen pregame total ~3 screens down.",
+    "Gives up, bets on vibes in FanDuel."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "I just want 'chance Yankees score this inning' — it tells me the next pitch is a strike or foul.",
+   "pain_points": [
+    {
+     "id": "no-next-inning-runs-market",
+     "title": "No next-inning / half-inning runs model (NRFI-style live)",
+     "area": "live",
+     "severity": 5,
+     "detail": "His only market isn't modeled.",
+     "evidence": "Live Markets view shows only next pitch, at-bat outcome, velo, pitches-in-AB, WP and totals (desk__live.txt); grep for 'next inning' in frontend returns nothing",
+     "suggested_fix": "Add 'NEXT HALF-INNING: P(≥1 run)' and expected runs with due-up hitters, on the hero and other-live cards."
+    },
+    {
+     "id": "phone-live-hero-pushes-key-numbers-below-fold",
+     "title": "Phone live hero fills the screen; WP, totals, pitcher pitch count are 3-4 screens down",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Key game numbers far below the fold.",
+     "evidence": "phone__live.png: hero ~800px; GAME rail with WP/total at ~1700px of 2500px page; liveHtml mobile order pitchhawk.js:3222-3233",
+     "suggested_fix": "Sticky compact game strip (score, count, outs, WP, live total, pitch count) at top; collapse the 4-row distribution bars to a single line."
+    },
+    {
+     "id": "live-total-frozen-on-live-tab",
+     "title": "Live Markets shows only the frozen pregame total; the live total is buried on Home",
+     "area": "live",
+     "severity": 3,
+     "detail": "Sees 'frozen' and assumes app is broken.",
+     "evidence": "pitchhawk.js:3551-3555 railGameHtml renders 'TOTAL · PREGAME … frozen at first pitch'; live total (g.liveModels.total) only in Home pill 'more' block pitchhawk.js:1242-1244",
+     "suggested_fix": "Render LIVE TOTAL (projected runs, line, P(over)) in the Live game rail and Other-live cards, with pregame as a small 'opened' reference like win prob."
+    }
+   ],
+   "delights": [
+    "Bottom tab bar is thumb-friendly",
+    "Score/count/outs/runners line is clear"
+   ]
+  },
+  {
+   "name": "Jasmine Wu",
+   "profile": "Amateur, analytics hobbyist; $3k bankroll, $25 units; DraftKings, BetMGM; live player props (hit/HR) and pitch-count-based K unders",
+   "device": "phone",
+   "goal": "At the ballpark, track her 3 favorite hitters across games and get pinged when they're due up to place a live hit prop.",
+   "journey": [
+    "Stars three batters via Live rail and Predictions rows.",
+    "Turns on alerts; phone bell is clipped off the right edge of the Watching row — has to swipe sideways to find it.",
+    "Locks phone to watch the game; no alerts arrive (tab hidden → polling stops; no push).",
+    "Reopens the browser, sees 'X is up' toast late, batter already out."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 0,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "It promised to tell me when my guy's up — then said nothing because my screen was off.",
+   "pain_points": [
+    {
+     "id": "alerts-dead-when-tab-hidden",
+     "title": "Alerts can't fire when the tab is in the background, which is the only time OS notifications are used",
+     "area": "watchlist",
+     "severity": 5,
+     "detail": "On phone the tab is always backgrounded while watching the game.",
+     "evidence": "pitchhawk.js:4660-4663 _pollTick skips poll()/checkAlerts while document.hidden; pitchhawk.js:701-704 notify only uses Notification when document.hidden; copy.js:44 'while this tab is open'",
+     "suggested_fix": "Keep a slow poll (or SSE/push via service worker) while hidden and evaluate alerts there; offer web-push/PWA so phones get alerts with the app closed."
+    },
+    {
+     "id": "phone-watch-and-chip-rows-clip-offscreen",
+     "title": "On phone the Watching row and game chips overflow sideways; alerts bell is cut off",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Bell and chips cut off.",
+     "evidence": "work/c04-live-ingame/phone_live_pinned.png: '🔔 A…' clipped at right edge, 'LAD 7–5' chip clipped; header status truncated '3 games live · aut…'",
+     "suggested_fix": "Wrap or add edge-fade + scroll hint; move alerts bell into the header; make game chips a sticky segmented scroller."
+    },
+    {
+     "id": "alerts-limited-to-due-up-and-wp-swing",
+     "title": "Alert triggers are fixed: batter up/on deck, final, ≥15-pt WP swing",
+     "area": "watchlist",
+     "severity": 3,
+     "detail": "Wants per-batter on-deck + a heads-up 2 batters before.",
+     "evidence": "pitchhawk.js:710-750 checkAlerts hard-codes up/deck/final/0.15 swing; single on/off bell pitchhawk.js:829",
+     "suggested_fix": "Rule builder: 'notify when model vs book edge ≥ X on market M', 'live total P(over) crosses Y', 'pitcher at N pitches', 'top call lift ≥ Z'; per-pin toggles and snooze."
+    }
+   ],
+   "delights": [
+    "Star anything → appears in Watching row on every tab",
+    "On-deck logic from batting order is smart"
+   ]
+  },
+  {
+   "name": "Kevin O'Hara",
+   "profile": "Amateur, sharp-curious; $2k bankroll, $20 units; FanDuel, Fanatics; live totals overs after early runs",
+   "device": "desktop",
+   "goal": "With games on TV and laptop open, find a live over when model projected runs exceed the live book total.",
+   "journey": [
+    "Home Live Now: 'O 8.5 57% TOTAL · 9.7 R PROJ' for PHI@ATL 6–6 — confused: 9.7 runs projected when 12 already scored?",
+    "Clicks game → Live tab → 'TOTAL · PREGAME frozen at first pitch' explains it, but then where's the live one?",
+    "Opens Guide; doesn't find live total there either.",
+    "Accidentally expands Home pill 'more' and finds LIVE TOTAL — 'BASE' tag unexplained.",
+    "Compares to Fanatics 13.5 manually."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 180,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Why does the board say 9.7 runs projected in a game that's already 6–6?",
+   "pain_points": [
+    {
+     "id": "live-total-frozen-on-live-tab",
+     "title": "Live Markets shows only the frozen pregame total; the live total is buried on Home",
+     "area": "live",
+     "severity": 4,
+     "detail": "Home live rows show pregame total next to a live score, which reads as a bug.",
+     "evidence": "pitchhawk.js:3551-3555 railGameHtml renders 'TOTAL · PREGAME … frozen at first pitch'; live total (g.liveModels.total) only in Home pill 'more' block pitchhawk.js:1242-1244",
+     "suggested_fix": "Render LIVE TOTAL (projected runs, line, P(over)) in the Live game rail and Other-live cards, with pregame as a small 'opened' reference like win prob."
+    },
+    {
+     "id": "base-tag-unexplained-on-live-models",
+     "title": "'BASE' tag on live numbers not explained in context",
+     "area": "onboarding",
+     "severity": 2,
+     "detail": "Rest-of-game and live total cells carry a BASE chip with no tooltip explaining what 'base model' means for a live read.",
+     "evidence": "pitchhawk.js:3505 baseTagHtml; desk__live.png 'BASE 1.0 PA left'",
+     "suggested_fix": "Tooltip/inline glossary: 'Base = league rates × 30-day form, not yet adjusted for X'."
+    },
+    {
+     "id": "no-live-book-price-vs-model",
+     "title": "No live sportsbook price next to any live model number",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "Must compute value by hand.",
+     "evidence": "Live Markets hero/rail (desk__live.png); pitchhawk.js:22 'no odds are fetched'; pitchhawk-data.js:361-366 /edge only for game markets and not served by mock",
+     "suggested_fix": "Next to every live probability show the best live book price, implied/no-vig prob, edge in pts, and the quote's age (e.g. 'DK -115 · 52.1% nv · +4.3 · 6s ago'); sort Top Call by edge vs book, not lift vs league."
+    }
+   ],
+   "delights": [
+    "'New here?' banner and How-to-read guide",
+    "Scorecard of how reads landed builds trust"
+   ]
+  },
+  {
+   "name": "Sofia Martinez",
+   "profile": "Amateur; $800 bankroll, $10 units; DraftKings, PrizePicks-style apps; live HR props on sluggers",
+   "device": "phone",
+   "goal": "During commute, check which live slugger has the best HR chance left and bet before the at-bat.",
+   "journey": [
+    "Home on phone: DUE UP card 'Juan Judge 23% +10.4 pts 1+ HR' — perfect starting point.",
+    "Notes it says PREGAME · FROZEN — not sure it's still valid mid-game.",
+    "Taps → Live tab, but hero shows the current batter, not Judge; has to scroll to find nothing on Judge.",
+    "No rest-of-game HR list for due-up hitters across games."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 45,
+   "would_return": "yes",
+   "nps_0_10": 6,
+   "quote": "The Due Up card is great but it hands me a frozen pregame number and then loses him when I tap in.",
+   "pain_points": [
+    {
+     "id": "due-up-card-shows-frozen-pregame-and-loses-context",
+     "title": "Due Up card shows frozen pregame prob; tapping lands on the current batter, not the due-up hitter",
+     "area": "home",
+     "severity": 3,
+     "detail": "Card labelled PREGAME · FROZEN 23%; tap routes to Live game view whose hero/rail is the current batter.",
+     "evidence": "desk__home.txt DUE UP card; pitchhawk.js:493 openGame → Live view",
+     "suggested_fix": "Show rest-of-game HR on Due Up and deep-link to a batter-focused live panel."
+    },
+    {
+     "id": "phone-live-hero-pushes-key-numbers-below-fold",
+     "title": "Phone live hero fills the screen; WP, totals, pitcher pitch count are 3-4 screens down",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "Long scroll on phone.",
+     "evidence": "phone__live.png: hero ~800px; GAME rail with WP/total at ~1700px of 2500px page; liveHtml mobile order pitchhawk.js:3222-3233",
+     "suggested_fix": "Sticky compact game strip (score, count, outs, WP, live total, pitch count) at top; collapse the 4-row distribution bars to a single line."
+    },
+    {
+     "id": "no-live-book-price-vs-model",
+     "title": "No live sportsbook price next to any live model number",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "No HR price.",
+     "evidence": "Live Markets hero/rail (desk__live.png); pitchhawk.js:22 'no odds are fetched'; pitchhawk-data.js:361-366 /edge only for game markets and not served by mock",
+     "suggested_fix": "Next to every live probability show the best live book price, implied/no-vig prob, edge in pts, and the quote's age (e.g. 'DK -115 · 52.1% nv · +4.3 · 6s ago'); sort Top Call by edge vs book, not lift vs league."
+    }
+   ],
+   "delights": [
+    "Due Up card concept — who bats next, worked out from the order",
+    "Dark theme readable in sunlight-ish conditions"
+   ]
+  },
+  {
+   "name": "Andre Jackson",
+   "profile": "Amateur, high-volume recreational; $5k bankroll, $50 units; DK, FanDuel, Caesars; live ML + same-game parlays during prime-time games",
+   "device": "phone",
+   "goal": "Use phone as a second screen to the TV and react to win-prob swings for live ML hedges on his pregame bets.",
+   "journey": [
+    "Home BIGGEST SWING card 'NYY +16 pts' immediately useful.",
+    "Pins NYY@BOS, alerts on.",
+    "Live tab on phone: WP rail far down; scrolls each time.",
+    "Whole page re-renders on new data; scroll position sometimes jumps (full innerHTML render).",
+    "No way to record his pregame ticket to see hedge math."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 30,
+   "would_return": "yes",
+   "nps_0_10": 6,
+   "quote": "Biggest Swing is my favorite card — just put the hedge math and the live ML price next to it.",
+   "pain_points": [
+    {
+     "id": "phone-live-hero-pushes-key-numbers-below-fold",
+     "title": "Phone live hero fills the screen; WP, totals, pitcher pitch count are 3-4 screens down",
+     "area": "mobile",
+     "severity": 3,
+     "detail": "WP buried below the fold.",
+     "evidence": "phone__live.png: hero ~800px; GAME rail with WP/total at ~1700px of 2500px page; liveHtml mobile order pitchhawk.js:3222-3233",
+     "suggested_fix": "Sticky compact game strip (score, count, outs, WP, live total, pitch count) at top; collapse the 4-row distribution bars to a single line."
+    },
+    {
+     "id": "full-rerender-on-live-update",
+     "title": "Full innerHTML re-render on each changed poll can reset scroll/taps",
+     "area": "performance",
+     "severity": 2,
+     "detail": "render() rewrites root.innerHTML (pitchhawk.js:4552-4557); poll() calls render() on any slate change (pitchhawk.js:4631-4635)",
+     "evidence": "pitchhawk.js:4552-4557",
+     "suggested_fix": "Patch changed nodes only (as patchClocks already does) and preserve scroll anchor."
+    },
+    {
+     "id": "no-bet-slip-or-pick-tracking",
+     "title": "No way to log a live bet, its price, or track CLV",
+     "area": "other",
+     "severity": 3,
+     "detail": "Wants to log pregame ticket and see hedge EV.",
+     "evidence": "No slip/log surface anywhere; star pins only track entities (pitchhawk.js:754-767)",
+     "suggested_fix": "Quick 'log bet' from any live number (market, price, stake, timestamp) with auto-grading and CLV vs the next quote."
+    },
+    {
+     "id": "no-live-book-price-vs-model",
+     "title": "No live sportsbook price next to any live model number",
+     "area": "pricing-odds",
+     "severity": 4,
+     "detail": "No live ML price.",
+     "evidence": "Live Markets hero/rail (desk__live.png); pitchhawk.js:22 'no odds are fetched'; pitchhawk-data.js:361-366 /edge only for game markets and not served by mock",
+     "suggested_fix": "Next to every live probability show the best live book price, implied/no-vig prob, edge in pts, and the quote's age (e.g. 'DK -115 · 52.1% nv · +4.3 · 6s ago'); sort Top Call by edge vs book, not lift vs league."
+    }
+   ],
+   "delights": [
+    "Biggest Swing card + sparkline",
+    "Pinning is fast and persistent"
+   ]
+  }
+ ],
+ "top_cohort_issues": [
+  {
+   "id": "no-live-book-price-vs-model",
+   "title": "No live sportsbook price next to any live model number",
+   "personas_affected": 8,
+   "avg_severity": 4.62,
+   "fix": "Next to every live probability show the best live book price, implied/no-vig prob, edge in pts, and the quote's age (e.g. 'DK -115 · 52.1% nv · +4.3 · 6s ago'); sort Top Call by edge vs book, not lift vs league."
+  },
+  {
+   "id": "alerts-dead-when-tab-hidden",
+   "title": "Alerts can't fire when the tab is in the background, which is the only time OS notifications are used",
+   "personas_affected": 3,
+   "avg_severity": 5.0,
+   "fix": "Keep a slow poll (or SSE/push via service worker) while hidden and evaluate alerts there; offer web-push/PWA so phones get alerts with the app closed."
+  },
+  {
+   "id": "live-total-frozen-on-live-tab",
+   "title": "Live Markets shows only the frozen pregame total; the live total is buried on Home",
+   "personas_affected": 3,
+   "avg_severity": 4.0,
+   "fix": "Render LIVE TOTAL (projected runs, line, P(over)) in the Live game rail and Other-live cards, with pregame as a small 'opened' reference like win prob."
+  },
+  {
+   "id": "no-next-inning-runs-market",
+   "title": "No next-inning / half-inning runs model (NRFI-style live)",
+   "personas_affected": 2,
+   "avg_severity": 4.5,
+   "fix": "Add 'NEXT HALF-INNING: P(≥1 run)' and expected runs with due-up hitters, on the hero and other-live cards."
+  },
+  {
+   "id": "phone-live-hero-pushes-key-numbers-below-fold",
+   "title": "Phone live hero fills the screen; WP, totals, pitcher pitch count are 3-4 screens down",
+   "personas_affected": 3,
+   "avg_severity": 3.0,
+   "fix": "Sticky compact game strip (score, count, outs, WP, live total, pitch count) at top; collapse the 4-row distribution bars to a single line."
+  },
+  {
+   "id": "no-multi-game-live-grid",
+   "title": "Only one game is detailed at a time; other games are thin cards",
+   "personas_affected": 2,
+   "avg_severity": 4.0,
+   "fix": "Add a compact multi-game grid/'cockpit' mode on desktop: per game WP, live total P(over), next-half-inning runs, current AB call, pitch count, last-event age, each with book price."
+  },
+  {
+   "id": "alerts-limited-to-due-up-and-wp-swing",
+   "title": "Alert triggers are fixed: batter up/on deck, final, ≥15-pt WP swing",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Rule builder: 'notify when model vs book edge ≥ X on market M', 'live total P(over) crosses Y', 'pitcher at N pitches', 'top call lift ≥ Z'; per-pin toggles and snooze."
+  },
+  {
+   "id": "no-bet-slip-or-pick-tracking",
+   "title": "No way to log a live bet, its price, or track CLV",
+   "personas_affected": 2,
+   "avg_severity": 3.0,
+   "fix": "Quick 'log bet' from any live number (market, price, stake, timestamp) with auto-grading and CLV vs the next quote."
+  },
+  {
+   "id": "updated-clock-is-fetch-time-not-event-time",
+   "title": "'updated' clock ticks every poll even when nothing changed",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Show 'last pitch 12s ago' / 'model as of pitch #2' (event time from the feed) plus a separate connection dot; turn amber when the last event is older than the expected pitch cadence."
+  },
+  {
+   "id": "poll-cadence-too-slow-for-micro-markets",
+   "title": "8s jittered poll is slower than pitch cadence for pitch-level markets",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "SSE/WebSocket push for the selected game; show a 'pitch #N' sequence id on the hero."
+  },
+  {
+   "id": "pitcher-lines-not-updated-live",
+   "title": "Pitcher K/Outs lines on Live are base pregame models; no in-game re-projection vs pitch count",
+   "personas_affected": 1,
+   "avg_severity": 4.0,
+   "fix": "Re-project remaining Ks/Outs from current pitch count, Ks so far, and leash; show 'needs 3 more Ks in ~38 pitches'."
+  },
+  {
+   "id": "live-lift-vs-league-not-vs-market",
+   "title": "Live 'Top call' ranks by lift over league, not edge vs market",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Offer a rank toggle: 'vs league' | 'vs book'; when no price exists say so explicitly on the card."
+  },
+  {
+   "id": "live-call-track-record-empty-early",
+   "title": "At-bat/pitch call accuracy shows '—' early, so no confidence in micro-markets",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Show season/last-7-day calibration for each micro-market (Brier, hit rate by bucket) when the per-game sample is empty."
+  },
+  {
+   "id": "batter-props-frozen-at-first-pitch-labeling",
+   "title": "Batter rail mixes frozen pregame and live rest-of-game numbers",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Lead with REST OF GAME (the live-bettable number) large; demote frozen pregame to a reference line."
+  },
+  {
+   "id": "top-call-view-jumps-between-games",
+   "title": "Default 'Top call now' view silently switches games as the leader changes",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Default to the last game the user picked; show 'Top call moved to LAD@SD →' as a nudge instead of swapping the whole hero."
+  },
+  {
+   "id": "other-live-cards-lack-actionable-markets",
+   "title": "Other-live cards show a generic next-pitch call, no totals/edges",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Show each card's strongest market-relevant number (live total P(over), next-inning run prob, batter rest-of-game HR) and its edge, and sort cards by edge."
+  },
+  {
+   "id": "phone-watch-and-chip-rows-clip-offscreen",
+   "title": "On phone the Watching row and game chips overflow sideways; alerts bell is cut off",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Wrap or add edge-fade + scroll hint; move alerts bell into the header; make game chips a sticky segmented scroller."
+  },
+  {
+   "id": "due-up-card-shows-frozen-pregame-and-loses-context",
+   "title": "Due Up card shows frozen pregame prob; tapping lands on the current batter, not the due-up hitter",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "Show rest-of-game HR on Due Up and deep-link to a batter-focused live panel."
+  },
+  {
+   "id": "no-keyboard-shortcuts-for-game-switching",
+   "title": "No hotkeys to switch games on a second screen",
+   "personas_affected": 1,
+   "avg_severity": 2.0,
+   "fix": "1-9 to jump to live game N, T for Top call, A to toggle alerts, ←/→ to cycle games."
+  },
+  {
+   "id": "base-tag-unexplained-on-live-models",
+   "title": "'BASE' tag on live numbers not explained in context",
+   "personas_affected": 1,
+   "avg_severity": 2.0,
+   "fix": "Tooltip/inline glossary: 'Base = league rates × 30-day form, not yet adjusted for X'."
+  },
+  {
+   "id": "full-rerender-on-live-update",
+   "title": "Full innerHTML re-render on each changed poll can reset scroll/taps",
+   "personas_affected": 1,
+   "avg_severity": 2.0,
+   "fix": "Patch changed nodes only (as patchClocks already does) and preserve scroll anchor."
+  }
+ ]
+}

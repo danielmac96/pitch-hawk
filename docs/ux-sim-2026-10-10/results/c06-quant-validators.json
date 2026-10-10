@@ -1,0 +1,729 @@
+{
+ "cohort": "c06-quant-validators",
+ "cohort_summary": "Ten quantitative validators (8 pro, 2 serious amateur, all desktop) tried to decide whether to trust Pitch Hawk's models before betting or blending them. The Data Feed is the most credible surface in the product: per-market n, model vs landed, gap, Brier skill, scenario filters, matchup splits, lock-time grading, DNP voiding and honest SAMPLE DATA and small-sample labels. Even so, it fails a pro audit. The headline Brier skill pools markets (24.5% vs 0.5-1.3% per market), 10-pt bins can't resolve HR props, there are no CIs, log loss or ECE, and nothing ties results to prices (no ROI/CLV). Model provenance is the other blocker: the version shows only in a tooltip, the Guide is a glossary rather than a model card, and it's unclear whether headline reads are trained or the BASE placeholder. Export is half-built: the board CSV lacks ids, timestamps and version, and graded history can't be exported at all. Nobody fully completed a trust-then-bet journey; the amateurs got furthest because they need less.",
+ "personas": [
+  {
+   "name": "Marcus Feld",
+   "profile": "Pro, 9 yrs, ex-quant at a trading firm. $250k roll, $2.5k unit. Pinnacle, Circa, BetOnline, Kalshi. Player props (1+ HR, Ks).",
+   "device": "desktop",
+   "goal": "Decide whether to add Pitch Hawk's HR probabilities as a feature in his own HR-prop blend before tonight's slate.",
+   "journey": [
+    "Opens Data Feed directly and reads the SAMPLE DATA banner. Fine, he's evaluating the instrument, not the numbers.",
+    "Sees BRIER SKILL 24.5% on All, then By market shows 0.5-1.3%. Realizes the headline pools markets, and his trust drops right away.",
+    "Clicks 1+ HR. Calibration chart collapses into two 10-pt bars; can't see the 8-25% range where his bets live.",
+    "Looks for log loss and reliability slope; finds neither. Gap '+1.4 pts' is green although that's ~12% relative under-prediction.",
+    "Searches for the model version; finds it only by hovering a Predictions tile ('Model bh_v2').",
+    "Looks for a graded export to recompute things himself. There isn't one.",
+    "Exports the HR board CSV; no player_id/game_pk, so a name-match join is needed."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 420,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "A 24.5% skill headline over 1% per-market skill tells me nobody here has audited the scorecard, so give me the raw graded file and I'll do it myself.",
+   "pain_points": [
+    {
+     "id": "pooled-brier-skill-inflated",
+     "title": "Headline Brier skill pools markets and overstates skill",
+     "area": "trust-calibration",
+     "severity": 5,
+     "detail": "With 'All' markets the BRIER SKILL tile reads 24.5%, but every per-market SKILL in the By-market table is 0.5-1.3% (Totals -0.2%). The reference Brier is act*(1-act) of the pooled set, so mixing 12% HR reads with 68% hit reads makes the model look like it has 20x more skill than it does in any one market. A pro spots it in seconds and stops trusting the page.",
+     "evidence": "frontend/pitchhawk.js:3901-3906 derive(): base = st.act*(1-st.act) over pooled rows; tile at pitchhawk.js:3992; screen desk__data (24.5% vs By market 0.5-1.3%)",
+     "suggested_fix": "Compute skill per market and show a count-weighted mean (or hide the pooled tile when more than one market is selected); label the reference explicitly."
+    },
+    {
+     "id": "calibration-bins-too-coarse-low-prob",
+     "title": "10-pt calibration bands collapse low-probability markets",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "Filtering to 1+ HR puts all 3,174 reads into two bars (0-10, 10-20); eight empty bands fill the chart. For HR props the decision lives between 8% and 25%, which this chart can't resolve. Empty bands also carry no 'no reads' label.",
+     "evidence": "frontend/pitchhawk.js:4015-4030 (fixed i*10 bands, subtitle 'per 10-pt probability band'); work/c06-quant-validators/data_hr.png",
+     "suggested_fix": "Use quantile (equal-count) bins or auto-zoom the x-range to the market's probability span; offer 2-pt / 5-pt / decile toggle; label empty bands."
+    },
+    {
+     "id": "gap-in-abs-pts-misleads-low-base",
+     "title": "Calibration gap is coloured by absolute points, which hides relative miscalibration",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "1+ HR shows '+1.4 pts' in green ('good'), yet 13.9% vs 12.4% is 12% relative under-prediction, which flips EV on longshot props. The thresholds also differ: tiles/table use <2 good, <4 amber (gapTone) while the chart uses within 3 pts (gapBand).",
+     "evidence": "frontend/pitchhawk.js:3907-3910 gapTone vs gapBand; desk__data By market table",
+     "suggested_fix": "Show relative gap (landed/predicted ratio) or log-odds gap next to points, colour by a z-score against n, and use one threshold rule everywhere."
+    },
+    {
+     "id": "no-data-feed-export",
+     "title": "Graded history can't be exported",
+     "area": "export",
+     "severity": 5,
+     "detail": "Data Feed has no Export button (no export/csv/download control on the page), and the 11k graded reads are only browsable 40 at a time. Validators want to pull the full graded set to recompute calibration, blend with their own models and run their own significance tests.",
+     "evidence": "Data Feed actions: dTf,dMk,dHand,dSide,dClear,dMkRow,dTeamTile,dMore only; D_PAGE=40 pitchhawk.js:3655",
+     "suggested_fix": "Add 'Export graded CSV' that respects the current scenario filters (one row per read: ids, probability at lock, league rate, result, model_version, lock time), plus a documented /graded API."
+    },
+    {
+     "id": "no-model-version-disclosure",
+     "title": "Model name/version only appears in a hover tooltip",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "The only provenance on the site is 'Model bh_v2.' inside the title attribute of the 7-day calibration tiles on Predictions. Data Feed, rows, row expansion, CSV and Guide never name the model, its version, training window or when it last changed, so a validator cannot tell whether the 30-day record describes the model producing today's numbers.",
+     "evidence": "frontend/pitchhawk.js:1450 (tooltip only); pitchhawk.js:1394-1395 collects model_version but never renders it; Data Feed scorecard pitchhawk.js:3985-3995",
+     "suggested_fix": "Show a visible model chip (e.g. 'bh_v2 · trained thru 2026-09-30') on the Predictions header, each expanded row, Data Feed scorecard and CSV; add a version filter / split on Data Feed and a changelog entry in the Guide."
+    },
+    {
+     "id": "csv-export-missing-ids-and-provenance",
+     "title": "Export CSV lacks IDs, timestamps, model version and inputs",
+     "area": "export",
+     "severity": 4,
+     "detail": "The batter CSV is rank, player, team, slot, opposing_starter, game, status, probability, league_rate, lift_pts, xpa, form_30d_rate, result. It has no MLBAM player/pitcher id, game_pk, game date/time with timezone, as-of timestamp, model_version, per-PA, opp hand or venue. Joining it to their own model means fuzzy-matching names. The starter CSV has game_time '2:48 PM' with no date or tz.",
+     "evidence": "frontend/pitchhawk.js:1017-1040 predCsv headers; work/c06-quant-validators/hr.csv, sp.csv",
+     "suggested_fix": "Add player_id, opp_pitcher_id, game_pk, game_date, start_utc, as_of_utc, model_version, per_pa, opp_hand, venue_id, form PA count; offer a JSON/API endpoint with documented schema."
+    }
+   ],
+   "delights": [
+    "Clear 'graded once at the probability it carried when the market locked' and DNP-voided rules",
+    "By-market table with n, model, landed, gap, skill side by side",
+    "Honest SAMPLE DATA banner"
+   ]
+  },
+  {
+   "name": "Priya Raman",
+   "profile": "Pro, 6 yrs, syndicate modeler. $120k roll, $1.5k unit. Pinnacle, BookMaker, DraftKings, FanDuel (for limits testing). 1+ Hit and H+R+RBI props.",
+   "device": "desktop",
+   "goal": "Work out whether the 1+ Hit board's top-lift reads beat the market close often enough to tail a few as a second opinion.",
+   "journey": [
+    "Lands on Predictions, 1+ Hit, sorted by LIFT. Notes 77% / league 65% / +12 pts but no price.",
+    "Checks the 7-day calibration tile: 37%/62%, 27 graded, small sample. Clicks it expecting detail; nothing happens.",
+    "Goes to Data Feed 30D 1+ Hit: 68.3% vs 67.8%, skill 1.3%. Fine, but that's all reads, not the top of the board.",
+    "Looks for a lift-bucket or rank filter to test the ranking; none exists.",
+    "Looks for ROI or CLV against close; none. Gives up on validating edge."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 300,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "Calibration on all reads is table stakes; I need to know whether the top ten by lift beat the close, and that question can't be asked here.",
+   "pain_points": [
+    {
+     "id": "no-lift-bucket-backtest",
+     "title": "Can't backtest the ranking signal (lift / probability bands) on Data Feed",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "Data Feed filters are timeframe, market, team, stadium, hand, side. There's no filter by lift bucket, rank on the board, or 'top-N per day', so you can't check whether the reads the board puts at the top actually do better than the rest.",
+     "evidence": "Data Feed filter bar pitchhawk.js:3920-3975 (dTf, dMk, dHand, dSide, team, park only)",
+     "suggested_fix": "Add lift-bucket and board-rank filters plus a 'top-10 by lift each day' preset showing landed vs predicted and skill."
+    },
+    {
+     "id": "no-roi-or-clv-tracking",
+     "title": "No ROI or CLV record against any line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Grading is purely 'landed vs predicted'. There's no record of ROI if you'd bet the model's top-lift reads at the market, and no comparison to the closing line. For this cohort, calibration without ROI/CLV can't answer 'is there money in it'.",
+     "evidence": "Data Feed has no price fields at all (pitchhawk.js:3860-3906 statOf uses probability and result only); BRIEF: /edge only for game markets and not served",
+     "suggested_fix": "Store the open and close price at lock for each graded read; add ROI at close, CLV in cents/pts, and a 'beat the close %' to the Data Feed and By-market table."
+    },
+    {
+     "id": "conflicting-calibration-surfaces",
+     "title": "Predictions calibration tiles and Data Feed don't line up or link",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Predictions shows 7-day tiles (e.g. 1+ HR 41%/15%, 27 graded) while Data Feed defaults to 30 days (1+ HR 13.9%/12.4%, 3,174 graded). The windows and sources differ with no explanation, and clicking a tile does nothing (URL unchanged), so there's no path from the board to the full record.",
+     "evidence": "pitchhawk.js:1440-1480 trustTilesHtml (7d, from /board feed) vs Data Feed 30D default; tile click test in work/c06-quant-validators/s.js",
+     "suggested_fix": "Make each tile a link to #/data?tf=7&mk=<market>, use the same source for both, and state the window and n the same way on both."
+    },
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking is by lift over league rate, not edge vs market",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "The default sort (LIFT) ranks how far a player is from the league average, which the books price in already. A +12 pt lift tells a pro nothing about whether the price is beatable.",
+     "evidence": "Predictions header 'ranked by lift over the league rate'; copy.js glossary 'Lift (pts)'",
+     "suggested_fix": "Once odds exist, default sort to edge vs no-vig market; until then say plainly that LIFT is not an edge."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or implied probability on props",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "P(1+ HIT) 77% has nothing next to it to compare. To find value the user must tab out to their own odds screen, de-vig, and match players by name by hand.",
+     "evidence": "Predictions row desk_pred_rowopen; pitchhawk.js:1017-1040 CSV has no price column",
+     "suggested_fix": "Show best available price, no-vig fair price and edge vs book per row (and in CSV), with book name and timestamp."
+    }
+   ],
+   "delights": [
+    "Small-sample flag on 7-day tiles stops her over-reading 27 grades",
+    "Per-PA and xPA decomposition is exactly the right structure for a hit prop"
+   ]
+  },
+  {
+   "name": "Dmitri Okafor",
+   "profile": "Pro, 11 yrs, runs his own pitcher-K model. $400k roll, $4k unit. Circa, Pinnacle, offshore. Pitcher Ks/Outs lines.",
+   "device": "desktop",
+   "goal": "Blend Pitch Hawk's starter P(over) for Ks and Outs into his projection as a sanity check.",
+   "journey": [
+    "Predictions > Starters. Sees lines and P(over) per prop.",
+    "Looks for calibration on pitcher props on Data Feed: market chips have Hit/HR/HRR/Win/Totals/At-bat/Pitch, with no pitcher props.",
+    "Exports CSV: starter, team, opponent, game_time '2:48 PM', lines, p_over. No pitcher id, date, tz, or model version.",
+    "Notices the Guide calls these base models (league rates x 30-day form) and decides they're not worth blending."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 240,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "If your K numbers are league average times 30-day form, I already have that; show me a trained model with a graded record or don't show me the number.",
+   "pain_points": [
+    {
+     "id": "base-placeholder-model-provenance",
+     "title": "Unclear which numbers are trained and which are the BASE placeholder",
+     "area": "trust-calibration",
+     "severity": 5,
+     "detail": "The Guide says Base = 'a simple placeholder model (league rates x 30-day form)'. BASE tags sit on REST OF GAME and TB 1.5+, but the main P(1+ HIT) column has none. Is the headline number a trained model (bh_v2?) or also league x form? Not knowing this is enough to stop a pro from betting it. Pitcher props also have no graded record at all on the Data Feed (no market chip).",
+     "evidence": "frontend/pitchhawk.js:2422-2429 baseTagHtml; copy.js glossary 'Base'; desk_pred_rowopen (BASE on 31% rest-of-game and TB 51%)",
+     "suggested_fix": "Tag every number with its source model (trained/base + version) and add a Guide table: market -> model -> status -> validation record."
+    },
+    {
+     "id": "csv-export-missing-ids-and-provenance",
+     "title": "Export CSV lacks IDs, timestamps, model version and inputs",
+     "area": "export",
+     "severity": 4,
+     "detail": "The batter CSV is rank, player, team, slot, opposing_starter, game, status, probability, league_rate, lift_pts, xpa, form_30d_rate, result. It has no MLBAM player/pitcher id, game_pk, game date/time with timezone, as-of timestamp, model_version, per-PA, opp hand or venue. Joining it to their own model means fuzzy-matching names. The starter CSV has game_time '2:48 PM' with no date or tz.",
+     "evidence": "frontend/pitchhawk.js:1017-1040 predCsv headers; work/c06-quant-validators/hr.csv, sp.csv",
+     "suggested_fix": "Add player_id, opp_pitcher_id, game_pk, game_date, start_utc, as_of_utc, model_version, per_pa, opp_hand, venue_id, form PA count; offer a JSON/API endpoint with documented schema."
+    },
+    {
+     "id": "no-data-feed-export",
+     "title": "Graded history can't be exported",
+     "area": "export",
+     "severity": 5,
+     "detail": "Data Feed has no Export button (no export/csv/download control on the page), and the 11k graded reads are only browsable 40 at a time. Validators want to pull the full graded set to recompute calibration, blend with their own models and run their own significance tests.",
+     "evidence": "Data Feed actions: dTf,dMk,dHand,dSide,dClear,dMkRow,dTeamTile,dMore only; D_PAGE=40 pitchhawk.js:3655",
+     "suggested_fix": "Add 'Export graded CSV' that respects the current scenario filters (one row per read: ids, probability at lock, league rate, result, model_version, lock time), plus a documented /graded API."
+    },
+    {
+     "id": "guide-lacks-methodology",
+     "title": "Guide is a glossary, not a model card",
+     "area": "onboarding",
+     "severity": 3,
+     "detail": "The Guide defines Read, Lift, xPA, Base, Calibration and Brier skill, but has nothing on how the models are built: features, training window, regression to prior, update cadence, how reads are locked, known biases (the postseason warning sits only on Predictions), or a link to the validation record.",
+     "evidence": "copy.js:121-137 guideIntro + glossary; pitchhawk.js:4368-4369",
+     "suggested_fix": "Add a 'Methodology' tab per market: inputs, training data and dates, version history, validation metrics (Brier, log loss, ECE) with a link to the Data Feed scenario."
+    }
+   ],
+   "delights": [
+    "Starter CSV puts all five props side by side in one row per pitcher",
+    "Honest BASE labelling instead of passing a heuristic off as a model"
+   ]
+  },
+  {
+   "name": "Hannah Cole",
+   "profile": "Pro, 5 yrs, CLV-focused steam follower. $60k roll, $600 unit. Pinnacle, Circa, Kalshi. Game moneylines/totals.",
+   "device": "desktop",
+   "goal": "Check if the pregame win-prob model has an edge against Kalshi moneylines worth tracking.",
+   "journey": [
+    "Data Feed > Win prob: 180 graded, model 56.6%, landed 59.4%, skill 0.8%.",
+    "Wants CLV vs Kalshi close; nothing. No price fields anywhere on graded reads.",
+    "Tries the 'pregame favourite won' tile on Predictions: nothing graded yet in 7 days.",
+    "Looks for the win-prob model version/provenance in the Guide; it only says 'a pregame model'."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 200,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Hit rate on favourites is a vanity metric; give me CLV against the Kalshi close and I'll know in a week.",
+   "pain_points": [
+    {
+     "id": "no-roi-or-clv-tracking",
+     "title": "No ROI or CLV record against any line",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "Grading is purely 'landed vs predicted'. There's no record of ROI if you'd bet the model's top-lift reads at the market, and no comparison to the closing line. For this cohort, calibration without ROI/CLV can't answer 'is there money in it'.",
+     "evidence": "Data Feed has no price fields at all (pitchhawk.js:3860-3906 statOf uses probability and result only); BRIEF: /edge only for game markets and not served",
+     "suggested_fix": "Store the open and close price at lock for each graded read; add ROI at close, CLV in cents/pts, and a 'beat the close %' to the Data Feed and By-market table."
+    },
+    {
+     "id": "no-log-loss-or-reliability-stats",
+     "title": "No log-loss, ECE, reliability slope or confidence intervals",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Only Brier, Brier skill and mean gap. There is no log loss, expected calibration error, calibration slope/intercept, resolution/reliability decomposition, or CI on any rate. A gap of +1.4 pts on n=3,174 vs +2.4 pts on n=1,095 can't be judged for significance.",
+     "evidence": "Data Feed scorecard pitchhawk.js:3985-3995; By market table pitchhawk.js:4150-4170",
+     "suggested_fix": "Add log loss and ECE to the scorecard, a 95% interval per By-market row and per calibration bin, and a slope/intercept line on the reliability chart."
+    },
+    {
+     "id": "guide-lacks-methodology",
+     "title": "Guide is a glossary, not a model card",
+     "area": "onboarding",
+     "severity": 3,
+     "detail": "The Guide defines Read, Lift, xPA, Base, Calibration and Brier skill, but has nothing on how the models are built: features, training window, regression to prior, update cadence, how reads are locked, known biases (the postseason warning sits only on Predictions), or a link to the validation record.",
+     "evidence": "copy.js:121-137 guideIntro + glossary; pitchhawk.js:4368-4369",
+     "suggested_fix": "Add a 'Methodology' tab per market: inputs, training data and dates, version history, validation metrics (Brier, log loss, ECE) with a link to the Data Feed scenario."
+    },
+    {
+     "id": "no-model-version-disclosure",
+     "title": "Model name/version only appears in a hover tooltip",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "The only provenance on the site is 'Model bh_v2.' inside the title attribute of the 7-day calibration tiles on Predictions. Data Feed, rows, row expansion, CSV and Guide never name the model, its version, training window or when it last changed, so a validator cannot tell whether the 30-day record describes the model producing today's numbers.",
+     "evidence": "frontend/pitchhawk.js:1450 (tooltip only); pitchhawk.js:1394-1395 collects model_version but never renders it; Data Feed scorecard pitchhawk.js:3985-3995",
+     "suggested_fix": "Show a visible model chip (e.g. 'bh_v2 · trained thru 2026-09-30') on the Predictions header, each expanded row, Data Feed scorecard and CSV; add a version filter / split on Data Feed and a changelog entry in the Guide."
+    }
+   ],
+   "delights": [
+    "Daily gap chart is a quick read on drift",
+    "Win-prob tile compares against a 50% coin flip, which is the right framing"
+   ]
+  },
+  {
+   "name": "Theo Brandt",
+   "profile": "Pro, 7 yrs, quant with own Python stack. $180k roll, $2k unit. BetMGM, Caesars, Pinnacle, Novig. 1+ HR and TB.",
+   "device": "desktop",
+   "goal": "Pull today's HR reads and last 30 days of graded HR reads into pandas to fit a stacking weight.",
+   "journey": [
+    "Predictions 1+ HR > Export CSV; gets 126 rows. Good that it's all rows, not just the 25 on screen.",
+    "Joining to his database: no MLBAM ids, no game_pk; names like 'Fernando Alvarez-Longna...' make matching risky.",
+    "Needs per_pa and opp hand for his features; per-PA isn't in the CSV though it's on screen.",
+    "Goes to Data Feed for training labels; there's no export, so he'd have to scrape the 40-row pager.",
+    "Checks if the version changed mid-window; can't split by version."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 90,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Exporting the board took one click and it's still unusable without player ids and the graded history to fit against.",
+   "pain_points": [
+    {
+     "id": "csv-export-missing-ids-and-provenance",
+     "title": "Export CSV lacks IDs, timestamps, model version and inputs",
+     "area": "export",
+     "severity": 5,
+     "detail": "The batter CSV is rank, player, team, slot, opposing_starter, game, status, probability, league_rate, lift_pts, xpa, form_30d_rate, result. It has no MLBAM player/pitcher id, game_pk, game date/time with timezone, as-of timestamp, model_version, per-PA, opp hand or venue. Joining it to their own model means fuzzy-matching names. The starter CSV has game_time '2:48 PM' with no date or tz.",
+     "evidence": "frontend/pitchhawk.js:1017-1040 predCsv headers; work/c06-quant-validators/hr.csv, sp.csv",
+     "suggested_fix": "Add player_id, opp_pitcher_id, game_pk, game_date, start_utc, as_of_utc, model_version, per_pa, opp_hand, venue_id, form PA count; offer a JSON/API endpoint with documented schema."
+    },
+    {
+     "id": "no-data-feed-export",
+     "title": "Graded history can't be exported",
+     "area": "export",
+     "severity": 5,
+     "detail": "Data Feed has no Export button (no export/csv/download control on the page), and the 11k graded reads are only browsable 40 at a time. Validators want to pull the full graded set to recompute calibration, blend with their own models and run their own significance tests.",
+     "evidence": "Data Feed actions: dTf,dMk,dHand,dSide,dClear,dMkRow,dTeamTile,dMore only; D_PAGE=40 pitchhawk.js:3655",
+     "suggested_fix": "Add 'Export graded CSV' that respects the current scenario filters (one row per read: ids, probability at lock, league rate, result, model_version, lock time), plus a documented /graded API."
+    },
+    {
+     "id": "no-per-version-split",
+     "title": "Graded record can't be split by model version",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "The data layer is keyed per (day, market, model_version), but the UI merges versions. After a retrain a validator can't isolate the current model's record from the old one.",
+     "evidence": "frontend/pitchhawk-data.js:418 comment; pitchhawk.js:1417-1424 collects versions but only joins them into a tooltip",
+     "suggested_fix": "Add a version chip row to the Data Feed filter bar and a vertical marker on the Daily gap chart where the version changed."
+    },
+    {
+     "id": "resolved-rows-not-expandable",
+     "title": "Resolved Markets rows are dead ends",
+     "area": "datafeed",
+     "severity": 2,
+     "detail": "Rows in the Resolved Markets rail can't be clicked or expanded, so you can't see the inputs behind a graded miss. Paging is 'Show 40 more' across 11,520 rows.",
+     "evidence": "Data Feed rail pitchhawk.js:4260-4280; no data-act on rows",
+     "suggested_fix": "Make rows expand to show the read's inputs at lock and link to the game; add search/sort to the rail."
+    }
+   ],
+   "delights": [
+    "CSV exports every filtered row in display order with 4-decimal probabilities",
+    "Filename includes market and slate date"
+   ]
+  },
+  {
+   "name": "Yusuf Haddad",
+   "profile": "Pro, 4 yrs, props grinder using a calibration-first process. $40k roll, $400 unit. DraftKings, FanDuel, Fanatics, PrizePicks. 1+ Hit / H+R+RBI.",
+   "device": "desktop",
+   "goal": "Find out which teams and splits the model is miscalibrated on, and fade or avoid those spots tonight.",
+   "journey": [
+    "Data Feed > 1+ HRR: gap -2.8 pts overall (amber).",
+    "Uses By team tiles and Matchup splits (vs LHP/RHP, home/away, slots). Splits within scenario are useful.",
+    "Can't tell whether SD +2.4 pts on 1,095 reads is significant; there are no CIs.",
+    "Wants to drill from a team tile into specific misses; resolved rows can't be clicked.",
+    "Opens the Guide expecting known biases; the postseason warning is on Predictions only."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "yes",
+   "nps_0_10": 6,
+   "quote": "The splits are the best part of the site, but without error bars I can't tell signal from 1,000-read noise.",
+   "pain_points": [
+    {
+     "id": "no-log-loss-or-reliability-stats",
+     "title": "No log-loss, ECE, reliability slope or confidence intervals",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Only Brier, Brier skill and mean gap. There is no log loss, expected calibration error, calibration slope/intercept, resolution/reliability decomposition, or CI on any rate. A gap of +1.4 pts on n=3,174 vs +2.4 pts on n=1,095 can't be judged for significance.",
+     "evidence": "Data Feed scorecard pitchhawk.js:3985-3995; By market table pitchhawk.js:4150-4170",
+     "suggested_fix": "Add log loss and ECE to the scorecard, a 95% interval per By-market row and per calibration bin, and a slope/intercept line on the reliability chart."
+    },
+    {
+     "id": "resolved-rows-not-expandable",
+     "title": "Resolved Markets rows are dead ends",
+     "area": "datafeed",
+     "severity": 2,
+     "detail": "Rows in the Resolved Markets rail can't be clicked or expanded, so you can't see the inputs behind a graded miss. Paging is 'Show 40 more' across 11,520 rows.",
+     "evidence": "Data Feed rail pitchhawk.js:4260-4280; no data-act on rows",
+     "suggested_fix": "Make rows expand to show the read's inputs at lock and link to the game; add search/sort to the rail."
+    },
+    {
+     "id": "guide-lacks-methodology",
+     "title": "Guide is a glossary, not a model card",
+     "area": "onboarding",
+     "severity": 3,
+     "detail": "The Guide defines Read, Lift, xPA, Base, Calibration and Brier skill, but has nothing on how the models are built: features, training window, regression to prior, update cadence, how reads are locked, known biases (the postseason warning sits only on Predictions), or a link to the validation record.",
+     "evidence": "copy.js:121-137 guideIntro + glossary; pitchhawk.js:4368-4369",
+     "suggested_fix": "Add a 'Methodology' tab per market: inputs, training data and dates, version history, validation metrics (Brier, log loss, ECE) with a link to the Data Feed scenario."
+    },
+    {
+     "id": "gap-in-abs-pts-misleads-low-base",
+     "title": "Calibration gap is coloured by absolute points, which hides relative miscalibration",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "1+ HR shows '+1.4 pts' in green ('good'), yet 13.9% vs 12.4% is 12% relative under-prediction, which flips EV on longshot props. The thresholds also differ: tiles/table use <2 good, <4 amber (gapTone) while the chart uses within 3 pts (gapBand).",
+     "evidence": "frontend/pitchhawk.js:3907-3910 gapTone vs gapBand; desk__data By market table",
+     "suggested_fix": "Show relative gap (landed/predicted ratio) or log-odds gap next to points, colour by a z-score against n, and use one threshold rule everywhere."
+    }
+   ],
+   "delights": [
+    "By team and Matchup splits that respect the current scenario",
+    "Click a By-market row to filter is fast",
+    "Postseason note candidly quantifies the playoff bias (46% vs 64%)"
+   ]
+  },
+  {
+   "name": "Elena Voss",
+   "profile": "Pro, 12 yrs, ex-book trader now betting. $500k roll, $5k unit. Pinnacle, Circa, Westgate, Kalshi. Totals and F5.",
+   "device": "desktop",
+   "goal": "Run quick due diligence: provenance, freshness and governance, to decide whether her team should spend time on the product.",
+   "journey": [
+    "Home > Guide: glossary only. No model card, no data sources, no update cadence.",
+    "Predictions: 'updated 5:06 PM' and 'reads froze at first pitch' cover freshness well.",
+    "Hovers tiles; finds 'Model bh_v2' only in a tooltip. Sees v3.2.0 isn't mentioned anywhere.",
+    "Data Feed: 'Accuracy over time: No resolved reads' under 11,322 graded. Flags it as a data-integrity smell.",
+    "Navigates with the Guide still open; overlay persists over Data Feed."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 180,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Freshness stamps are good, but a model I can only identify by hovering a tooltip isn't something I can put in front of a risk committee.",
+   "pain_points": [
+    {
+     "id": "no-model-version-disclosure",
+     "title": "Model name/version only appears in a hover tooltip",
+     "area": "trust-calibration",
+     "severity": 5,
+     "detail": "The only provenance on the site is 'Model bh_v2.' inside the title attribute of the 7-day calibration tiles on Predictions. Data Feed, rows, row expansion, CSV and Guide never name the model, its version, training window or when it last changed, so a validator cannot tell whether the 30-day record describes the model producing today's numbers.",
+     "evidence": "frontend/pitchhawk.js:1450 (tooltip only); pitchhawk.js:1394-1395 collects model_version but never renders it; Data Feed scorecard pitchhawk.js:3985-3995",
+     "suggested_fix": "Show a visible model chip (e.g. 'bh_v2 · trained thru 2026-09-30') on the Predictions header, each expanded row, Data Feed scorecard and CSV; add a version filter / split on Data Feed and a changelog entry in the Guide."
+    },
+    {
+     "id": "guide-lacks-methodology",
+     "title": "Guide is a glossary, not a model card",
+     "area": "onboarding",
+     "severity": 3,
+     "detail": "The Guide defines Read, Lift, xPA, Base, Calibration and Brier skill, but has nothing on how the models are built: features, training window, regression to prior, update cadence, how reads are locked, known biases (the postseason warning sits only on Predictions), or a link to the validation record.",
+     "evidence": "copy.js:121-137 guideIntro + glossary; pitchhawk.js:4368-4369",
+     "suggested_fix": "Add a 'Methodology' tab per market: inputs, training data and dates, version history, validation metrics (Brier, log loss, ECE) with a link to the Data Feed scenario."
+    },
+    {
+     "id": "accuracy-over-time-empty-contradiction",
+     "title": "'Accuracy over time' says no reads while the page shows 11k graded",
+     "area": "datafeed",
+     "severity": 2,
+     "detail": "The panel reads 'No resolved reads for this scenario' right under a scorecard of 11,322 graded reads, because it uses a different rollup and ignores filters. That looks like a data-integrity bug to a validator, even on the fixture.",
+     "evidence": "pitchhawk.js:4098-4140; copy.js dFeedEmpty; desk__data",
+     "suggested_fix": "When the panel's source is empty, say which source and why ('/accuracy not served here'), or hide the panel."
+    },
+    {
+     "id": "guide-overlay-persists-across-routes",
+     "title": "Guide overlay stays open after navigating",
+     "area": "global-nav",
+     "severity": 1,
+     "detail": "With the Guide open, changing the route (hash) to Data Feed left the overlay covering the scorecard.",
+     "evidence": "work/c06-quant-validators/data_hr.png; overlay pitchhawk.js:4388-4393",
+     "suggested_fix": "Close overlays on hashchange/route change."
+    },
+    {
+     "id": "no-per-version-split",
+     "title": "Graded record can't be split by model version",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "The data layer is keyed per (day, market, model_version), but the UI merges versions. After a retrain a validator can't isolate the current model's record from the old one.",
+     "evidence": "frontend/pitchhawk-data.js:418 comment; pitchhawk.js:1417-1424 collects versions but only joins them into a tooltip",
+     "suggested_fix": "Add a version chip row to the Data Feed filter bar and a vertical marker on the Daily gap chart where the version changed."
+    }
+   ],
+   "delights": [
+    "Per-row 'updated' timestamps and frozen-at-first-pitch rule",
+    "Explicit 'grading paused' outage copy instead of silently empty days (copy.js dOutage)"
+   ]
+  },
+  {
+   "name": "Ravi Menon",
+   "profile": "Pro, 3 yrs, Bayesian modeler. $30k roll, $300 unit. Novig, ProphetX, Pinnacle. 1+ Hit props.",
+   "device": "desktop",
+   "goal": "Understand what drives a 1+ Hit read (the WHY) to decide if it's independent enough from his own model to be worth blending.",
+   "journey": [
+    "Predictions 1+ Hit; reads WHY: '30d H/PA .216 (82 PA) · Devers allows .232 · H2H — · slot 8 -> 3.80 xPA'.",
+    "Expands the row: sees 1+ HIT/HR/HRR, TB, 30d form, opp SP allows, game. No attribution of points.",
+    "Sees reads built on 15-19 PA 30d samples with no word on shrinkage.",
+    "Several WHY cells cut off ('Guerrero allows ...') with no tooltip.",
+    "Concludes the inputs overlap heavily with his own; no park/weather/platoon terms listed."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 60,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "Showing me the inputs is half of it; I need to see how much each one moved the number and how hard you regress a 19-PA sample.",
+   "pain_points": [
+    {
+     "id": "why-column-inputs-not-attribution",
+     "title": "WHY lists inputs but not how they move the number",
+     "area": "predictions",
+     "severity": 3,
+     "detail": "WHY shows '30d H/PA .216 (82 PA) · Devers allows .232 · H2H — · slot 8 -> 3.80 xPA', which is useful context, but there's no attribution (how many pts came from form vs opposing SP vs slot), no regression/shrinkage disclosure for 8-19 PA samples, no park/weather/platoon terms, and the text gets cut off ('Guerrero allows ...').",
+     "evidence": "Predictions WHY column desk_pred_rowopen rows 2-25; row expansion shows raw rates only",
+     "suggested_fix": "In the row expansion, add a small waterfall: league rate -> +form -> +opp SP -> +park -> model, with the shrinkage weight and PA used for each; tooltip the full text when it's cut off."
+    },
+    {
+     "id": "base-placeholder-model-provenance",
+     "title": "Unclear which numbers are trained and which are the BASE placeholder",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "The Guide says Base = 'a simple placeholder model (league rates x 30-day form)'. BASE tags sit on REST OF GAME and TB 1.5+, but the main P(1+ HIT) column has none. Is the headline number a trained model (bh_v2?) or also league x form? Not knowing this is enough to stop a pro from betting it.",
+     "evidence": "frontend/pitchhawk.js:2422-2429 baseTagHtml; copy.js glossary 'Base'; desk_pred_rowopen (BASE on 31% rest-of-game and TB 51%)",
+     "suggested_fix": "Tag every number with its source model (trained/base + version) and add a Guide table: market -> model -> status -> validation record."
+    },
+    {
+     "id": "guide-lacks-methodology",
+     "title": "Guide is a glossary, not a model card",
+     "area": "onboarding",
+     "severity": 3,
+     "detail": "The Guide defines Read, Lift, xPA, Base, Calibration and Brier skill, but has nothing on how the models are built: features, training window, regression to prior, update cadence, how reads are locked, known biases (the postseason warning sits only on Predictions), or a link to the validation record.",
+     "evidence": "copy.js:121-137 guideIntro + glossary; pitchhawk.js:4368-4369",
+     "suggested_fix": "Add a 'Methodology' tab per market: inputs, training data and dates, version history, validation metrics (Brier, log loss, ECE) with a link to the Data Feed scenario."
+    },
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking is by lift over league rate, not edge vs market",
+     "area": "predictions",
+     "severity": 4,
+     "detail": "The default sort (LIFT) ranks how far a player is from the league average, which the books price in already. A +12 pt lift tells a pro nothing about whether the price is beatable.",
+     "evidence": "Predictions header 'ranked by lift over the league rate'; copy.js glossary 'Lift (pts)'",
+     "suggested_fix": "Once odds exist, default sort to edge vs no-vig market; until then say plainly that LIFT is not an edge."
+    }
+   ],
+   "delights": [
+    "WHY column surfaces sample sizes (82 PA, 49 PA) right where you need them",
+    "Per-PA to game probability via xPA is transparent and checkable"
+   ]
+  },
+  {
+   "name": "Jordan Pike",
+   "profile": "Serious amateur, data-analyst day job. $5k roll, $50 unit. DraftKings, FanDuel. 1+ HR longshots.",
+   "device": "desktop",
+   "goal": "Decide if the model's HR probabilities are calibrated well enough to pick 3 HR props tonight.",
+   "journey": [
+    "Predictions 1+ HR tile: 41% landed vs 15% predicted (27 graded, small sample). Alarmed.",
+    "Data Feed 1+ HR 30D: 13.9% vs 12.4%, green +1.4 pts. Confused which to believe.",
+    "Calibration chart: only two bars; can't tell how 20% reads perform.",
+    "Picks 3 high-lift names, then has to look up DK prices by hand to see if any are value."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 240,
+   "would_return": "yes",
+   "nps_0_10": 6,
+   "quote": "One page says the HR model is way off and the other says it's fine, and neither tells me the price.",
+   "pain_points": [
+    {
+     "id": "conflicting-calibration-surfaces",
+     "title": "Predictions calibration tiles and Data Feed don't line up or link",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Predictions shows 7-day tiles (e.g. 1+ HR 41%/15%, 27 graded) while Data Feed defaults to 30 days (1+ HR 13.9%/12.4%, 3,174 graded). The windows and sources differ with no explanation, and clicking a tile does nothing (URL unchanged), so there's no path from the board to the full record.",
+     "evidence": "pitchhawk.js:1440-1480 trustTilesHtml (7d, from /board feed) vs Data Feed 30D default; tile click test in work/c06-quant-validators/s.js",
+     "suggested_fix": "Make each tile a link to #/data?tf=7&mk=<market>, use the same source for both, and state the window and n the same way on both."
+    },
+    {
+     "id": "calibration-bins-too-coarse-low-prob",
+     "title": "10-pt calibration bands collapse low-probability markets",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "Filtering to 1+ HR puts all 3,174 reads into two bars (0-10, 10-20); eight empty bands fill the chart. For HR props the decision lives between 8% and 25%, which this chart can't resolve. Empty bands also carry no 'no reads' label.",
+     "evidence": "frontend/pitchhawk.js:4015-4030 (fixed i*10 bands, subtitle 'per 10-pt probability band'); work/c06-quant-validators/data_hr.png",
+     "suggested_fix": "Use quantile (equal-count) bins or auto-zoom the x-range to the market's probability span; offer 2-pt / 5-pt / decile toggle; label empty bands."
+    },
+    {
+     "id": "gap-in-abs-pts-misleads-low-base",
+     "title": "Calibration gap is coloured by absolute points, which hides relative miscalibration",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "1+ HR shows '+1.4 pts' in green ('good'), yet 13.9% vs 12.4% is 12% relative under-prediction, which flips EV on longshot props. The thresholds also differ: tiles/table use <2 good, <4 amber (gapTone) while the chart uses within 3 pts (gapBand).",
+     "evidence": "frontend/pitchhawk.js:3907-3910 gapTone vs gapBand; desk__data By market table",
+     "suggested_fix": "Show relative gap (landed/predicted ratio) or log-odds gap next to points, colour by a z-score against n, and use one threshold rule everywhere."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or implied probability on props",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "P(1+ HIT) 77% has nothing next to it to compare. To find value the user must tab out to their own odds screen, de-vig, and match players by name by hand.",
+     "evidence": "Predictions row desk_pred_rowopen; pitchhawk.js:1017-1040 CSV has no price column",
+     "suggested_fix": "Show best available price, no-vig fair price and edge vs book per row (and in CSV), with book name and timestamp."
+    }
+   ],
+   "delights": [
+    "Plain-English Guide definitions of calibration and Brier skill",
+    "League tick on each bar makes lift easy to see"
+   ]
+  },
+  {
+   "name": "Sofia Lindqvist",
+   "profile": "Serious amateur, grad student in stats. $3k roll, $25 unit. FanDuel, Kalshi. Hit props and moneylines.",
+   "device": "desktop",
+   "goal": "Validate the model before tailing: check sample sizes, Brier and skill per market, then pick 2 hit props.",
+   "journey": [
+    "Data Feed: reads scorecard, toggles 7D/30D, checks n under each calibration bar. Likes it.",
+    "Notices the headline Brier skill is way above every market's own; can't tell which is right from the Guide.",
+    "Filters vs LHP to find platoon edges; splits update quickly.",
+    "Switches to Predictions to pick; the record and the board aren't linked, and there's no price to judge value."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 120,
+   "would_return": "yes",
+   "nps_0_10": 7,
+   "quote": "This is more transparent than any tout site I've seen, but the 24.5% skill number made me wonder what else is pooled.",
+   "pain_points": [
+    {
+     "id": "pooled-brier-skill-inflated",
+     "title": "Headline Brier skill pools markets and overstates skill",
+     "area": "trust-calibration",
+     "severity": 4,
+     "detail": "With 'All' markets the BRIER SKILL tile reads 24.5%, but every per-market SKILL in the By-market table is 0.5-1.3% (Totals -0.2%). The reference Brier is act*(1-act) of the pooled set, so mixing 12% HR reads with 68% hit reads makes the model look like it has 20x more skill than it does in any one market. A pro spots it in seconds and stops trusting the page.",
+     "evidence": "frontend/pitchhawk.js:3901-3906 derive(): base = st.act*(1-st.act) over pooled rows; tile at pitchhawk.js:3992; screen desk__data (24.5% vs By market 0.5-1.3%)",
+     "suggested_fix": "Compute skill per market and show a count-weighted mean (or hide the pooled tile when more than one market is selected); label the reference explicitly."
+    },
+    {
+     "id": "skill-reference-not-league-rate",
+     "title": "Brier skill is measured against the realized mean, not the league-rate baseline the board ranks on",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "The board's whole pitch is LIFT over the league rate, but skill is computed against the in-sample outcome mean, which isn't known ex ante. What a quant wants is: do these reads beat the league-rate prior (the white tick) for the same spot? That number isn't anywhere.",
+     "evidence": "frontend/pitchhawk.js:3900-3906; copy.js glossary 'Brier skill' (~line 135)",
+     "suggested_fix": "Add 'skill vs league rate' (1 - Brier_model / Brier_leaguerate per read) alongside the current figure, so the value of the lift itself is graded."
+    },
+    {
+     "id": "conflicting-calibration-surfaces",
+     "title": "Predictions calibration tiles and Data Feed don't line up or link",
+     "area": "trust-calibration",
+     "severity": 3,
+     "detail": "Predictions shows 7-day tiles (e.g. 1+ HR 41%/15%, 27 graded) while Data Feed defaults to 30 days (1+ HR 13.9%/12.4%, 3,174 graded). The windows and sources differ with no explanation, and clicking a tile does nothing (URL unchanged), so there's no path from the board to the full record.",
+     "evidence": "pitchhawk.js:1440-1480 trustTilesHtml (7d, from /board feed) vs Data Feed 30D default; tile click test in work/c06-quant-validators/s.js",
+     "suggested_fix": "Make each tile a link to #/data?tf=7&mk=<market>, use the same source for both, and state the window and n the same way on both."
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or implied probability on props",
+     "area": "pricing-odds",
+     "severity": 5,
+     "detail": "P(1+ HIT) 77% has nothing next to it to compare. To find value the user must tab out to their own odds screen, de-vig, and match players by name by hand.",
+     "evidence": "Predictions row desk_pred_rowopen; pitchhawk.js:1017-1040 CSV has no price column",
+     "suggested_fix": "Show best available price, no-vig fair price and edge vs book per row (and in CSV), with book name and timestamp."
+    }
+   ],
+   "delights": [
+    "n under every calibration bar",
+    "Scenario filters (hand, side, park) recompute everything instantly",
+    "Honest sample-data and small-sample labelling"
+   ]
+  }
+ ],
+ "top_cohort_issues": [
+  {
+   "id": "guide-lacks-methodology",
+   "title": "Guide is a glossary, not a model card",
+   "personas_affected": 5,
+   "avg_severity": 3.0,
+   "fix": "Add a 'Methodology' tab per market: inputs, training data and dates, version history, validation metrics (Brier, log loss, ECE) with a link to the Data Feed scenario."
+  },
+  {
+   "id": "no-data-feed-export",
+   "title": "Graded history can't be exported",
+   "personas_affected": 3,
+   "avg_severity": 5.0,
+   "fix": "Add 'Export graded CSV' that respects the current scenario filters (one row per read: ids, probability at lock, league rate, result, model_version, lock time), plus a documented /graded API."
+  },
+  {
+   "id": "no-sportsbook-odds-on-props",
+   "title": "No sportsbook line, price or implied probability on props",
+   "personas_affected": 3,
+   "avg_severity": 5.0,
+   "fix": "Show best available price, no-vig fair price and edge vs book per row (and in CSV), with book name and timestamp."
+  },
+  {
+   "id": "csv-export-missing-ids-and-provenance",
+   "title": "Export CSV lacks IDs, timestamps, model version and inputs",
+   "personas_affected": 3,
+   "avg_severity": 4.33,
+   "fix": "Add player_id, opp_pitcher_id, game_pk, game_date, start_utc, as_of_utc, model_version, per_pa, opp_hand, venue_id, form PA count; offer a JSON/API endpoint with documented schema."
+  },
+  {
+   "id": "no-model-version-disclosure",
+   "title": "Model name/version only appears in a hover tooltip",
+   "personas_affected": 3,
+   "avg_severity": 4.33,
+   "fix": "Show a visible model chip (e.g. 'bh_v2 · trained thru 2026-09-30') on the Predictions header, each expanded row, Data Feed scorecard and CSV; add a version filter / split on Data Feed and a changelog entry in the Guide."
+  },
+  {
+   "id": "no-roi-or-clv-tracking",
+   "title": "No ROI or CLV record against any line",
+   "personas_affected": 2,
+   "avg_severity": 5.0,
+   "fix": "Store the open and close price at lock for each graded read; add ROI at close, CLV in cents/pts, and a 'beat the close %' to the Data Feed and By-market table."
+  },
+  {
+   "id": "base-placeholder-model-provenance",
+   "title": "Unclear which numbers are trained and which are the BASE placeholder",
+   "personas_affected": 2,
+   "avg_severity": 4.5,
+   "fix": "Tag every number with its source model (trained/base + version) and add a Guide table: market -> model -> status -> validation record."
+  },
+  {
+   "id": "conflicting-calibration-surfaces",
+   "title": "Predictions calibration tiles and Data Feed don't line up or link",
+   "personas_affected": 3,
+   "avg_severity": 3.0,
+   "fix": "Make each tile a link to #/data?tf=7&mk=<market>, use the same source for both, and state the window and n the same way on both."
+  },
+  {
+   "id": "gap-in-abs-pts-misleads-low-base",
+   "title": "Calibration gap is coloured by absolute points, which hides relative miscalibration",
+   "personas_affected": 3,
+   "avg_severity": 3.0,
+   "fix": "Show relative gap (landed/predicted ratio) or log-odds gap next to points, colour by a z-score against n, and use one threshold rule everywhere."
+  },
+  {
+   "id": "pooled-brier-skill-inflated",
+   "title": "Headline Brier skill pools markets and overstates skill",
+   "personas_affected": 2,
+   "avg_severity": 4.5,
+   "fix": "Compute skill per market and show a count-weighted mean (or hide the pooled tile when more than one market is selected); label the reference explicitly."
+  },
+  {
+   "id": "calibration-bins-too-coarse-low-prob",
+   "title": "10-pt calibration bands collapse low-probability markets",
+   "personas_affected": 2,
+   "avg_severity": 4.0,
+   "fix": "Use quantile (equal-count) bins or auto-zoom the x-range to the market's probability span; offer 2-pt / 5-pt / decile toggle; label empty bands."
+  },
+  {
+   "id": "lift-vs-league-not-vs-market",
+   "title": "Ranking is by lift over league rate, not edge vs market",
+   "personas_affected": 2,
+   "avg_severity": 4.0,
+   "fix": "Once odds exist, default sort to edge vs no-vig market; until then say plainly that LIFT is not an edge."
+  }
+ ]
+}

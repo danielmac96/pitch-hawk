@@ -1,0 +1,748 @@
+{
+ "cohort": "c03-rec-parlays",
+ "cohort_summary": "10 amateur recreational parlay/SGP bettors ($5-$100 units, DK/FD/Fanatics/ESPN Bet, mostly phone, 30-60 min pre-first-pitch). The app's model reads, filters, Prob sort and WHY lines give a decent pool of candidate legs, but the cohort's core job \u2014 combine 3-6 legs, understand same-game correlation, know the combined probability/fair price and compare it to the book \u2014 is entirely unsupported: no parlay/slip builder, no joint or correlated probability, no sportsbook prices or implied %, single-market views, and stars that save players not legs. Home is live-first rather than a pregame 'best plays' list, and phone Predictions is a long dense scroll. Live users get pitch-level calls instead of rest-of-game SGP numbers. 0/10 fully succeeded; 7 partial, 3 failed.",
+ "personas": [
+  {
+   "name": "Marcus Delgado",
+   "profile": "Amateur, 29, warehouse supervisor in Columbus. $20 units, DraftKings only. Builds a nightly 3-leg SGP on one game, usually 1+ hit stacks + over.",
+   "device": "phone",
+   "goal": "Arrive ~40 min before TOR@CLE, find 3 hitters likely to get a hit plus the total and judge if DK's +450 SGP price is fair.",
+   "journey": [
+    "Opens app on phone; Home leads with LIVE DECISIONS (Biggest swing, Top call now) for games he doesn't care about.",
+    "Scrolls past scorecard to UPCOMING, sees TOR@CLE pill: ML CLE 57%, TOT O 8.5 60%, READ Alonso 1+ HR 23%.",
+    "Taps Predictions, 1+ Hit, Filters \u2192 teams TOR,CLE, status upcoming: 18 rows; banner still says 'Live mode: in-progress games first'.",
+    "Picks Harper 77%, Alvarez 78%, Devers 73%; switches to Totals chip to recheck O8.5 60% (number lost from view).",
+    "Multiplies in his head ~0.77*0.78*0.73*0.60 \u2248 26% \u2248 +280 fair, but doesn't know if same-game correlation makes it better or worse; no DK price in app to compare.",
+    "Opens DK, builds the slip manually; no way back to app to 'check' it."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "It gave me good hitters, but I still had to do the parlay math myself and I've got no clue if the correlation helps me.",
+   "pain_points": [
+    {
+     "id": "no-parlay-builder-or-combined-probability",
+     "title": "No way to combine legs into a parlay and see combined probability / fair odds",
+     "area": "predictions",
+     "detail": "The core job of this user (stack 3-6 legs) has no surface. They have to multiply percentages in their head or a calculator; no bet slip, no 'add leg' button, no fair parlay odds to compare with the book's payout.",
+     "evidence": "grep 'parlay|slip|combine' in frontend/ returns nothing; row expanded (02_rowopen) offers only 'Open game \u203a'",
+     "suggested_fix": "Add '+ Leg' on every prop row/starter line, a sticky bottom slip on phone showing legs, joint prob, fair American odds, and a field to enter the book's parlay price to show EV.",
+     "severity": 5
+    },
+    {
+     "id": "no-same-game-correlation-guidance",
+     "title": "No correlation info for same-game legs",
+     "area": "game-detail",
+     "detail": "SGP builders need to know that, e.g., Over 8.5 + two hitters 1+ H from the same lineup are positively correlated and a starter Ks over is negatively correlated with opposing hits. App treats every read in isolation, so naive multiplication is wrong and the user can't tell which combos books are over/under-pricing.",
+     "evidence": "Game detail (Open game \u203a) and Starters list show independent marginals only; no joint/conditional numbers anywhere",
+     "suggested_fix": "In the slip, compute joint probability from the sim (or a correlation matrix) and show 'correlated +/-' badges and 'joint vs naive' delta; add a 'stacks that pair well' panel per game.",
+     "severity": 5
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or implied probability next to any prop",
+     "area": "pricing-odds",
+     "detail": "Every row shows model % and league %, never the DK/FD price. A rec parlay player cannot tell if the 77% hit read is already priced at -400 (no value) or -250 (value) without leaving the app.",
+     "evidence": "phone__pred: P(1+ HIT) 77% / league 65% / LIFT +12 pts, no price column; pitchhawk.js:22 'no odds are fetched'; copy.js:203 WAGERING_OVERRIDES only changes tabs/footer",
+     "suggested_fix": "Show best available price + implied % and 'edge vs book' per row when wagering is on; let user type in a price if feed missing.",
+     "severity": 4
+    },
+    {
+     "id": "single-market-view-no-cross-market-board",
+     "title": "Can only view one market at a time; no cross-market 'best plays' list",
+     "area": "predictions",
+     "detail": "Market chips (1+ Hit / 1+ HR / 1+ HRR / Win prob / Totals / Starters) are single-select, so building a mixed slip (ML + total + hitter + K prop) means flipping 4 tabs and remembering numbers.",
+     "evidence": "pitchhawk.js:864 PRED_MARKETS single pMarket; phone__pred chip row",
+     "suggested_fix": "Add an 'All markets / Top plays' view that mixes legs from every market for one game or the whole slate.",
+     "severity": 3
+    },
+    {
+     "id": "live-mode-default-buries-pregame",
+     "title": "Live mode default sorts in-progress games first while user wants upcoming",
+     "area": "predictions",
+     "detail": "With 3 live games, Predictions defaults to Live mode ('in-progress games first') \u2014 even after filtering to upcoming the banner persists; user must discover Pregame toggle or Filters.",
+     "evidence": "01_pred_team.txt 'Live mode: in-progress games first'; pitchhawk.js:1074 effectiveMode()==='live'",
+     "suggested_fix": "Remember the user's mode; default to Pregame when they open a not-yet-started game or filter to upcoming.",
+     "severity": 2
+    }
+   ],
+   "delights": [
+    "Team + status filters via URL/filters narrowed to one game quickly",
+    "Lineup confirmed \u2713 in expanded row gave confidence legs will play"
+   ]
+  },
+  {
+   "name": "Brianna Okafor",
+   "profile": "Amateur, 34, nurse, bets on breaks. $10 units, FanDuel. 4-6 leg cross-game 1+ hit parlays ('hit ladders').",
+   "device": "phone",
+   "goal": "Grab the 5 safest 1+ hit legs across the slate in under 5 minutes during her break.",
+   "journey": [
+    "Taps Predictions; default sort is Lift, so 77% hit reads are mixed with lower-% high-lift ones.",
+    "Taps Prob sort header to get highest probabilities; good.",
+    "Scrolls dense cards; each one ~200px with per-PA/xPA jargon she skips.",
+    "Stars 5 players to remember them; Watching strip then shows some as 1+ HR reads, not the hit leg she chose.",
+    "Has no total combined % for 5 legs; guesses ~25%.",
+    "Screenshots the list instead of a slip."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 90,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "Sort by Prob was exactly what I wanted, but then I starred five guys and the watch bar showed me home run odds instead.",
+   "pain_points": [
+    {
+     "id": "star-is-per-player-not-per-leg",
+     "title": "Star saves a player, not the specific leg/market",
+     "area": "watchlist",
+     "detail": "Starred a hitter from the 1+ Hit list; the \u2605 Watching strip then showed him as '1+ HR 21%' (it picks his strongest read). The star can't be used as a makeshift parlay slip because it loses which market was chosen, and games/batters are the only pin types.",
+     "evidence": "pitchhawk.js:755 togglePin accepts only g:/b: keys; pitchhawk.js:806-811 picks hr vs hit by rel; work/c03-rec-parlays run3 output '\u2605 WATCHING J. Devers 1+ HR 21%'",
+     "suggested_fix": "Allow pinning a (player, market, line) leg and render the watch strip as a slip with live leg status.",
+     "severity": 4
+    },
+    {
+     "id": "no-parlay-builder-or-combined-probability",
+     "title": "No way to combine legs into a parlay and see combined probability / fair odds",
+     "area": "predictions",
+     "detail": "The core job of this user (stack 3-6 legs) has no surface. They have to multiply percentages in their head or a calculator; no bet slip, no 'add leg' button, no fair parlay odds to compare with the book's payout.",
+     "evidence": "grep 'parlay|slip|combine' in frontend/ returns nothing; row expanded (02_rowopen) offers only 'Open game \u203a'",
+     "suggested_fix": "Add '+ Leg' on every prop row/starter line, a sticky bottom slip on phone showing legs, joint prob, fair American odds, and a field to enter the book's parlay price to show EV.",
+     "severity": 5
+    },
+    {
+     "id": "phone-prediction-list-too-long-and-dense",
+     "title": "Phone Predictions list is a very long scroll of dense cards",
+     "area": "mobile",
+     "detail": "25 cards at ~200px each (5480px page) with per-PA, xPA, \u00d7league, 30d H/PA and opponent allowance on every card; no compact mode, sticky filter bar or game grouping. In a 30-min window this is too slow on a phone.",
+     "evidence": "phone__pred.png 390x5480; pitchhawk.js:1141 'Show all' only expands further",
+     "suggested_fix": "Compact one-line row on phone (name, market, %, price, + Leg), group by game, sticky market/game chips.",
+     "severity": 4
+    },
+    {
+     "id": "jargon-heavy-row-copy",
+     "title": "Row copy full of model jargon (per-PA, xPA, 1.19x league, H/PA, BASE, HRR)",
+     "area": "onboarding",
+     "detail": "Amateurs understand odds but not 'per-PA .298 \u00b7 3.80 xPA' or 'BASE' tags; the onboarding hint only explains lift. HRR is not the same label books use (H+R+RBI).",
+     "evidence": "phone__pred row text; 06_starters 'BASE 42% over \u00b7 exp 5.0'; phone__home hint",
+     "suggested_fix": "Plain-language mode default on phone; tooltips; label HRR as 'Hits+Runs+RBIs 1.5+' matching book naming.",
+     "severity": 3
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or implied probability next to any prop",
+     "area": "pricing-odds",
+     "detail": "Every row shows model % and league %, never the DK/FD price. A rec parlay player cannot tell if the 77% hit read is already priced at -400 (no value) or -250 (value) without leaving the app.",
+     "evidence": "phone__pred: P(1+ HIT) 77% / league 65% / LIFT +12 pts, no price column; pitchhawk.js:22 'no odds are fetched'; copy.js:203 WAGERING_OVERRIDES only changes tabs/footer",
+     "suggested_fix": "Show best available price + implied % and 'edge vs book' per row when wagering is on; let user type in a price if feed missing.",
+     "severity": 3
+    }
+   ],
+   "delights": [
+    "'Prob' sort gives a fast safest-legs list",
+    "Live-updating star strip on Home is a nice idea"
+   ]
+  },
+  {
+   "name": "Tyler Brandt",
+   "profile": "Amateur, 24, grad student. $5-10 units, Fanatics (uses FanCash boosts). Loves 1+ HR lottery parlays (3-4 legs at +2000ish).",
+   "device": "phone",
+   "goal": "Pick 3-4 HR legs with the best shot and see what a fair price for the combo is before choosing which Fanatics boost to apply.",
+   "journey": [
+    "Opens #/pred, taps 1+ HR chip.",
+    "Sees 23-24% top HR reads with '+10 pts' lift; likes that it's not random.",
+    "Wants to know if 23% beats +350 (22% implied) \u2014 no price shown, no implied % anywhere.",
+    "Tries to combine 3 HR legs; app gives nothing; uses phone calculator: 0.23^3\u22481.2% \u2248 +8000 fair.",
+    "Wonders if two HR legs vs same pitcher are correlated (bad pitcher day); no guidance."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 120,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Just put the FanDuel/Fanatics odds next to the 23% and tell me what three of them together should pay.",
+   "pain_points": [
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or implied probability next to any prop",
+     "area": "pricing-odds",
+     "detail": "Every row shows model % and league %, never the DK/FD price. A rec parlay player cannot tell if the 77% hit read is already priced at -400 (no value) or -250 (value) without leaving the app.",
+     "evidence": "phone__pred: P(1+ HIT) 77% / league 65% / LIFT +12 pts, no price column; pitchhawk.js:22 'no odds are fetched'; copy.js:203 WAGERING_OVERRIDES only changes tabs/footer",
+     "suggested_fix": "Show best available price + implied % and 'edge vs book' per row when wagering is on; let user type in a price if feed missing.",
+     "severity": 5
+    },
+    {
+     "id": "no-parlay-builder-or-combined-probability",
+     "title": "No way to combine legs into a parlay and see combined probability / fair odds",
+     "area": "predictions",
+     "detail": "The core job of this user (stack 3-6 legs) has no surface. They have to multiply percentages in their head or a calculator; no bet slip, no 'add leg' button, no fair parlay odds to compare with the book's payout.",
+     "evidence": "grep 'parlay|slip|combine' in frontend/ returns nothing; row expanded (02_rowopen) offers only 'Open game \u203a'",
+     "suggested_fix": "Add '+ Leg' on every prop row/starter line, a sticky bottom slip on phone showing legs, joint prob, fair American odds, and a field to enter the book's parlay price to show EV.",
+     "severity": 5
+    },
+    {
+     "id": "no-same-game-correlation-guidance",
+     "title": "No correlation info for same-game legs",
+     "area": "game-detail",
+     "detail": "SGP builders need to know that, e.g., Over 8.5 + two hitters 1+ H from the same lineup are positively correlated and a starter Ks over is negatively correlated with opposing hits. App treats every read in isolation, so naive multiplication is wrong and the user can't tell which combos books are over/under-pricing.",
+     "evidence": "Game detail (Open game \u203a) and Starters list show independent marginals only; no joint/conditional numbers anywhere",
+     "suggested_fix": "In the slip, compute joint probability from the sim (or a correlation matrix) and show 'correlated +/-' badges and 'joint vs naive' delta; add a 'stacks that pair well' panel per game.",
+     "severity": 4
+    },
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking by LIFT vs league rate, not vs the market",
+     "area": "predictions",
+     "detail": "Default sort is lift over league average. A +12 pt lift on a 77% hit read means nothing for a parlay leg if the book already has it at 80% implied. Casuals read 'LIFT' as 'edge' and are misled.",
+     "evidence": "phone__pred 'ranked by lift over the league rate'; pitchhawk.js:870 PRED_DEFAULTS pSort:'lift'; pitchhawk.js:1066",
+     "suggested_fix": "Rename to 'vs league avg', add 'vs book' column and make it the default sort once odds exist.",
+     "severity": 3
+    }
+   ],
+   "delights": [
+    "HR reads show 30d HR/PA and pitcher HR allowed in one line \u2014 quick 'why'"
+   ]
+  },
+  {
+   "name": "Danielle Pruitt",
+   "profile": "Amateur, 41, accountant. $50 units, ESPN Bet + DK. 2-3 leg SGPs pairing a starter K over with the ML.",
+   "device": "desktop",
+   "goal": "Find a starter whose K over pairs well with his team ML for an SGP tonight.",
+   "journey": [
+    "Desktop Predictions \u2192 Starters chip; only 4 upcoming starters, every one listed at Ks O 5.5 and Outs O 16.5 with 'BASE' tag.",
+    "Reads 'props reserved until modeled' and 'placeholders until trained models replace them' \u2014 trust drops.",
+    "Needs K 6+/7+ alt ladder (ESPN Bet's menu); only O5.5 shown (exp 6.3 helps a bit).",
+    "Flips to Win prob chip for WSH ML 55%; can't see K over + ML joint probability.",
+    "Does mental math, unsure of correlation sign; abandons the SGP and bets ML only."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 240,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "Every starter is O5.5 with a 'placeholder' label \u2014 that's not something I'll put $50 behind in a parlay.",
+   "pain_points": [
+    {
+     "id": "prop-lines-dont-match-book-menus",
+     "title": "Only 1+ thresholds and one fixed pitcher line; no alt lines",
+     "area": "predictions",
+     "detail": "Books offer 2+ hits, 2+ TB, HRR 2.5, K alt ladders (4+,5+,6+,7+). App only has 1+ Hit/HR/HRR and K O5.5/Outs O16.5 for every starter, so SGP/alt-ladder legs can't be evaluated.",
+     "evidence": "06_starters: every SP 'O 5.5' Ks and 'O 16.5' Outs; 'props reserved until modeled'; PRED_MARKETS pitchhawk.js:864",
+     "suggested_fix": "Show the distribution (exp + P(k+) ladder) so any alt line can be read; add total bases, 2+ hits, RBI, runs.",
+     "severity": 5
+    },
+    {
+     "id": "no-same-game-correlation-guidance",
+     "title": "No correlation info for same-game legs",
+     "area": "game-detail",
+     "detail": "SGP builders need to know that, e.g., Over 8.5 + two hitters 1+ H from the same lineup are positively correlated and a starter Ks over is negatively correlated with opposing hits. App treats every read in isolation, so naive multiplication is wrong and the user can't tell which combos books are over/under-pricing.",
+     "evidence": "Game detail (Open game \u203a) and Starters list show independent marginals only; no joint/conditional numbers anywhere",
+     "suggested_fix": "In the slip, compute joint probability from the sim (or a correlation matrix) and show 'correlated +/-' badges and 'joint vs naive' delta; add a 'stacks that pair well' panel per game.",
+     "severity": 5
+    },
+    {
+     "id": "single-market-view-no-cross-market-board",
+     "title": "Can only view one market at a time; no cross-market 'best plays' list",
+     "area": "predictions",
+     "detail": "Market chips (1+ Hit / 1+ HR / 1+ HRR / Win prob / Totals / Starters) are single-select, so building a mixed slip (ML + total + hitter + K prop) means flipping 4 tabs and remembering numbers.",
+     "evidence": "pitchhawk.js:864 PRED_MARKETS single pMarket; phone__pred chip row",
+     "suggested_fix": "Add an 'All markets / Top plays' view that mixes legs from every market for one game or the whole slate.",
+     "severity": 3
+    },
+    {
+     "id": "model-record-chip-cryptic",
+     "title": "Model record chip 'Hit 37%/62%' is cryptic and alarming",
+     "area": "trust-calibration",
+     "detail": "Starters panel literally says BASE placeholders; combined with the 37%/62% record chip, she won't trust it for multi-leg risk.",
+     "evidence": "06_starters footer 'placeholders until trained models replace them'",
+     "suggested_fix": "Label it 'hit rate vs predicted', show calibration by probability bucket and leg-level parlay record.",
+     "severity": 3
+    },
+    {
+     "id": "no-parlay-builder-or-combined-probability",
+     "title": "No way to combine legs into a parlay and see combined probability / fair odds",
+     "area": "predictions",
+     "detail": "The core job of this user (stack 3-6 legs) has no surface. They have to multiply percentages in their head or a calculator; no bet slip, no 'add leg' button, no fair parlay odds to compare with the book's payout.",
+     "evidence": "grep 'parlay|slip|combine' in frontend/ returns nothing; row expanded (02_rowopen) offers only 'Open game \u203a'",
+     "suggested_fix": "Add '+ Leg' on every prop row/starter line, a sticky bottom slip on phone showing legs, joint prob, fair American odds, and a field to enter the book's parlay price to show EV.",
+     "severity": 4
+    }
+   ],
+   "delights": [
+    "exp Ks (6.3) next to the line is useful to eyeball alt lines"
+   ]
+  },
+  {
+   "name": "Jordan 'JT' Thompson",
+   "profile": "Amateur, 31, sales rep. $25 units, FanDuel + DK, line-shops boosts. Builds 3-leg H+R+RBI SGPs.",
+   "device": "phone",
+   "goal": "Find hitters for FanDuel's 'H+R+RBI 1.5+' SGP boost on NYM@WSH.",
+   "journey": [
+    "Taps Predictions \u2192 1+ HRR; unsure if HRR means H+R+RBI 1.5+ (book naming) or 0.5+.",
+    "Filters to NYM,WSH; reads 1+ HRR %, but FanDuel's boost is on 1.5+ \u2014 not covered.",
+    "Opens a row; expanded detail shows Phase/Lineup/Rest of game/Matchup \u2014 no HRR distribution.",
+    "Taps 'Open game \u203a' for game context; finds starters and pills but no SGP builder.",
+    "Leaves for FanDuel."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 200,
+   "would_return": "maybe",
+   "nps_0_10": 4,
+   "quote": "I need the 1.5+ number, not 1+, and I need it next to the boost price.",
+   "pain_points": [
+    {
+     "id": "prop-lines-dont-match-book-menus",
+     "title": "Only 1+ thresholds and one fixed pitcher line; no alt lines",
+     "area": "predictions",
+     "detail": "Books offer 2+ hits, 2+ TB, HRR 2.5, K alt ladders (4+,5+,6+,7+). App only has 1+ Hit/HR/HRR and K O5.5/Outs O16.5 for every starter, so SGP/alt-ladder legs can't be evaluated.",
+     "evidence": "06_starters: every SP 'O 5.5' Ks and 'O 16.5' Outs; 'props reserved until modeled'; PRED_MARKETS pitchhawk.js:864",
+     "suggested_fix": "Show the distribution (exp + P(k+) ladder) so any alt line can be read; add total bases, 2+ hits, RBI, runs.",
+     "severity": 5
+    },
+    {
+     "id": "jargon-heavy-row-copy",
+     "title": "Row copy full of model jargon (per-PA, xPA, 1.19x league, H/PA, BASE, HRR)",
+     "area": "onboarding",
+     "detail": "Amateurs understand odds but not 'per-PA .298 \u00b7 3.80 xPA' or 'BASE' tags; the onboarding hint only explains lift. HRR is not the same label books use (H+R+RBI).",
+     "evidence": "phone__pred row text; 06_starters 'BASE 42% over \u00b7 exp 5.0'; phone__home hint",
+     "suggested_fix": "Plain-language mode default on phone; tooltips; label HRR as 'Hits+Runs+RBIs 1.5+' matching book naming.",
+     "severity": 3
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or implied probability next to any prop",
+     "area": "pricing-odds",
+     "detail": "Every row shows model % and league %, never the DK/FD price. A rec parlay player cannot tell if the 77% hit read is already priced at -400 (no value) or -250 (value) without leaving the app.",
+     "evidence": "phone__pred: P(1+ HIT) 77% / league 65% / LIFT +12 pts, no price column; pitchhawk.js:22 'no odds are fetched'; copy.js:203 WAGERING_OVERRIDES only changes tabs/footer",
+     "suggested_fix": "Show best available price + implied % and 'edge vs book' per row when wagering is on; let user type in a price if feed missing.",
+     "severity": 4
+    },
+    {
+     "id": "no-parlay-builder-or-combined-probability",
+     "title": "No way to combine legs into a parlay and see combined probability / fair odds",
+     "area": "predictions",
+     "detail": "The core job of this user (stack 3-6 legs) has no surface. They have to multiply percentages in their head or a calculator; no bet slip, no 'add leg' button, no fair parlay odds to compare with the book's payout.",
+     "evidence": "grep 'parlay|slip|combine' in frontend/ returns nothing; row expanded (02_rowopen) offers only 'Open game \u203a'",
+     "suggested_fix": "Add '+ Leg' on every prop row/starter line, a sticky bottom slip on phone showing legs, joint prob, fair American odds, and a field to enter the book's parlay price to show EV.",
+     "severity": 4
+    }
+   ],
+   "delights": [
+    "'Open game \u203a' from a row is a good bridge to game context"
+   ]
+  },
+  {
+   "name": "Priya Raman",
+   "profile": "Amateur, 27, UX designer. $10-20 units, DK. Casual; wants 'just tell me the best plays' then tweaks a 3-leg parlay.",
+   "device": "phone",
+   "goal": "Get a top-5 best plays list in under a minute after opening the app 30 min before first pitch.",
+   "journey": [
+    "Home: onboarding hint explains lift; she taps 'How to read the board' then closes.",
+    "Looks for a 'best plays' section; Home is live-first (Biggest swing, Top call now - next pitch In Play 20%).",
+    "Finds one READ per game in slate pills \u2014 only HR reads, 1 per game.",
+    "Goes to Predictions; 126 results on Hit tab, defaults to lift; doesn't know whether to trust Hit or HR tab.",
+    "Settles on top 3 hit reads but can't see combined probability; nervous about the 'Model record Hit 37%/62%' chip."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 180,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "The app is pretty, but I opened it to get five picks and it showed me next-pitch probabilities for a game I'm not watching.",
+   "pain_points": [
+    {
+     "id": "no-quick-best-plays-today",
+     "title": "No quick 'best plays today' answer for a pregame arrival",
+     "area": "home",
+     "detail": "Home opens with live-game cards (Biggest swing, Top call now \u2014 pitch-level calls), a scorecard and a slate list with one READ per game. A user arriving 30-60 min before first pitch has to scroll past live content to find anything actionable pregame, and there is no shortlist of top 5 plays.",
+     "evidence": "phone__home: LIVE DECISIONS block first; slate pill shows single 'READ Alonso 1+ HR 23%'",
+     "suggested_fix": "Pregame-aware Home hero: 'Top 5 plays for the next games' with Add-to-slip buttons, defaulting to upcoming when the user's next game is pregame.",
+     "severity": 5
+    },
+    {
+     "id": "model-record-chip-cryptic",
+     "title": "Model record chip 'Hit 37%/62%' is cryptic and alarming",
+     "area": "trust-calibration",
+     "detail": "Read as '37% hit rate vs 62% claimed' with no context of sample or calibration buckets; a casual either ignores it or loses trust entirely. For parlays, calibration at the high-prob end matters most and isn't shown.",
+     "evidence": "phone__pred 'MODEL RECORD \u00b7 7 DAYS Hit 37%/62%'; phone__home SCORECARD '10/27 \u00b7 37% model said 62%'; pitchhawk.js:1487",
+     "suggested_fix": "Label it 'hit rate vs predicted', show calibration by probability bucket and leg-level parlay record.",
+     "severity": 4
+    },
+    {
+     "id": "no-parlay-builder-or-combined-probability",
+     "title": "No way to combine legs into a parlay and see combined probability / fair odds",
+     "area": "predictions",
+     "detail": "The core job of this user (stack 3-6 legs) has no surface. They have to multiply percentages in their head or a calculator; no bet slip, no 'add leg' button, no fair parlay odds to compare with the book's payout.",
+     "evidence": "grep 'parlay|slip|combine' in frontend/ returns nothing; row expanded (02_rowopen) offers only 'Open game \u203a'",
+     "suggested_fix": "Add '+ Leg' on every prop row/starter line, a sticky bottom slip on phone showing legs, joint prob, fair American odds, and a field to enter the book's parlay price to show EV.",
+     "severity": 4
+    },
+    {
+     "id": "single-market-view-no-cross-market-board",
+     "title": "Can only view one market at a time; no cross-market 'best plays' list",
+     "area": "predictions",
+     "detail": "Market chips (1+ Hit / 1+ HR / 1+ HRR / Win prob / Totals / Starters) are single-select, so building a mixed slip (ML + total + hitter + K prop) means flipping 4 tabs and remembering numbers.",
+     "evidence": "pitchhawk.js:864 PRED_MARKETS single pMarket; phone__pred chip row",
+     "suggested_fix": "Add an 'All markets / Top plays' view that mixes legs from every market for one game or the whole slate.",
+     "severity": 3
+    }
+   ],
+   "delights": [
+    "Clean dark UI, readable on phone",
+    "Onboarding hint is short and dismissible"
+   ]
+  },
+  {
+   "name": "Kevin Walsh",
+   "profile": "Amateur, 45, contractor. $100 units (biggest in cohort), DK + ESPN Bet. 2-3 leg SGPs ML + total, occasionally adds a hitter. Cares about value more than others.",
+   "device": "desktop",
+   "goal": "Decide whether a CLE ML + Over 8.5 SGP at +260 on DK is +EV.",
+   "journey": [
+    "Home slate shows CLE 57% and O 8.5 60% side by side \u2014 good start.",
+    "Computes naive 0.57*0.60=34% \u2248 +194 fair; knows ML and over are correlated for home favourite but app gives no joint number.",
+    "Looks for game totals price/no-vig; none rendered (no /edge on mock, and even with wagering ON no odds UI).",
+    "Opens Win prob and Totals tabs separately on Predictions; same numbers, no combined view.",
+    "Exports CSV hoping to model it himself; CSV has props but no joint data."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 120,
+   "would_return": "maybe",
+   "nps_0_10": 5,
+   "quote": "Give me the joint probability for CLE and the over and I'll tell you in two seconds if +260 is a bet.",
+   "pain_points": [
+    {
+     "id": "no-same-game-correlation-guidance",
+     "title": "No correlation info for same-game legs",
+     "area": "game-detail",
+     "detail": "SGP builders need to know that, e.g., Over 8.5 + two hitters 1+ H from the same lineup are positively correlated and a starter Ks over is negatively correlated with opposing hits. App treats every read in isolation, so naive multiplication is wrong and the user can't tell which combos books are over/under-pricing.",
+     "evidence": "Game detail (Open game \u203a) and Starters list show independent marginals only; no joint/conditional numbers anywhere",
+     "suggested_fix": "In the slip, compute joint probability from the sim (or a correlation matrix) and show 'correlated +/-' badges and 'joint vs naive' delta; add a 'stacks that pair well' panel per game.",
+     "severity": 5
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or implied probability next to any prop",
+     "area": "pricing-odds",
+     "detail": "Every row shows model % and league %, never the DK/FD price. A rec parlay player cannot tell if the 77% hit read is already priced at -400 (no value) or -250 (value) without leaving the app.",
+     "evidence": "phone__pred: P(1+ HIT) 77% / league 65% / LIFT +12 pts, no price column; pitchhawk.js:22 'no odds are fetched'; copy.js:203 WAGERING_OVERRIDES only changes tabs/footer",
+     "suggested_fix": "Show best available price + implied % and 'edge vs book' per row when wagering is on; let user type in a price if feed missing.",
+     "severity": 5
+    },
+    {
+     "id": "single-market-view-no-cross-market-board",
+     "title": "Can only view one market at a time; no cross-market 'best plays' list",
+     "area": "predictions",
+     "detail": "Market chips (1+ Hit / 1+ HR / 1+ HRR / Win prob / Totals / Starters) are single-select, so building a mixed slip (ML + total + hitter + K prop) means flipping 4 tabs and remembering numbers.",
+     "evidence": "pitchhawk.js:864 PRED_MARKETS single pMarket; phone__pred chip row",
+     "suggested_fix": "Add an 'All markets / Top plays' view that mixes legs from every market for one game or the whole slate.",
+     "severity": 3
+    },
+    {
+     "id": "lift-vs-league-not-vs-market",
+     "title": "Ranking by LIFT vs league rate, not vs the market",
+     "area": "predictions",
+     "detail": "Default sort is lift over league average. A +12 pt lift on a 77% hit read means nothing for a parlay leg if the book already has it at 80% implied. Casuals read 'LIFT' as 'edge' and are misled.",
+     "evidence": "phone__pred 'ranked by lift over the league rate'; pitchhawk.js:870 PRED_DEFAULTS pSort:'lift'; pitchhawk.js:1066",
+     "suggested_fix": "Rename to 'vs league avg', add 'vs book' column and make it the default sort once odds exist.",
+     "severity": 2
+    }
+   ],
+   "delights": [
+    "Slate pill shows ML and total side-by-side",
+    "Export CSV exists and is filter-aware"
+   ]
+  },
+  {
+   "name": "Alyssa Moreno",
+   "profile": "Amateur, 23, college student. $10 units, FanDuel. Bets live SGPs during the game from a bar.",
+   "device": "phone",
+   "goal": "Mid-game in LAD@SD, add a live 2-leg SGP (Freeman hit rest of game + over).",
+   "journey": [
+    "Opens Live Markets; top section is next-pitch strike/ball/in-play calls and velo call \u2014 not bettable on FanDuel.",
+    "Switches game via score chip; scrolls to AT THE PLATE to find 'REST OF GAME \u00b7 1+ HIT/HR 22%/14%' for current batter only.",
+    "Can't see rest-of-game for Freeman unless he is at the plate; Predictions 'Live' mode shows frozen pregame reads.",
+    "No live total rest-of-game probability visible; total shows 'frozen at first pitch'.",
+    "Gives up and bets on gut."
+   ],
+   "task_success": "failed",
+   "time_to_first_value_sec_estimate": 300,
+   "would_return": "no",
+   "nps_0_10": 3,
+   "quote": "I don't bet the next pitch \u2014 I need rest-of-game odds for the guys I want, and the total isn't even live.",
+   "pain_points": [
+    {
+     "id": "live-pitch-calls-not-useful-for-sgp",
+     "title": "Live Markets is pitch-level, no live SGP / in-game prop view",
+     "area": "live",
+     "detail": "Live view shows next-pitch and at-bat outcome calls, plus frozen pregame reads and 'rest of game 22%/14%'. Live same-game parlay players want rest-of-game probabilities for multiple legs and a combined number; rest-of-game is buried per batter.",
+     "evidence": "phone__live: NEXT PITCH / HOW THIS AT-BAT ENDS first; REST OF GAME \u00b7 1+ HIT / HR 22%/14% deep in card",
+     "suggested_fix": "Live game 'rest of game props' table sortable, addable to slip with live joint probability.",
+     "severity": 5
+    },
+    {
+     "id": "no-parlay-builder-or-combined-probability",
+     "title": "No way to combine legs into a parlay and see combined probability / fair odds",
+     "area": "predictions",
+     "detail": "The core job of this user (stack 3-6 legs) has no surface. They have to multiply percentages in their head or a calculator; no bet slip, no 'add leg' button, no fair parlay odds to compare with the book's payout.",
+     "evidence": "grep 'parlay|slip|combine' in frontend/ returns nothing; row expanded (02_rowopen) offers only 'Open game \u203a'",
+     "suggested_fix": "Add '+ Leg' on every prop row/starter line, a sticky bottom slip on phone showing legs, joint prob, fair American odds, and a field to enter the book's parlay price to show EV.",
+     "severity": 4
+    },
+    {
+     "id": "no-same-game-correlation-guidance",
+     "title": "No correlation info for same-game legs",
+     "area": "game-detail",
+     "detail": "SGP builders need to know that, e.g., Over 8.5 + two hitters 1+ H from the same lineup are positively correlated and a starter Ks over is negatively correlated with opposing hits. App treats every read in isolation, so naive multiplication is wrong and the user can't tell which combos books are over/under-pricing.",
+     "evidence": "Game detail (Open game \u203a) and Starters list show independent marginals only; no joint/conditional numbers anywhere",
+     "suggested_fix": "In the slip, compute joint probability from the sim (or a correlation matrix) and show 'correlated +/-' badges and 'joint vs naive' delta; add a 'stacks that pair well' panel per game.",
+     "severity": 3
+    },
+    {
+     "id": "phone-prediction-list-too-long-and-dense",
+     "title": "Phone Predictions list is a very long scroll of dense cards",
+     "area": "mobile",
+     "detail": "Live view on phone is a long single column; rest-of-game numbers are buried several screens down.",
+     "evidence": "phone__live.txt: REST OF GAME appears after NEXT PITCH, AT-BAT, VELO sections",
+     "suggested_fix": "Compact one-line row on phone (name, market, %, price, + Leg), group by game, sticky market/game chips.",
+     "severity": 3
+    }
+   ],
+   "delights": [
+    "Score chips at top switch games quickly",
+    "Live win probability with opened/now delta is easy to read"
+   ]
+  },
+  {
+   "name": "Sam Nguyen",
+   "profile": "Amateur, 36, IT tech. $20 units, DK + Fanatics. Builds 4-leg cross-game parlays mixing ML favourites and 1+ hit props; tracks results in Notes app.",
+   "device": "phone",
+   "goal": "Build a 4-leg mixed slip and track whether it hits tonight.",
+   "journey": [
+    "Win prob chip \u2192 picks 2 favourites; 1+ Hit chip \u2192 picks 2 hitters; four tab switches.",
+    "Stars the games and players to track; star strip shows mixed pills but no 'slip' grouping or leg status (hit/pending) per market.",
+    "Wants to share slip with friends' group chat \u2014 only Export CSV available.",
+    "Sees per-row 'pending' result badge in Live; likes it but can't aggregate to slip level.",
+    "Records slip in Notes app manually."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 150,
+   "would_return": "maybe",
+   "nps_0_10": 6,
+   "quote": "Half of what I want is here \u2014 I just need a slip that keeps my four legs together and tells me how they're doing.",
+   "pain_points": [
+    {
+     "id": "no-parlay-builder-or-combined-probability",
+     "title": "No way to combine legs into a parlay and see combined probability / fair odds",
+     "area": "predictions",
+     "detail": "The core job of this user (stack 3-6 legs) has no surface. They have to multiply percentages in their head or a calculator; no bet slip, no 'add leg' button, no fair parlay odds to compare with the book's payout.",
+     "evidence": "grep 'parlay|slip|combine' in frontend/ returns nothing; row expanded (02_rowopen) offers only 'Open game \u203a'",
+     "suggested_fix": "Add '+ Leg' on every prop row/starter line, a sticky bottom slip on phone showing legs, joint prob, fair American odds, and a field to enter the book's parlay price to show EV.",
+     "severity": 5
+    },
+    {
+     "id": "star-is-per-player-not-per-leg",
+     "title": "Star saves a player, not the specific leg/market",
+     "area": "watchlist",
+     "detail": "Starred a hitter from the 1+ Hit list; the \u2605 Watching strip then showed him as '1+ HR 21%' (it picks his strongest read). The star can't be used as a makeshift parlay slip because it loses which market was chosen, and games/batters are the only pin types.",
+     "evidence": "pitchhawk.js:755 togglePin accepts only g:/b: keys; pitchhawk.js:806-811 picks hr vs hit by rel; work/c03-rec-parlays run3 output '\u2605 WATCHING J. Devers 1+ HR 21%'",
+     "suggested_fix": "Allow pinning a (player, market, line) leg and render the watch strip as a slip with live leg status.",
+     "severity": 4
+    },
+    {
+     "id": "single-market-view-no-cross-market-board",
+     "title": "Can only view one market at a time; no cross-market 'best plays' list",
+     "area": "predictions",
+     "detail": "Market chips (1+ Hit / 1+ HR / 1+ HRR / Win prob / Totals / Starters) are single-select, so building a mixed slip (ML + total + hitter + K prop) means flipping 4 tabs and remembering numbers.",
+     "evidence": "pitchhawk.js:864 PRED_MARKETS single pMarket; phone__pred chip row",
+     "suggested_fix": "Add an 'All markets / Top plays' view that mixes legs from every market for one game or the whole slate.",
+     "severity": 3
+    },
+    {
+     "id": "export-csv-useless-on-phone",
+     "title": "Export CSV is the only 'take it with me' action and is useless on phone",
+     "area": "export",
+     "detail": "Phone users want to share a slip screenshot/text to group chat, not a CSV.",
+     "evidence": "pitchhawk.js:974 pExport",
+     "suggested_fix": "'Share slip' as image/text with legs and combined %.",
+     "severity": 2
+    },
+    {
+     "id": "no-deeplink-to-sportsbook-betslip",
+     "title": "No hand-off to DK/FD/Fanatics/ESPN Bet slip",
+     "area": "pricing-odds",
+     "detail": "Even after picking legs, user retypes each one in the book app. Book URLs exist in data layer (league pages only) but aren't surfaced.",
+     "evidence": "pitchhawk-data.js:42-45 book urls defined, not rendered",
+     "suggested_fix": "'Open in DK/FD' deeplink per leg and a copyable slip summary.",
+     "severity": 3
+    }
+   ],
+   "delights": [
+    "Per-row result badges (pending/hit) on Predictions",
+    "Alerts toggle for pinned batters coming up to bat"
+   ]
+  },
+  {
+   "name": "Rashad Coleman",
+   "profile": "Amateur, 38, high-school coach. $25 units, ESPN Bet. Wants to understand WHY legs pair well; reads the 'why' line; 3-leg SGPs.",
+   "device": "phone",
+   "goal": "Understand which hitters to stack against a weak starter and whether stacking teammates is smart.",
+   "journey": [
+    "Predictions \u2192 filter team; WHY line (30d H/PA, pitcher allows .232) helps him see the matchup.",
+    "Notices several hitters vs same pitcher; wants a 'stack vs this pitcher' view with correlation explained.",
+    "Opens Guide (?) \u2014 explains lift and model, nothing on combining legs or correlation.",
+    "Tries Search for a pitcher; result opens player overlay, still only marginal reads.",
+    "Builds the stack on ESPN Bet without knowing if teammates' hits are correlated."
+   ],
+   "task_success": "partial",
+   "time_to_first_value_sec_estimate": 100,
+   "would_return": "yes",
+   "nps_0_10": 6,
+   "quote": "The 'why' line is great \u2014 now teach me why two of these guys together is better or worse than one.",
+   "pain_points": [
+    {
+     "id": "no-same-game-correlation-guidance",
+     "title": "No correlation info for same-game legs",
+     "area": "game-detail",
+     "detail": "SGP builders need to know that, e.g., Over 8.5 + two hitters 1+ H from the same lineup are positively correlated and a starter Ks over is negatively correlated with opposing hits. App treats every read in isolation, so naive multiplication is wrong and the user can't tell which combos books are over/under-pricing.",
+     "evidence": "Game detail (Open game \u203a) and Starters list show independent marginals only; no joint/conditional numbers anywhere",
+     "suggested_fix": "In the slip, compute joint probability from the sim (or a correlation matrix) and show 'correlated +/-' badges and 'joint vs naive' delta; add a 'stacks that pair well' panel per game.",
+     "severity": 5
+    },
+    {
+     "id": "no-parlay-builder-or-combined-probability",
+     "title": "No way to combine legs into a parlay and see combined probability / fair odds",
+     "area": "predictions",
+     "detail": "The core job of this user (stack 3-6 legs) has no surface. They have to multiply percentages in their head or a calculator; no bet slip, no 'add leg' button, no fair parlay odds to compare with the book's payout.",
+     "evidence": "grep 'parlay|slip|combine' in frontend/ returns nothing; row expanded (02_rowopen) offers only 'Open game \u203a'",
+     "suggested_fix": "Add '+ Leg' on every prop row/starter line, a sticky bottom slip on phone showing legs, joint prob, fair American odds, and a field to enter the book's parlay price to show EV.",
+     "severity": 4
+    },
+    {
+     "id": "jargon-heavy-row-copy",
+     "title": "Row copy full of model jargon (per-PA, xPA, 1.19x league, H/PA, BASE, HRR)",
+     "area": "onboarding",
+     "detail": "Amateurs understand odds but not 'per-PA .298 \u00b7 3.80 xPA' or 'BASE' tags; the onboarding hint only explains lift. HRR is not the same label books use (H+R+RBI).",
+     "evidence": "phone__pred row text; 06_starters 'BASE 42% over \u00b7 exp 5.0'; phone__home hint",
+     "suggested_fix": "Plain-language mode default on phone; tooltips; label HRR as 'Hits+Runs+RBIs 1.5+' matching book naming.",
+     "severity": 2
+    },
+    {
+     "id": "no-sportsbook-odds-on-props",
+     "title": "No sportsbook line, price or implied probability next to any prop",
+     "area": "pricing-odds",
+     "detail": "Every row shows model % and league %, never the DK/FD price. A rec parlay player cannot tell if the 77% hit read is already priced at -400 (no value) or -250 (value) without leaving the app.",
+     "evidence": "phone__pred: P(1+ HIT) 77% / league 65% / LIFT +12 pts, no price column; pitchhawk.js:22 'no odds are fetched'; copy.js:203 WAGERING_OVERRIDES only changes tabs/footer",
+     "suggested_fix": "Show best available price + implied % and 'edge vs book' per row when wagering is on; let user type in a price if feed missing.",
+     "severity": 3
+    }
+   ],
+   "delights": [
+    "WHY line on every row gives a fast matchup reason",
+    "Search finds hitters and starters by name with team/game context"
+   ]
+  }
+ ],
+ "top_cohort_issues": [
+  {
+   "id": "no-parlay-builder-or-combined-probability",
+   "title": "No way to combine legs into a parlay and see combined probability / fair odds",
+   "personas_affected": 9,
+   "avg_severity": 4.44,
+   "fix": "Add '+ Leg' on every prop row/starter line, a sticky bottom slip on phone showing legs, joint prob, fair American odds, and a field to enter the book's parlay price to show EV."
+  },
+  {
+   "id": "no-same-game-correlation-guidance",
+   "title": "No correlation info for same-game legs",
+   "personas_affected": 6,
+   "avg_severity": 4.5,
+   "fix": "In the slip, compute joint probability from the sim (or a correlation matrix) and show 'correlated +/-' badges and 'joint vs naive' delta; add a 'stacks that pair well' panel per game."
+  },
+  {
+   "id": "no-sportsbook-odds-on-props",
+   "title": "No sportsbook line, price or implied probability next to any prop",
+   "personas_affected": 6,
+   "avg_severity": 4.0,
+   "fix": "Show best available price + implied % and 'edge vs book' per row when wagering is on; let user type in a price if feed missing."
+  },
+  {
+   "id": "single-market-view-no-cross-market-board",
+   "title": "Can only view one market at a time; no cross-market 'best plays' list",
+   "personas_affected": 5,
+   "avg_severity": 3.0,
+   "fix": "Add an 'All markets / Top plays' view that mixes legs from every market for one game or the whole slate."
+  },
+  {
+   "id": "jargon-heavy-row-copy",
+   "title": "Row copy full of model jargon (per-PA, xPA, 1.19x league, H/PA, BASE, HRR)",
+   "personas_affected": 3,
+   "avg_severity": 2.67,
+   "fix": "Plain-language mode default on phone; tooltips; label HRR as 'Hits+Runs+RBIs 1.5+' matching book naming."
+  },
+  {
+   "id": "prop-lines-dont-match-book-menus",
+   "title": "Only 1+ thresholds and one fixed pitcher line; no alt lines",
+   "personas_affected": 2,
+   "avg_severity": 5.0,
+   "fix": "Show the distribution (exp + P(k+) ladder) so any alt line can be read; add total bases, 2+ hits, RBI, runs."
+  },
+  {
+   "id": "star-is-per-player-not-per-leg",
+   "title": "Star saves a player, not the specific leg/market",
+   "personas_affected": 2,
+   "avg_severity": 4.0,
+   "fix": "Allow pinning a (player, market, line) leg and render the watch strip as a slip with live leg status."
+  },
+  {
+   "id": "phone-prediction-list-too-long-and-dense",
+   "title": "Phone Predictions list is a very long scroll of dense cards",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Compact one-line row on phone (name, market, %, price, + Leg), group by game, sticky market/game chips."
+  },
+  {
+   "id": "model-record-chip-cryptic",
+   "title": "Model record chip 'Hit 37%/62%' is cryptic and alarming",
+   "personas_affected": 2,
+   "avg_severity": 3.5,
+   "fix": "Label it 'hit rate vs predicted', show calibration by probability bucket and leg-level parlay record."
+  },
+  {
+   "id": "lift-vs-league-not-vs-market",
+   "title": "Ranking by LIFT vs league rate, not vs the market",
+   "personas_affected": 2,
+   "avg_severity": 2.5,
+   "fix": "Rename to 'vs league avg', add 'vs book' column and make it the default sort once odds exist."
+  },
+  {
+   "id": "no-quick-best-plays-today",
+   "title": "No quick 'best plays today' answer for a pregame arrival",
+   "personas_affected": 1,
+   "avg_severity": 5.0,
+   "fix": "Pregame-aware Home hero: 'Top 5 plays for the next games' with Add-to-slip buttons, defaulting to upcoming when the user's next game is pregame."
+  },
+  {
+   "id": "live-pitch-calls-not-useful-for-sgp",
+   "title": "Live Markets is pitch-level, no live SGP / in-game prop view",
+   "personas_affected": 1,
+   "avg_severity": 5.0,
+   "fix": "Live game 'rest of game props' table sortable, addable to slip with live joint probability."
+  },
+  {
+   "id": "no-deeplink-to-sportsbook-betslip",
+   "title": "No hand-off to DK/FD/Fanatics/ESPN Bet slip",
+   "personas_affected": 1,
+   "avg_severity": 3.0,
+   "fix": "'Open in DK/FD' deeplink per leg and a copyable slip summary."
+  },
+  {
+   "id": "live-mode-default-buries-pregame",
+   "title": "Live mode default sorts in-progress games first while user wants upcoming",
+   "personas_affected": 1,
+   "avg_severity": 2.0,
+   "fix": "Remember the user's mode; default to Pregame when they open a not-yet-started game or filter to upcoming."
+  },
+  {
+   "id": "export-csv-useless-on-phone",
+   "title": "Export CSV is the only 'take it with me' action and is useless on phone",
+   "personas_affected": 1,
+   "avg_severity": 2.0,
+   "fix": "'Share slip' as image/text with legs and combined %."
+  }
+ ]
+}
