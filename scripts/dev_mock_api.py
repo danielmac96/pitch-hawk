@@ -139,9 +139,10 @@ PHASES = ["live", "live", "live", "final", "final", "pregame", "pregame"]
 GAMES = [game(i, *TEAMS[i], PHASES[i]) for i in range(len(TEAMS))]
 
 
-def projections():
+def projections(games=None):
+    games = GAMES if games is None else games
     rows = []
-    for i, g in enumerate(GAMES):
+    for i, g in enumerate(games):
         lineup_known = g["phase"] != "pregame" or i == 5
         for side_i, side in enumerate(("away", "home")):
             opp = g["probable_home_pitcher" if side == "away" else "probable_away_pitcher"]
@@ -174,6 +175,10 @@ def projections():
 
 
 PROJ = projections()
+# Any earlier date answers with one fully graded slate, so the Predictions day
+# stepper has a past day to show.
+PAST_GAMES = [game(10 + i, *TEAMS[i], "final") for i in range(len(TEAMS))]
+PAST_PROJ = projections(PAST_GAMES)
 
 
 def route(path, q):
@@ -185,11 +190,17 @@ def route(path, q):
     if path == "/games":
         return 200, {"date": TODAY, "is_today": True, "games": [{"game_pk": g["game_pk"], "status": g["status"]} for g in GAMES]}
     if path == "/board":
+        if first("date") and first("date") < TODAY:
+            return 200, {"date": first("date"), "recap": None, "live": [], "upcoming": [], "final": PAST_GAMES}
+        if first("date") and first("date") > TODAY:
+            return 200, {"date": first("date"), "recap": None, "live": [], "upcoming": [], "final": []}
         by = lambda ph: [g for g in GAMES if g["phase"] == ph]
         return 200, {"date": TODAY, "recap": None, "live": by("live"), "upcoming": by("pregame"), "final": by("final")}
     if path == "/projections":
         rows = PROJ
-        if first("date") and first("date") != TODAY:
+        if first("date") and first("date") < TODAY:
+            rows = PAST_PROJ
+        elif first("date") and first("date") > TODAY:
             rows = []
         if first("market"):
             rows = [r for r in rows if r["market"] == first("market")]
