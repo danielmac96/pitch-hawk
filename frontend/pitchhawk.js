@@ -234,6 +234,17 @@
         if (this.state.view === "home") Object.keys(this.state.open).forEach((pk) => this.loadGameContext(pk));
       });
       this.root.addEventListener("click", (e) => this._onClick(e));
+      // A finger on the glass when the poll re-renders loses its tap: the
+      // element under it is replaced before the click lands. Hold the
+      // rebuild until the pointer lifts (render() checks _ptrDown).
+      this.root.addEventListener("pointerdown", () => { this._ptrDown = true; }, { passive: true });
+      const lift = () => {
+        if (!this._ptrDown) return;
+        this._ptrDown = false;
+        if (this._renderDeferred) setTimeout(() => { if (this._renderDeferred && !this._ptrDown) this.render(); }, 350);
+      };
+      window.addEventListener("pointerup", lift, { passive: true });
+      window.addEventListener("pointercancel", lift, { passive: true });
       // `change` rather than `input`: it fires on blur/Enter, so a re-render
       // never lands mid-keystroke. Combined with the focus guard in render(),
       // typing in a filter box survives the 8s poll.
@@ -631,7 +642,10 @@
         return `<button data-act="view" data-arg="${k}" class="ph-tab${on ? " ph-tab-on" : ""}" role="tab" aria-selected="${on}">${label}</button>`;
       }).join("");
       const liveCount = liveNowCount();
-      const liveText = liveCount
+      // While the feed is unreachable the header says so wherever the reader
+      // has scrolled: the banner sits at the top of the page, the header stays.
+      const down = this.state.api && this.state.api.down;
+      const liveText = down ? `<span class="ph-hdr-down">${esc(COPY.hdrDown)}</span>` : liveCount
         ? COPY.liveCount.replace("{n}", `<span class="ph-mono">${liveCount}</span>`)
           .replace("{s}", liveCount === 1 ? "" : "s")
         : esc(COPY.noLive);
@@ -643,7 +657,7 @@
             <span>Pitch<span class="ph-brand-hawk">Hawk</span></span>
           </div>
           <div class="ph-livecount">
-            <span class="ph-dot${liveCount ? " is-live" : ""}"></span>
+            <span class="ph-dot${down ? " is-down" : liveCount ? " is-live" : ""}"></span>
             <span>${liveText}</span>
           </div>
           <div class="ph-hdr-tools">
@@ -1047,12 +1061,13 @@
         </div>
         ${this.predFilterBarHtml(count)}
         ${this.postseasonNoteHtml()}
-        ${this.trustTilesHtml()}
+        ${this.mob() ? "" : this.trustTilesHtml()}
         <div class="ph-strip-head">
           <span class="ph-table-title">${esc(this.predTableTitle())}</span>
           <span class="ph-strip-sub">${esc(sub)}</span>
         </div>
-        ${count ? table : (this.isLineView() && table) || this.predEmptyHtml()}`;
+        ${count ? table : (this.isLineView() && table) || this.predEmptyHtml()}
+        ${this.mob() ? this.trustTilesHtml() : ""}`;
     }
 
     // ── markets at a line (Phase 1) ──────────────────────────────────────
@@ -1332,10 +1347,9 @@
               <span class="ph-rowlink-top"><b class="ph-ellip">${esc(r.name || "—")}</b><span class="ph-mono">${esc(lineTxt(r))}</span></span>
               <span class="ph-ellip">${this.numHtml(`${r.sub} · ${when(r.g)}`)}</span>
             </button>
-            ${this.resultChipHtml(r.result, r.g)}`,
+            `,
           stats: `${this.mPairHtml(esc(this.lineHead()), this.probPairHtml(r.p))}
-            ${this.mPairHtml("PROJ", `<span class="ph-mono">${esc(this.projTxt(r, mk.unit))}</span>`)}
-            <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">NEARBY LINES</span>${this.ladderMiniHtml(r)}</span>`,
+            ${this.mPairHtml("PROJ", `<span class="ph-stack"><span class="ph-mono">${esc(this.projTxt(r, mk.unit))}</span>${r.result != null ? this.resultChipHtml(r.result, r.g) : ""}</span>`)}`,
           more: `<span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">EVERY LINE</span>${this.ladderTableHtml(r, mk.unit)}</span>
             ${this.mPairHtml("MODEL", `<span class="ph-mono ph-small">${esc(r.version || "—")}</span>`)}
             ${this.openGameBtnHtml(r.g.gamePk)}`,
@@ -1849,7 +1863,7 @@
       // claim about the data, and the data has not arrived.
       const countHtml = count == null
         ? `<span class="ph-mono ph-fbar-count"><b>—</b> results</span>`
-        : `<span class="ph-mono ph-fbar-count"><b>${count}</b> result${count === 1 ? "" : "s"}</span>`;
+        : `<span class="ph-mono ph-fbar-count" title="${count} result${count === 1 ? "" : "s"}" aria-label="${count} result${count === 1 ? "" : "s"}"><b>${count}</b><span class="ph-hide-xs"> result${count === 1 ? "" : "s"}</span></span>`;
       // Phone: mode and market always in view; the rest behind "Filters".
       if (this.mob()) {
         const open = !!s.mOpen["f:pred"];
@@ -2037,16 +2051,18 @@
                 <span class="ph-rowlink-top"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-mono">${esc(this.teamOf(b))} · #${b.slot || "—"}</span></span>
                 <span class="ph-ellip">${this.numHtml(`vs ${b.spName || "TBD"} · ${g.away} @ ${g.home} ${when(g)}`)}</span>
               </button>
-              ${this.resultChipHtml(rec ? rec.result : null, g)}`,
+              `,
+            // Phone: the number, its lift and the grade up front; the why
+            // and everything else one tap away, so a card is ~100px not ~190.
             stats: `${this.mPairHtml(this.probHead(m), this.probCellHtml(b, m, true))}
-              ${this.mPairHtml("LIFT", `<span class="ph-stack"><span class="ph-mono ph-lift ph-lift--${c.band || "avg"}">${esc(c.lift || "—")}</span><span class="ph-mono ph-small ph-mut">${c.rel == null ? "" : `${c.rel.toFixed(2)}× league`}</span></span>`)}
-              <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WHY</span><span class="ph-card-why ph-mono"><span>${w[0]}</span></span></span>`,
-            more: `${this.mPairHtml("PHASE", this.phaseChip(pk, pt))}
+              ${this.mPairHtml("LIFT", `<span class="ph-stack"><span class="ph-mono ph-lift ph-lift--${c.band || "avg"}">${esc(c.lift || "—")}</span>${rec && rec.result != null ? this.resultChipHtml(rec.result, g) : ""}</span>`)}`,
+            more: `<span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">WHY</span><span class="ph-card-why ph-mono"><span>${w[0]}</span></span></span>
+              ${this.mPairHtml("PHASE", this.phaseChip(pk, pt))}
               ${this.mPairHtml("LINEUP", `<span class="ph-status ph-status--${b.slot ? "solid" : "dashed"} ph-status--left">${b.slot ? "LINEUP ✓" : "LINEUP PENDING"}</span>`)}
               ${this.mPairHtml("REST OF GAME", rogP != null ? this.baseCellHtml(this.pct(rogP), `${Number(live.remaining_pa).toFixed(1)} PA left`) : `<span class="ph-missing-dash">—</span>`)}
               ${this.mPairHtml("FRESH", `<span class="ph-mono ph-small">${esc(g.phase === "final" ? "graded" : `updated ${this.clockOf(b.updatedAt) || "—"}`)}</span>`)}
               <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">MATCHUP</span><span class="ph-card-why ph-mono"><span>${w[1]}</span></span></span>
-              ${this.openGameBtnHtml(b.pk, b.side)}`,
+              <span class="ph-pdetail-act">${this.pinBtnHtml("b:" + b.id, "Watch this batter")}${this.openGameBtnHtml(b.pk, b.side)}</span>`,
           });
         }).join("");
         const sorts = [["lift", "Lift"], ["prob", "Prob"], ["time", "Time"], ["name", "Name"]]
@@ -2541,7 +2557,7 @@
       const canNext = next <= this.shiftDate(today, 1);
       return `<span class="ph-datestep" role="group" aria-label="Choose a day">
           <button class="ph-chip" data-act="pDate" data-arg="${prev}" aria-label="Previous day">‹</button>
-          <span class="ph-mono ph-datestep-lbl">${esc(cur === today ? `Today · ${lbl(cur)}` : lbl(cur))}</span>
+          <span class="ph-mono ph-datestep-lbl">${cur === today ? `Today<span class="ph-hide-sm"> · ${esc(lbl(cur))}</span>` : esc(lbl(cur))}</span>
           ${canNext ? `<button class="ph-chip" data-act="pDate" data-arg="${next}" aria-label="Next day">›</button>` : ""}
           ${cur !== today ? `<button class="ph-link" data-act="pDate" data-arg="">Back to today</button>` : ""}
         </span>`;
@@ -5590,8 +5606,10 @@
       const ae = document.activeElement;
       const busy = ae && ae.hasAttribute
         && (ae.hasAttribute("data-pfilter") || ae.hasAttribute("data-search"));
-      if (busy && this.root.contains(ae)) {
+      if ((busy && this.root.contains(ae)) || this._ptrDown) {
         this._renderDeferred = true;
+        // Never strand a deferred render behind a pointer that never lifts.
+        if (this._ptrDown) { clearTimeout(this._ptrTo); this._ptrTo = setTimeout(() => { this._ptrDown = false; if (this._renderDeferred) this.render(); }, 4000); }
         return;
       }
       this._renderDeferred = false;

@@ -27,7 +27,7 @@ The tab, the game in view and the filters live in the hash, so a reload keeps
 the reader's place, a link can be shared and Back steps between tabs:
 
 ```
-#/home?open=<pk,...>            #/live/<pk>
+#/home?open=<pk,...>            #/live/<pk>            #/game/<pk>            #/card
 #/pred?m=hr&team=NYY,BOS&status=live&lineup=1&min=3&sort=prob-
 #/pred?m=pk&line=6.5&side=under&pmin=55&date=2026-10-09
 #/data?tf=14&mk=batter_hit&team=NYY&park=3313&hand=L&side=home

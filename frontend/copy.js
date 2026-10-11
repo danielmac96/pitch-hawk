@@ -87,6 +87,7 @@ window.PH_COPY = (function () {
       ["Fair odds", "The model's probability written as an American price: the price at which a bet on that probability breaks even. It is not a sportsbook price."],
       ["Known limits", "Plate appearances are treated as independent given the matchup; pregame we don't know which relievers will pitch; same-game reads are correlated. The per-pitch and at-bat calls are older cell models."],
     ],
+    hdrDown: "Feed unreachable · retrying",
     predSubTop: "the strongest few reads in every market, each ranked on its own market's scale · see all for the full board",
     gameTitle: "Game",
     gameNotFound: "This game isn't on the current slate.",
