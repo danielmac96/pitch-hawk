@@ -494,7 +494,7 @@
         case "pMarket": {
           // A line belongs to a market: switching market drops it (and a
           // lift sort, which only the 1+ tables have).
-          const lineMk = this.LINE_MKS[arg] && !this.isBatMk(arg) && arg !== "tot";
+          const lineMk = this.LINE_MKS[arg] && !this.isBatMk(arg);
           try { window.localStorage.setItem("ph-pred-market", arg); } catch (_e) { /* session only */ }
           return this.setState({ pMarket: arg, pAll: false, pLine: null, pOpen: {},
             pSort: lineMk && this.state.pSort === "lift" ? "prob" : this.state.pSort });
@@ -651,7 +651,7 @@
       // While the feed is unreachable the header says so wherever the reader
       // has scrolled: the banner sits at the top of the page, the header stays.
       const down = this.state.api && this.state.api.down;
-      const liveText = down ? `<span class="ph-hdr-down">${esc(COPY.hdrDown)}</span>` : liveCount
+      const liveText = down ? `<span class="ph-hdr-down">${esc(this.mob() ? COPY.hdrDownShort : COPY.hdrDown)}</span>` : liveCount
         ? COPY.liveCount.replace("{n}", `<span class="ph-mono">${liveCount}</span>`)
           .replace("{s}", liveCount === 1 ? "" : "s")
         : esc(COPY.noLive);
@@ -1115,7 +1115,7 @@
       const s = this.state, mk = this.LINE_MKS[m || s.pMarket];
       if (!mk) return false;
       const mm = m || s.pMarket;
-      if (this.isBatMk(mm) || mm === "tot") return (s.pLine != null && s.pLine !== mk.def) || s.pSide === "under";
+      if (this.isBatMk(mm)) return (s.pLine != null && s.pLine !== mk.def) || s.pSide === "under";
       return true;
     }
     curLine() { const mk = this.LINE_MKS[this.state.pMarket]; return this.state.pLine != null ? this.state.pLine : (mk ? mk.def : null); }
@@ -2695,9 +2695,12 @@
         return `<span class="ph-pc"><b class="ph-mono ph-pc-val">${this.pct(c.p)}</b></span>`;
       }
       const ppa = m === "hr" ? this.pct1(c.ppa) : this.r3(c.ppa);
+      // The 1+ boards honour the % ⇄ fair-odds toggle like every other board.
+      const us = this.state.oddsFmt === "us";
       return `<span class="ph-pc">
         <span class="ph-pc-top">
-          <b class="ph-mono ph-pc-val ph-band-${c.band}">${this.pct(c.p)}</b>
+          <b class="ph-mono ph-pc-val ph-band-${c.band}">${us ? esc(this.fairOdds(c.p)) : this.pct(c.p)}</b>
+          <span class="ph-mono ph-pc-base">${us ? this.pct(c.p) : `fair ${esc(this.fairOdds(c.p))}`}</span>
           ${noLift ? "" : `<span class="ph-mono ph-lift ph-lift--${c.band}">${c.lift}</span>`}
           <span class="ph-mono ph-pc-base">league ${this.pct(c.base)}</span>
         </span>
@@ -5636,6 +5639,9 @@
         pf: ae.getAttribute("data-pfilter"), id: ae.id,
       } : null;
       this.root.setAttribute("data-theme", this.dk() ? "dark" : "light");
+      // innerHTML resets every sideways chip row to its start; keep where the
+      // reader had scrolled each one (by position on the page).
+      const chipScroll = [...this.root.querySelectorAll(".ph-fscroll")].map((r) => r.scrollLeft);
       const view = this.state.view;
       // A view is built to a string BEFORE it is assigned, so anything that
       // throws in here used to leave the previous tab's DOM in place — the tab
@@ -5682,6 +5688,7 @@
         const el = (sel ? this.root.querySelector(sel) : null) || this.root.querySelector("main");
         if (el) { try { el.focus({ preventScroll: true }); } catch (_e) { el.focus(); } }
       }
+      this.root.querySelectorAll(".ph-fscroll").forEach((r, i) => { if (chipScroll[i]) r.scrollLeft = chipScroll[i]; });
       this.revealActiveChips();
       this.announceLive();
     }

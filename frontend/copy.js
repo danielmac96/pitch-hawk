@@ -88,6 +88,7 @@ window.PH_COPY = (function () {
       ["Known limits", "Plate appearances are treated as independent given the matchup; pregame we don't know which relievers will pitch; same-game reads are correlated. The per-pitch and at-bat calls are older cell models."],
     ],
     hdrDown: "Feed unreachable · retrying",
+    hdrDownShort: "Offline · retrying",
     lineNotModeled: "The model doesn't publish {m} at {l} yet. Lines it does publish:",
     predSubTop: "the strongest few reads in every market, each ranked on its own market's scale · see all for the full board",
     gameTitle: "Game",
