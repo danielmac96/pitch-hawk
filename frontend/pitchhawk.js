@@ -353,7 +353,12 @@
         const date = q.get("date");
         patch.pDate = /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? date : null;
         const m = q.get("m");
-        patch.pMarket = this.PRED_MARKETS.some(([k]) => k === m) ? m : d.pMarket;
+        // No market in the link: the one this device last looked at, so a
+        // pick'em player who lives on Hits isn't sent through Top reads daily.
+        let last = null;
+        try { last = window.localStorage.getItem("ph-pred-market"); } catch (_e) { /* none */ }
+        const ok = (k) => this.PRED_MARKETS.some(([x]) => x === k);
+        patch.pMarket = ok(m) ? m : ok(last) ? last : d.pMarket;
         patch.pTeams = (q.get("team") || "").split(",").map((t) => t.trim().toUpperCase()).filter((t) => /^[A-Z]{2,3}$/.test(t));
         const st = q.get("status");
         patch.pStatus = ["all", "live", "upcoming", "final"].includes(st) ? st : d.pStatus;
@@ -490,6 +495,7 @@
           // A line belongs to a market: switching market drops it (and a
           // lift sort, which only the 1+ tables have).
           const lineMk = this.LINE_MKS[arg] && !this.isBatMk(arg) && arg !== "tot";
+          try { window.localStorage.setItem("ph-pred-market", arg); } catch (_e) { /* session only */ }
           return this.setState({ pMarket: arg, pAll: false, pLine: null, pOpen: {},
             pSort: lineMk && this.state.pSort === "lift" ? "prob" : this.state.pSort });
         }
@@ -1768,6 +1774,13 @@
     }
     predLineEmptyNote() {
       const mk = this.LINE_MKS[this.state.pMarket];
+      // A line the model doesn't publish for this market (H+R+RBI 1.5): say
+      // so and offer the lines it does, instead of blaming the filters.
+      const L = this.curLine(), opts = this.lineOptions();
+      if (mk && mk.kind !== "game" && L != null && opts.length && !opts.includes(L)) {
+        return `<div class="ph-empty ph-empty--dash"><b>${esc(COPY.lineNotModeled.replace("{m}", mk.label).replace("{l}", String(L)))}</b>
+          <span class="ph-gl-row">${opts.map((l) => `<button class="ph-chip" data-act="pLine" data-arg="${l}">${l}</button>`).join("")}</span></div>`;
+      }
       if (mk && mk.kind === "game" && this.state.pMarket !== "ml" && !this.todayGames().some((g) => g.runs)) {
         return `<div class="ph-empty ph-empty--dash"><b>${esc(COPY.runsNoneTitle)}</b><span>${esc(COPY.runsNoneBody)}</span></div>`;
       }
@@ -1876,7 +1889,8 @@
             ${countHtml}
           </div>
           <div class="ph-fscroll">${mkChips}</div>
-          ${lineCtl || sideCtl ? `<div class="ph-fscroll">${lineCtl}${sideCtl}</div>` : ""}
+          ${sideCtl ? `<div class="ph-fbar-line">${sideCtl}</div>` : ""}
+          ${lineCtl ? `<div class="ph-fscroll">${lineCtl}</div>` : ""}
           ${gameCtl ? `<div class="ph-fbar-line">${gameCtl}</div>` : ""}
           ${open ? `<div class="ph-fbar-line ph-fbar-more">${teamSel}${statusChips}${batterCtl}${bandCtl}${fmtCtl}<button class="ph-link" data-act="pClear">Clear</button>${exportBtn}</div>` : ""}
         </div>`;
