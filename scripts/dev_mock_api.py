@@ -154,10 +154,14 @@ def _pois_over(mu, line):
     return 1 - sum(exp(-mu) * mu ** i / factorial(i) for i in range(k + 1))
 
 
-def _ladder(over, cap=14):
+def _ladder(over, cap=16):
     out = []
-    for k in range(cap):
+    for k in range(40):
+        if len(out) >= cap:
+            break
         p = over(k + 0.5)
+        if p > 0.995:
+            continue
         if p < 0.005:
             break
         out.append({"line": k + 0.5, "p_over": round(p, 4)})
@@ -186,6 +190,7 @@ def projections(games=None):
                 base = dict(game_pk=g["game_pk"], player_id=pid, player=pname, role="batter",
                             is_home=side == "home", lineup_slot=s if lineup_known else None,
                             expected_pa=xpa, opposing_pitcher_id=opp["id"], opposing_pitcher=opp["name"],
+                            bat_side=rnd.choice("LLRRRS"), opposing_pitcher_hand="L" if opp["id"] % 3 == 0 else "R",
                             updated_at=iso(NOW - timedelta(minutes=12)), model_version="bh_v2",
                             form_30d={"pa": rnd.randint(8, 110), "hit_rate": round(rnd.uniform(.15, .32), 4), "hr_rate": round(rnd.uniform(0, .07), 4)},
                             opp_form_30d={"pa": rnd.randint(40, 160), "hit_rate": round(rnd.uniform(.18, .28), 4), "hr_rate": round(rnd.uniform(.015, .045), 4)})
@@ -224,6 +229,7 @@ def projections(games=None):
                 cnt = max(0, int(rnd.gauss(mu, mu ** 0.5)))
                 gr = dict(result=("hit" if cnt > line else "miss"), actual_count=cnt, plate_appearances=24) if final else dict(result=None)
                 rows.append(dict(game_pk=g["game_pk"], player_id=p["id"], player=p["name"], role="pitcher",
+                                 pitch_hand="L" if p["id"] % 3 == 0 else "R",
                                  market=m, line=line, probability=round(_pois_over(mu, line), 4),
                                  expected_value=mu, ladder=lad, model_version="base_v1", updated_at=iso(NOW), **gr))
     return rows

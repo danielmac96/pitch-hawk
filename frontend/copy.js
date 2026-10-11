@@ -66,6 +66,10 @@ window.PH_COPY = (function () {
     predNoneTitle: "No predictions today",
     // Off day: the tab shows the next slate (see /games is_today).
     predSubNext: "No games today. Every model-fair probability on the next slate, ranked by lift over the league rate.",
+    predSubTop: "the strongest few reads in every market, each ranked on its own market's scale · see all for the full board",
+    gameTitle: "Game",
+    gameNotFound: "This game isn't on the current slate.",
+    gameFrozenNote: "Game lines are the pregame call, frozen at first pitch. The Live tab has the in-game win probability.",
     predSubLine: "the model's probability at this line · fair = the price where a bet on that number breaks even · not a sportsbook price",
     ladderNone: "Only the published line is available for this read.",
     runsNoneTitle: "No team-run distribution for these games yet",

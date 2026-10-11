@@ -78,16 +78,17 @@ const r4 = (v: number) => Math.round(v * 10000) / 10000;
 // PAs (batters), so every line falls out of the same arithmetic as the one
 // published. Same shape and stopping rule as props.ts ladder().
 export interface Rung { line: number; p_over: number }
-function ladderOf(over: (line: number) => number, floor = 0.005, maxRungs = 10): Rung[] {
+function ladderOf(over: (line: number) => number, floor = 0.005, maxRungs = 12): Rung[] {
   const out: Rung[] = [];
   for (let k = 0; k < 40 && out.length < maxRungs; k++) {
     const p = over(k + 0.5);
+    if (p > 1 - floor) continue;
     if (p < floor) break;
     out.push({ line: k + 0.5, p_over: r4(p) });
   }
   return out;
 }
-export function poissonLadder(mean: number, maxRungs = 14): Rung[] {
+export function poissonLadder(mean: number, maxRungs = 16): Rung[] {
   return ladderOf((line) => poissonOver(line, mean), 0.005, maxRungs);
 }
 /** P(Binomial(n, p) > line), mixed over a fractional expected PA count. */

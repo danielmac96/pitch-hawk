@@ -713,13 +713,14 @@ async function projections(url: URL): Promise<Response> {
     ...rows.filter(isPitcherRow).map((r: any) => r.player_id),
     ...rows.map((r: any) => r.opposing_pitcher_id).filter(Boolean),
   ])];
-  const [names, form] = await Promise.all([
-    playerNames([
+  const [info, form] = await Promise.all([
+    playerInfo([
       ...rows.map((r: any) => r.player_id),
       ...rows.map((r: any) => r.opposing_pitcher_id).filter(Boolean),
     ]),
     rollingForm(batterIds as number[], pitcherIds as number[]),
   ]);
+  const names = new Map([...info].map(([id, v]) => [id, v.name]));
   return json({
     date,
     market: market ?? "all",
@@ -736,6 +737,11 @@ async function projections(url: URL): Promise<Response> {
       lineup_slot: r.lineup_slot,
       opposing_pitcher_id: r.opposing_pitcher_id,
       opposing_pitcher: names.get(r.opposing_pitcher_id) ?? null,
+      // Handedness for the platoon read: the batter's side (S = switch), the
+      // starter's arm, and the arm the batter faces.
+      bat_side: isPitcherRow(r) ? null : (info.get(r.player_id)?.bat ?? null),
+      pitch_hand: isPitcherRow(r) ? (info.get(r.player_id)?.throws ?? null) : null,
+      opposing_pitcher_hand: info.get(r.opposing_pitcher_id)?.throws ?? null,
       probability: r.probability != null ? Number(r.probability) : null,
       per_pa_probability: r.per_pa_probability != null
         ? Number(r.per_pa_probability) : null,
@@ -889,6 +895,16 @@ async function gradedVenues(): Promise<Response> {
   const { data, error } = await svc().rpc("graded_venues");
   if (error) return json({ error: error.message }, 500);
   return json({ venues: data ?? [] });
+}
+
+// Name plus handedness, for routes that show a platoon read.
+async function playerInfo(ids: number[]): Promise<Map<number, { name: string | null; bat: string | null; throws: string | null }>> {
+  const uniq = [...new Set(ids.filter(Boolean))];
+  if (!uniq.length) return new Map();
+  const { data } = await svc().from("player_info")
+    .select("player_id,full_name,bat_side,pitch_hand").in("player_id", uniq);
+  return new Map((data ?? []).map((r: any) => [r.player_id,
+    { name: r.full_name ?? null, bat: r.bat_side ?? null, throws: r.pitch_hand ?? null }]));
 }
 
 async function playerNames(ids: number[]): Promise<Map<number, string>> {
