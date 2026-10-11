@@ -210,9 +210,13 @@
         pDate: null,
         // The game page (#/game/<pk>).
         gameSel: null,
+        // My card: saved legs (localStorage), other days' rows they grade
+        // against, and a shared card arriving by link.
+        card: [], cardDays: {}, cardShare: null,
         past: { date: null, rows: null, games: null, err: false },
       };
       this._projAt = 0;
+      this.state.card = this.loadCard();
       // Freshness stamps already flashed, so a re-render does not replay it.
       this._seen = {};
       this._pollIv = null;
@@ -274,7 +278,7 @@
     // tabs instead of leaving the site.
     //   #/home?open=<pk,..>   #/pred?m=hr&team=NYY,BOS&status=live&lineup=1&min=3
     //   #/live/<pk>           #/data?tf=14&mk=batter_hit&team=NYY&park=..&hand=L&side=home
-    VIEWS = ["home", "pred", "live", "data", "game"];
+    VIEWS = ["home", "pred", "live", "data", "game", "card"];
     routeOf() {
       const s = this.state, q = new URLSearchParams();
       let path = s.view;
@@ -326,6 +330,7 @@
       patch.mode = mode === "live" || mode === "pregame" ? mode : null;
       if (view === "live") patch.liveSel = seg && /^\d+$/.test(seg) ? seg : "top";
       if (view === "game") { if (!seg || !/^\d+$/.test(seg)) return null; patch.gameSel = seg; }
+      if (view === "card" && q.get("share")) patch.cardShare = this.decodeShare(q.get("share"));
       if (view === "home") {
         const open = {};
         (q.get("open") || "").split(",").filter((k) => /^\d+$/.test(k)).forEach((k) => { open[k] = true; });
@@ -533,6 +538,31 @@
           try { window.scrollTo(0, 0); } catch (_e) { /* jsdom */ }
           return;
         }
+        case "legToggle": return this.toggleLeg(arg);
+        case "legRemove": { this.saveCard((this.state.card || []).filter((l) => l.id !== arg)); return this.render(); }
+        case "cardExport": {
+          try {
+            const blob = new Blob([this.cardCsv()], { type: "text/csv" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob); a.download = `pitchhawk-card-${slateDate()}.csv`;
+            document.body.appendChild(a); a.click(); a.remove();
+            setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+          } catch (_e) { /* no Blob downloads */ }
+          return;
+        }
+        case "cardShare": {
+          const url = this.cardShareUrl();
+          const done = () => this.notify(COPY.cardShareTitle, COPY.cardShareBody);
+          try { navigator.clipboard.writeText(url).then(done, () => window.prompt(COPY.cardShareTitle, url)); } catch (_e) { window.prompt(COPY.cardShareTitle, url); }
+          return;
+        }
+        case "cardImport": {
+          const have = new Set((this.state.card || []).map((l) => l.id));
+          const add = (this.state.cardShare || []).filter((l) => !have.has(l.id)).map((l) => Object.assign({}, l, { savedAt: new Date().toISOString(), shared: true }));
+          this.saveCard((this.state.card || []).concat(add));
+          return this.setState({ cardShare: null });
+        }
+        case "cardShareX": return this.setState({ cardShare: null });
         case "gameBack": {
           if (this._navDepth > 0) { try { window.history.back(); return; } catch (_e) { /* fall through */ } }
           return this.setState({ view: "home" });
@@ -612,6 +642,7 @@
           </div>
           <div class="ph-hdr-tools">
             <button class="ph-iconbtn" data-act="ovOpen" data-arg="search" aria-label="Search players and teams" title="Search players and teams"><svg width="15" height="15" viewBox="0 0 16 16" aria-hidden="true"><circle cx="7" cy="7" r="5" fill="none" stroke="currentColor" stroke-width="2"/><line x1="11" y1="11" x2="15" y2="15" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span class="ph-iconbtn-lbl">Search</span></button>
+            <button class="ph-iconbtn${view === "card" ? " is-on" : ""}" data-act="view" data-arg="card" aria-label="My card" title="My card: the legs you saved and how they landed"><span aria-hidden="true">✓</span><span class="ph-iconbtn-lbl">My card${(this.state.card || []).length ? ` <span class="ph-mono">${(this.state.card || []).filter((l) => l.date >= slateDate()).length || ""}</span>` : ""}</span></button>
             <button class="ph-iconbtn" data-act="ovOpen" data-arg="help" aria-label="How to read the board" title="How to read the board"><span aria-hidden="true">?</span><span class="ph-iconbtn-lbl">Guide</span></button>
           </div>
           <nav class="ph-nav" role="tablist" aria-label="Sections">${tabs}</nav>
@@ -1290,7 +1321,7 @@
         const cards = rows.map((r, i) => this.mCardHtml({
           key: `pl:${m}:${r.key}`,
           head: `<span class="ph-mono ph-dim ph-mcard-slot">${i + 1}</span>
-            ${r.pin ? this.pinBtnHtml(r.pin, "Watch") : ""}
+            ${this.legBtnHtml(this.legOfLine(r, m))}
             <button class="ph-rowlink" data-act="mToggle" data-arg="pl:${m}:${esc(r.key)}" aria-expanded="${!!s.mOpen[`pl:${m}:${r.key}`]}">
               <span class="ph-rowlink-top"><b class="ph-ellip">${esc(r.name || "—")}</b><span class="ph-mono">${esc(lineTxt(r))}</span></span>
               <span class="ph-ellip">${this.numHtml(`${r.sub} · ${when(r.g)}`)}</span>
@@ -1311,7 +1342,7 @@
         const open = !!s.pOpen[`l:${r.key}`];
         return `<div class="ph-ptable-row ph-ptable-line">
           <span class="ph-mono ph-dim">${i + 1}</span>
-          ${r.pin ? this.pinBtnHtml(r.pin, "Watch") : "<span></span>"}
+          <span class="ph-rowbtns">${this.legBtnHtml(this.legOfLine(r, m))}${r.pin ? this.pinBtnHtml(r.pin, "Watch") : ""}</span>
           <button class="ph-rowlink" data-act="pOpen" data-arg="l:${esc(r.key)}" aria-expanded="${open}">
             <span class="ph-rowlink-top"><b class="ph-ellip">${esc(r.name || "—")}</b></span>
             <span class="ph-ellip">${this.numHtml(`${r.sub} · ${when(r.g)}`)}</span>
@@ -1398,12 +1429,14 @@
         if (this.isBatMk(sec.m) && sec.line == null) {
           rows = this.withPred(base, () => this.predBatterRows()).map((r) => ({
             key: `${sec.m}:${r.b.key}`, pin: `b:${r.b.id}`, name: r.b.name, g: r.g, p: r.c.p, lift: r.c.lift, band: r.c.band,
+            leg: this.legOfBatter(r.b, r.g, sec.m, r.c.p),
             sub: `${this.teamOf(r.b)} · ${this.handTxt(r.b)}vs ${r.b.spName || "TBD"}`, label: sec.m === "hr" ? "1+ HR" : "1+ Hit",
             result: r.b[sec.m] ? r.b[sec.m].result : null,
           }));
         } else {
           const one = (side) => this.withPred(Object.assign({}, base, { pSide: side }), () => this.predLineRows().map((r) => ({
             key: `${sec.m}:${side}:${r.key}`, pin: r.pin, name: r.name, g: r.g, p: r.p, sub: r.sub,
+            leg: this.withPred({ pSide: side }, () => this.legOfLine(r, sec.m)),
             label: sec.m === "ml" ? "to win" : this.withPred({ pSide: side }, () => this.sideWord(r.line, (this.LINE_MKS[sec.m] || {}).unit)),
             result: r.result,
           })));
@@ -1419,7 +1452,7 @@
             <button class="ph-link" data-act="pGo" data-arg="${esc(`${sec.m}|${sec.line == null ? "" : sec.line}|${sec.side === "under" ? "under" : "over"}`)}">See all ›</button></div>
           ${sec.rows.map((r, i) => `<div class="ph-top-row${r.lift ? " has-lift" : ""}">
             <span class="ph-mono ph-dim">${i + 1}</span>
-            ${r.pin ? this.pinBtnHtml(r.pin, "Watch") : "<span></span>"}
+            ${this.legBtnHtml(r.leg)}
             <span class="ph-top-who"><b class="ph-ellip">${esc(r.name || "—")}</b>
               <span class="ph-ellip ph-small"><span class="ph-mono ph-top-lbl">${esc(r.label)}</span> · ${this.numHtml(r.sub)}${this.parkBadgeHtml(sec.m === "hr" ? r.g : null)}</span></span>
             ${this.probPairHtml(r.p)}
@@ -1453,12 +1486,14 @@
         const tt = this.gameLineRows(g, "tt", null);
         return { ml, rlFav, rlDog, tot, tt };
       });
-      const cell = (label, p, extra) => `<div class="ph-gl-cell"><span class="ph-meta-k">${esc(label)}</span>${this.probPairHtml(p)}${extra ? `<span class="ph-small ph-mut">${esc(extra)}</span>` : ""}</div>`;
-      const mlHtml = lines.ml.map((r) => cell(r.name, r.pOver)).join("");
-      const rlHtml = lines.rlFav.concat(lines.rlDog).map((r) => cell(r.name, r.pOver)).join("");
+      const cell = (label, p, extra, leg) => `<div class="ph-gl-cell"><span class="ph-meta-k">${leg ? this.legBtnHtml(leg) : ""}${esc(label)}</span>${this.probPairHtml(p)}${extra ? `<span class="ph-small ph-mut">${esc(extra)}</span>` : ""}</div>`;
+      const legAt = (r, m, side) => this.withPred({ pSide: side }, () => Object.assign(this.legOfLine(Object.assign({}, r, { p: r.noSide ? r.pOver : side === "under" ? 1 - r.pOver : r.pOver }), m), { date: slateDate() }));
+      const mlHtml = lines.ml.map((r) => cell(r.name, r.pOver, null, legAt(r, "ml", "over"))).join("");
+      const rlHtml = lines.rlFav.map((r) => cell(r.name, r.pOver, null, legAt(r, "rl", "over")))
+        .concat(lines.rlDog.map((r) => cell(r.name, r.pOver, null, legAt(r, "rl", "under")))).join("");
       const t = lines.tot[0];
-      const totHtml = t ? `${cell(`Over ${t.line}`, t.pOver, `${t.proj.toFixed(1)} runs projected`)}${cell(`Under ${t.line}`, 1 - t.pOver)}` : "";
-      const ttHtml = lines.tt.map((r) => cell(`${r.team} o${r.line}`, r.pOver, `${r.proj.toFixed(1)} projected`)).join("");
+      const totHtml = t ? `${cell(`Over ${t.line}`, t.pOver, `${t.proj.toFixed(1)} runs projected`, legAt(t, "tot", "over"))}${cell(`Under ${t.line}`, 1 - t.pOver, null, legAt(t, "tot", "under"))}` : "";
+      const ttHtml = lines.tt.map((r) => cell(`${r.team} o${r.line}`, r.pOver, `${r.proj.toFixed(1)} projected`, legAt(r, "tt", "over"))).join("");
       const noRuns = !g.runs ? `<div class="ph-note">${esc(COPY.runsNoneBody)}</div>` : "";
       const pregameNote = g.phase !== "pregame" ? `<div class="ph-note">${esc(COPY.gameFrozenNote)}</div>` : "";
       const ladders = t ? `<details class="ph-gl-more"><summary>Every total and team-total line</summary>
@@ -1492,6 +1527,208 @@
           <button class="ph-link" data-act="pGo" data-arg="pk||over">Rank every starter's Ks ›</button></div>${this.pillStartersTableHtml(g)}</div>
         ${bat("away")}${bat("home")}`;
     }
+    // ── My card (Phase 3) ────────────────────────────────────────────────
+    // A leg is one read at one line from one side, saved with the
+    // probability the model gave it at the time:
+    //   { id, date, market, api, playerId, gamePk, rowKey, name, label, line,
+    //     side, p, version, savedAt }
+    // Unlike ★ (which watches a player or game for live alerts and lapses
+    // with its slate), legs never expire: they grade from the same rows the
+    // board reads and build a record of what the reader actually picked.
+    // Stored on this device only (localStorage).
+    CARD_KEY = "ph-card";
+    loadCard() {
+      try {
+        const v = JSON.parse(window.localStorage.getItem(this.CARD_KEY) || "[]");
+        return Array.isArray(v) ? v.filter((l) => l && l.id && l.date && l.market) : [];
+      } catch (_e) { return []; }
+    }
+    saveCard(legs) {
+      this.state.card = legs;
+      try { window.localStorage.setItem(this.CARD_KEY, JSON.stringify(legs)); } catch (_e) { /* session only */ }
+    }
+    legId(l) { return [l.date, l.market, l.playerId || l.rowKey || l.gamePk, l.line == null ? "" : l.line, l.side || ""].join("|"); }
+    hasLeg(id) { return (this.state.card || []).some((l) => l.id === id); }
+    // Buttons carry a registry key rather than the leg itself: a leg is a
+    // dozen fields and data-arg is an attribute.
+    legBtnHtml(leg) {
+      leg.id = this.legId(leg);
+      (this._legReg || (this._legReg = {}))[leg.id] = leg;
+      const on = this.hasLeg(leg.id);
+      return `<button class="ph-leg${on ? " is-on" : ""}" data-act="legToggle" data-arg="${esc(leg.id)}" title="${on ? "Remove from my card" : "Add to my card"}" aria-pressed="${on}">${on ? "✓" : "+"}</button>`;
+    }
+    toggleLeg(id) {
+      const legs = (this.state.card || []).slice();
+      const i = legs.findIndex((l) => l.id === id);
+      if (i >= 0) legs.splice(i, 1);
+      else {
+        const leg = this._legReg && this._legReg[id];
+        if (!leg) return;
+        legs.push(Object.assign({}, leg, { savedAt: new Date().toISOString() }));
+      }
+      this.saveCard(legs);
+      this.render();
+    }
+    // Legs from a row of the line table, a 1+ row, a Top read or a game line.
+    legOfLine(r, m) {
+      const mk = this.LINE_MKS[m] || {};
+      return {
+        date: this.predPast() || slateDate(), market: m, api: mk.api || m, playerId: r.playerId || null,
+        gamePk: String(r.g.gamePk), rowKey: r.key, name: r.name,
+        label: m === "ml" ? "to win" : m === "rl" ? r.name.split(" ").pop() : this.sideWord(r.line, mk.unit),
+        line: r.line, side: r.noSide ? (m === "rl" ? this.state.pSide : "") : this.state.pSide, p: r.p != null ? r.p : r.pOver,
+        version: r.version || null, matchup: `${r.g.away} @ ${r.g.home}`,
+      };
+    }
+    legOfBatter(b, g, m, p) {
+      const rec = b[m];
+      return {
+        date: this.predPast() || slateDate(), market: m, api: rec ? rec.market : m, playerId: b.id, gamePk: String(b.pk),
+        rowKey: null, name: b.name, label: m === "hr" ? "1+ HR" : m === "hrr" ? "1+ H+R+RBI" : "1+ Hit",
+        line: 0.5, side: "over", p, version: rec ? rec.model_version : null, matchup: `${g.away} @ ${g.home}`,
+      };
+    }
+
+    // Rows and games for a leg's date: the live slate for today, a cached
+    // fetch for any other day.
+    cardDay(date) {
+      if (date === slateDate()) return { rows: this.state.proj.rows, games: PH.games || [], ok: this.state.proj.rows !== null };
+      const c = (this.state.cardDays || {})[date];
+      if (!c) { this.loadCardDay(date); return { rows: null, games: [], ok: false }; }
+      return c;
+    }
+    async loadCardDay(date) {
+      const pend = this._cardPend || (this._cardPend = {});
+      if (pend[date]) return;
+      pend[date] = true;
+      const reqs = this.BATTER_MARKETS.map((m) => `/projections?date=${date}&market=${m}`).concat([`/projections?date=${date}&role=pitcher`]);
+      const [board, ...res] = await Promise.all([PH.loadBoard(API_BASE, null, date).catch(() => null), ...reqs.map((u) => fetchJson(u))]);
+      const games = board ? [].concat(board.live || [], board.upcoming || [], board.final || []) : [];
+      this.state.cardDays = Object.assign({}, this.state.cardDays, {
+        [date]: { rows: [].concat(...res.map((r) => (r && r.rows) || [])), games, ok: true },
+      });
+      this.render();
+    }
+    // Where a leg stands now: its current probability (today only), and its
+    // grade once the game is final.
+    legStatus(l) {
+      const d = this.cardDay(l.date);
+      const g = (d.games || []).find((x) => String(x.gamePk) === String(l.gamePk)) || null;
+      let pNow = null, result = null;
+      if (l.playerId) {
+        const rec = (d.rows || []).find((r) => String(r.player_id) === String(l.playerId) && r.market === l.api);
+        if (rec) {
+          const po = this.lineP(rec, l.line);
+          pNow = po == null ? null : l.side === "under" ? 1 - po : po;
+          result = this.withPred({ pSide: l.side || "over" }, () => this.lineResult(rec, l.line));
+        }
+      } else if (g) {
+        const rows = this.withPred({ pSide: l.side || "over" }, () => this.gameLineRows(g, l.market, l.line));
+        const r = rows.find((x) => x.key === l.rowKey);
+        // Run line and moneyline rows already are their side; totals are over/under.
+        if (r) { pNow = r.noSide ? r.pOver : (l.side === "under" ? 1 - r.pOver : r.pOver); result = r.result; }
+      }
+      return { g, pNow, result: result === undefined ? null : result, loaded: d.ok };
+    }
+    cardHtml() {
+      const legs = (this.state.card || []).slice().sort((a, z) => (a.date < z.date ? 1 : a.date > z.date ? -1 : 0));
+      const shared = this.state.cardShare;
+      const head = `<div class="ph-titlerow"><h1 class="ph-h1">${esc(COPY.cardTitle)}</h1>
+          <span class="ph-strip-sub">${esc(COPY.cardSub)}</span>
+          <span class="ph-titlerow-right">
+            ${legs.length ? `<button class="ph-link" data-act="cardExport">Export CSV</button><button class="ph-link" data-act="cardShare">Copy share link</button>` : ""}
+          </span></div>`;
+      const sharedHtml = shared && shared.length ? `<div class="ph-card ph-gp-sec"><div class="ph-strip-head"><span class="ph-table-title">${esc(COPY.cardSharedTitle)}</span>
+          <button class="ph-chip is-on" data-act="cardImport">Add all ${shared.length} to my card</button>
+          <button class="ph-link" data-act="cardShareX">Dismiss</button></div>
+          ${shared.map((l) => `<div class="ph-cleg"><b>${esc(l.name)}</b><span class="ph-mono">${esc(l.label)}</span><span class="ph-mut ph-small">${esc(l.matchup || "")} · ${esc(l.date)}</span>${this.probPairHtml(l.p)}</div>`).join("")}
+        </div>` : "";
+      if (!legs.length) {
+        return `${head}${sharedHtml}<div class="ph-empty ph-empty--dash"><b>${esc(COPY.cardEmptyTitle)}</b><span>${esc(COPY.cardEmptyBody)}</span>
+          <button class="ph-chip is-on" data-act="view" data-arg="pred">Go to Predictions</button></div>`;
+      }
+      const st = legs.map((l) => ({ l, s: this.legStatus(l) }));
+      // The record: every graded leg, hit rate against the average probability
+      // the model gave those legs when they were saved.
+      const graded = st.filter((x) => x.s.result === "hit" || x.s.result === "miss");
+      const hits = graded.filter((x) => x.s.result === "hit").length;
+      const expP = graded.length ? graded.reduce((a, x) => a + Number(x.l.p || 0), 0) / graded.length : null;
+      const brier = graded.length ? graded.reduce((a, x) => a + (Number(x.l.p || 0) - (x.s.result === "hit" ? 1 : 0)) ** 2, 0) / graded.length : null;
+      const open = st.filter((x) => x.s.result == null && x.l.date >= slateDate());
+      const kpi = (k, v, sub) => `<div class="ph-kpi"><span class="ph-kpi-k">${k}</span><b class="ph-mono ph-kpi-v">${v}</b><span class="ph-kpi-sub">${sub}</span></div>`;
+      const kpis = `<div class="ph-kpis ph-kpis--4">
+          ${kpi("LEGS SAVED", legs.length, `${open.length} still open`)}
+          ${kpi("GRADED", graded.length, `${st.filter((x) => x.s.result === "void").length} void (DNP / push)`)}
+          ${kpi("LANDED", graded.length ? this.pct1(hits / graded.length) : "—", graded.length ? this.numHtml(`${hits}-${graded.length - hits} · model said ${this.pct1(expP)}`) : "nothing graded yet")}
+          ${kpi("BRIER", brier == null ? "—" : brier.toFixed(3), "lower is better · 0.25 is a coin flip")}
+        </div>`;
+      // The combined probability of today's open legs, treated as independent.
+      // Legs in the same game are not, so the product is flagged rather than
+      // presented as exact.
+      let combo = "";
+      if (open.length >= 2) {
+        const pr = open.reduce((a, x) => a * Number(x.s.pNow != null ? x.s.pNow : x.l.p), 1);
+        const games = open.map((x) => x.l.gamePk);
+        const sameGame = games.length !== new Set(games).size;
+        combo = `<div class="ph-card ph-gp-sec ph-combo">
+          <div class="ph-strip-head"><span class="ph-table-title">${open.length}-leg combined</span>
+            <span class="ph-strip-sub">product of each leg's current probability</span></div>
+          <div class="ph-combo-v">${this.probPairHtml(pr)}</div>
+          ${sameGame ? `<div class="ph-note ph-note--warn" role="note">${esc(COPY.cardCorrelated)}</div>` : ""}
+        </div>`;
+      }
+      const byDate = {};
+      st.forEach((x) => { (byDate[x.l.date] = byDate[x.l.date] || []).push(x); });
+      const dayLbl = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+      const days = Object.keys(byDate).sort().reverse().map((d) => {
+        const xs = byDate[d];
+        const gH = xs.filter((x) => x.s.result === "hit").length, gN = xs.filter((x) => x.s.result === "hit" || x.s.result === "miss").length;
+        return `<section class="ph-gp-sec">
+          <div class="ph-strip-head"><span class="ph-table-title">${esc(d === slateDate() ? `Today · ${dayLbl(d)}` : dayLbl(d))}</span>
+            <span class="ph-strip-sub ph-mono">${gN ? `${gH}-${gN - gH}` : ""}</span></div>
+          ${xs.map(({ l, s }) => `<div class="ph-cleg">
+            <button class="ph-leg is-on" data-act="legRemove" data-arg="${esc(l.id)}" title="Remove from my card">✕</button>
+            <span class="ph-cleg-who"><b class="ph-ellip">${esc(l.name || "—")}</b><span class="ph-small ph-mut ph-ellip">${esc(l.matchup || "")}</span></span>
+            <span class="ph-mono">${esc(l.label)}</span>
+            <span class="ph-stack"><span class="ph-kicker ph-kicker--mut">SAVED</span>${this.probPairHtml(l.p)}</span>
+            <span class="ph-stack"><span class="ph-kicker ph-kicker--mut">NOW</span>${s.result == null && s.pNow != null ? this.probPairHtml(s.pNow) : `<span class="ph-missing-dash">—</span>`}</span>
+            ${s.result == null && !s.g && s.loaded ? `<span class="ph-missing-dash" title="Not found on that day's slate">—</span>` : this.resultChipHtml(s.result, s.g || { phase: l.date < slateDate() ? "final" : "pregame" })}
+            <button class="ph-chip ph-opengame" data-act="openGame" data-arg="${esc(String(l.gamePk))}">Game ›</button>
+          </div>`).join("")}
+        </section>`;
+      }).join("");
+      return `${head}${sharedHtml}${kpis}${combo}${days}
+        <p class="ph-caption">${esc(COPY.cardFoot)}</p>`;
+    }
+    cardCsv() {
+      const q = (v) => { const t = v == null ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+      const head = ["date", "selection", "matchup", "market", "line", "side", "saved_probability", "saved_fair_american", "model_version", "saved_at", "result"];
+      const rows = (this.state.card || []).map((l) => {
+        const s = this.legStatus(l);
+        return [l.date, l.name, l.matchup || "", l.api || l.market, l.line == null ? "" : l.line, l.side || "",
+          l.p == null ? "" : Number(l.p).toFixed(4), PH.fairAmerican(l.p) == null ? "" : PH.fairAmerican(l.p),
+          l.version || "", l.savedAt || "", s.result || ""];
+      });
+      return [head, ...rows].map((r) => r.map(q).join(",")).join("\n");
+    }
+    cardShareUrl() {
+      const legs = (this.state.card || []).filter((l) => l.date >= slateDate()).slice(0, 20)
+        .map((l) => [l.date, l.market, l.api, l.playerId, l.gamePk, l.rowKey, l.name, l.label, l.line, l.side, l.p, l.matchup]);
+      const enc = btoa(unescape(encodeURIComponent(JSON.stringify(legs)))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      return `${window.location.origin}${window.location.pathname}#/card?share=${enc}`;
+    }
+    decodeShare(s) {
+      try {
+        const b = s.replace(/-/g, "+").replace(/_/g, "/");
+        const arr = JSON.parse(decodeURIComponent(escape(atob(b + "===".slice((b.length + 3) % 4)))));
+        return arr.slice(0, 20).map(([date, market, api, playerId, gamePk, rowKey, name, label, line, side, p, matchup]) => {
+          const l = { date, market, api, playerId, gamePk, rowKey, name, label, line, side, p: Number(p), matchup };
+          l.id = this.legId(l);
+          return l;
+        }).filter((l) => /^\d{4}-\d{2}-\d{2}$/.test(String(l.date)) && l.market);
+      } catch (_e) { return null; }
+    }
+
     predTableTitle() {
       const s = this.state, m = s.pMarket, mk = this.LINE_MKS[m];
       if (m === "top") return "Top reads · every market";
@@ -1782,7 +2019,7 @@
           return this.mCardHtml({
             key: `pr:${m}:${b.key}`,
             head: `<span class="ph-mono ph-dim ph-mcard-slot">${i + 1}</span>
-              ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
+              ${this.legBtnHtml(this.legOfBatter(b, g, m, c.p))}
               <button class="ph-rowlink" data-act="mToggle" data-arg="pr:${m}:${esc(b.key)}" aria-expanded="${!!s.mOpen[`pr:${m}:${b.key}`]}">
                 <span class="ph-rowlink-top"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-mono">${esc(this.teamOf(b))} · #${b.slot || "—"}</span></span>
                 <span class="ph-ellip">${this.numHtml(`vs ${b.spName || "TBD"} · ${g.away} @ ${g.home} ${when(g)}`)}</span>
@@ -1817,7 +2054,7 @@
         const rec = b[m];
         return `<div class="ph-ptable-row ph-ptable-bat">
           <span class="ph-mono ph-dim">${i + 1}</span>
-          ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
+          <span class="ph-rowbtns">${this.legBtnHtml(this.legOfBatter(b, g, m, c.p))}${this.pinBtnHtml("b:" + b.id, "Watch this batter")}</span>
           <button class="ph-rowlink" data-act="pOpen" data-arg="b:${esc(b.key)}" aria-expanded="${!!s.pOpen[`b:${b.key}`]}">
             <span class="ph-rowlink-top"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-mono">${esc(this.teamOf(b))} · #${b.slot || "—"}</span></span>
             <span class="ph-ellip">${this.numHtml(`${this.handTxt(b)}vs ${b.spName || "TBD"}${b.spHand ? ` (${b.spHand})` : ""} · ${g.away} @ ${g.home} ${when(g)}`)}${this.parkBadgeHtml(g)}</span>
@@ -5271,6 +5508,7 @@
         else if (view === "pred") main = this.predHtml();
         else if (view === "live") main = this.liveHtml();
         else if (view === "game") main = this.gamePageHtml();
+        else if (view === "card") main = this.cardHtml();
         else main = this.dataHtml();
       } catch (e) {
         console.error(`[pitchhawk] ${view} view failed to render`, e);
