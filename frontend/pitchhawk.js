@@ -191,6 +191,8 @@
         // Clocks in the reader's own time zone instead of Eastern.
         tzLocal: (() => { try { return window.localStorage.getItem("ph-tz") === "local"; } catch (_e) { return false; } })(),
         // First-visit "how to read this" card on Home, until dismissed.
+        // Probability or the model's fair American price as the headline number.
+        oddsFmt: (() => { try { return window.localStorage.getItem("ph-odds-fmt") === "us" ? "us" : "pct"; } catch (_e) { return "pct"; } })(),
         hintSeen: (() => { try { return window.localStorage.getItem("ph-hint-seen") === "1"; } catch (_e) { return true; } })(),
         // Predictions filters (see PRED_DEFAULTS) and the trust tiles.
         ...this.PRED_DEFAULTS,
@@ -257,7 +259,7 @@
           if (pf.blur) pf.blur();
           return this.dSet({ [key]: pf.value || "" });
         }
-        const val = key === "pMin" ? Number(pf.value) : (pf.value || "");
+        const val = key === "pMin" || key === "pPmin" || key === "pPmax" ? Number(pf.value) : (pf.value || "");
         if (pf.blur) pf.blur();
         return this.setState({ [key]: val, pAll: false });
       }
@@ -289,6 +291,10 @@
         if (s.pConfOnly) q.set("lineup", "1");
         if (s.pMin > -10) q.set("min", String(s.pMin));
         if (s.pSort !== d.pSort || s.pDir !== d.pDir) q.set("sort", `${s.pSort}${s.pDir > 0 ? "+" : "-"}`);
+        if (s.pLine != null) q.set("line", String(s.pLine));
+        if (s.pSide !== d.pSide) q.set("side", s.pSide);
+        if (s.pPmin > 0) q.set("pmin", String(s.pPmin));
+        if (s.pPmax < 100) q.set("pmax", String(s.pPmax));
       }
       if (s.view === "data") {
         const d = this.D_DEFAULTS;
@@ -332,7 +338,13 @@
         patch.pConfOnly = q.get("lineup") === "1";
         const min = Number(q.get("min"));
         patch.pMin = q.has("min") && isFinite(min) ? Math.max(-10, Math.min(15, min)) : d.pMin;
-        const sort = /^(lift|prob|time|name)([+-])$/.exec(q.get("sort") || "");
+        const line = Number(q.get("line"));
+        patch.pLine = q.has("line") && isFinite(line) && Math.abs(line % 1) === 0.5 ? line : null;
+        patch.pSide = q.get("side") === "under" ? "under" : "over";
+        const pmin = Number(q.get("pmin")), pmax = Number(q.get("pmax"));
+        patch.pPmin = q.has("pmin") && isFinite(pmin) ? Math.max(0, Math.min(100, pmin)) : 0;
+        patch.pPmax = q.has("pmax") && isFinite(pmax) ? Math.max(0, Math.min(100, pmax)) : 100;
+        const sort = /^(lift|prob|proj|time|name)([+-])$/.exec(q.get("sort") || "");
         patch.pSort = sort ? sort[1] : d.pSort;
         patch.pDir = sort ? (sort[2] === "+" ? 1 : -1) : d.pDir;
       }
@@ -449,7 +461,20 @@
         case "dTeamTile": return this.dSet({ dTeam: this.state.dTeam === arg ? "" : arg });
         case "dMore": { this.loadGraded(true); return; }
         // ── Predictions ──
-        case "pMarket": return this.setState({ pMarket: arg, pAll: false });
+        case "pMarket": {
+          // A line belongs to a market: switching market drops it (and a
+          // lift sort, which only the 1+ tables have).
+          const lineMk = this.LINE_MKS[arg] && !this.isBatMk(arg) && arg !== "tot";
+          return this.setState({ pMarket: arg, pAll: false, pLine: null, pOpen: {},
+            pSort: lineMk && this.state.pSort === "lift" ? "prob" : this.state.pSort });
+        }
+        case "pLine": return this.setState({ pLine: arg === "" ? null : Number(arg), pAll: false });
+        case "pSide": return this.setState({ pSide: arg === "under" ? "under" : "over", pAll: false });
+        case "oddsFmt": {
+          const v = this.state.oddsFmt === "us" ? "pct" : "us";
+          try { window.localStorage.setItem("ph-odds-fmt", v); } catch (_e) { /* session only */ }
+          return this.setState({ oddsFmt: v });
+        }
         case "pDate": return this.setPredDate(arg || null);
         case "pStatus": return this.setState({ pStatus: arg, pAll: false });
         case "pConfOnly": return this.setState({ pConfOnly: !this.state.pConfOnly, pAll: false });
@@ -618,6 +643,7 @@
     MISSING = {
       notserved: "Not available yet", notmodeled: "Not modeled", needsroute: "Not available yet",
       fewpa: "Too few plate appearances in the last 30 days",
+      spform: "No 30-day Statcast profile for this starter yet (too few recent starts, or still loading)",
     };
     tagHtml(kind) {
       const label = this.MISSING[kind];
@@ -869,13 +895,17 @@
     // ── Predictions (phase 3) ────────────────────────────────────────────
     // Every probability on today's slate in one table, switchable by market.
     // Filters live in state (p*), never in the DOM, so they survive the poll.
-    PRED_MARKETS = [["hit", "1+ Hit"], ["hr", "1+ HR"], ["hrr", "1+ HRR"], ["wp", "Win prob"], ["tot", "Totals"], ["sp", "Starters"]];
+    // Every market key Predictions answers to (chips are grouped in PRED_GROUPS).
+    PRED_MARKETS = [["hit", "Hits"], ["hr", "Home runs"], ["tb", "Total bases"], ["hrr", "H+R+RBI"], ["bk", "Batter Ks"],
+      ["pk", "Ks"], ["po", "Outs"], ["ph", "Hits allowed"], ["per", "ER"], ["pbb", "Walks"], ["sp", "All starters"],
+      ["ml", "Moneyline"], ["rl", "Run line"], ["tot", "Total"], ["tt", "Team total"], ["wp", "Win prob"]];
     // The Predictions markets that rank batters (one row per batter-game).
     PRED_BATTER = ["hit", "hr", "hrr"];
     isBatMk(m) { return this.PRED_BATTER.includes(m); }
     // Column head for a batter market's probability.
     probHead(m) { return m === "hr" ? "P(1+ HR)" : m === "hrr" ? "P(1+ H+R+RBI)" : "P(1+ HIT)"; }
-    PRED_DEFAULTS = { pMarket: "hit", pTeams: [], pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false, pOpen: {} };
+    PRED_DEFAULTS = { pMarket: "hit", pTeams: [], pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false, pOpen: {},
+      pLine: null, pSide: "over", pPmin: 0, pPmax: 100 };
     PRED_PAGE = 25;
 
     // What the batter and starter tables are waiting on, if anything. These
@@ -903,7 +933,7 @@
       if (past && this.state.past.date !== past && this._pastLoading !== past) this.loadPast(past);
       const mk = this.state.pMarket;
       let table, count;
-      const projMk = this.isBatMk(mk) || mk === "sp";
+      const projMk = this.isBatMk(mk) || mk === "sp" || (this.LINE_MKS[mk] && this.LINE_MKS[mk].kind !== "game");
       const ps = projMk ? this.projStatus() : "ok";
       const gamesPending = !projMk && !this.todayGames().length && this.state.api.lastGood == null;
       if (ps !== "ok" || gamesPending) {
@@ -917,7 +947,11 @@
           ${this.trustTilesHtml()}
           <div class="ph-empty${err ? " ph-empty--err" : ""}" role="status">${esc(err ? COPY.predLoadError : COPY.predLoading)}</div>`;
       }
-      if (this.isBatMk(mk)) {
+      if (this.isLineView()) {
+        const rows = this.predLineRows();
+        count = rows.length;
+        table = count ? this.predLineTableHtml(rows) : this.predLineEmptyNote();
+      } else if (this.isBatMk(mk)) {
         const rows = this.predBatterRows();
         count = rows.length;
         table = count ? this.predBatterTableHtml(rows, mk) : "";
@@ -935,7 +969,8 @@
       // in-progress games to put first, so the pregame wording is the true one.
       const live = this.effectiveMode() === "live" && !this.predPast()
         && !["upcoming", "final"].includes(this.state.pStatus);
-      const sub = this.isBatMk(mk) ? (live ? COPY.predSubBatLive : COPY.predSubBatPre)
+      const sub = this.isLineView() ? COPY.predSubLine
+        : this.isBatMk(mk) ? (live ? COPY.predSubBatLive : COPY.predSubBatPre)
         : mk === "sp" ? COPY.predSubSp
           : live && mk === "wp" ? COPY.predSubWpLive : COPY.predSubGame;
       return `<div class="ph-titlerow">
@@ -947,10 +982,371 @@
         ${this.postseasonNoteHtml()}
         ${this.trustTilesHtml()}
         <div class="ph-strip-head">
-          <span class="ph-table-title">${esc(COPY.predTableTitle[mk])}</span>
+          <span class="ph-table-title">${esc(this.predTableTitle())}</span>
           <span class="ph-strip-sub">${esc(sub)}</span>
         </div>
-        ${count ? table : this.predEmptyHtml()}`;
+        ${count ? table : (this.isLineView() && table) || this.predEmptyHtml()}`;
+    }
+
+    // ── markets at a line (Phase 1) ──────────────────────────────────────
+    // Every market a bettor plays, at the line they play it, from either
+    // side. Batter and starter rows read the projection's `ladder` (P(over)
+    // at each half-point, from the model's own count distribution); game
+    // rows derive run line, alt totals and team totals from the v3 team-run
+    // means (PH.runDists). All of it is the model's probability -- no
+    // sportsbook price anywhere.
+    LINE_MKS = {
+      hit: { kind: "bat", api: "batter_hit", key: "hit", label: "Hits", unit: "H", def: 0.5 },
+      hr: { kind: "bat", api: "batter_hr", key: "hr", label: "Home runs", unit: "HR", def: 0.5 },
+      tb: { kind: "bat", api: "batter_tb15", key: "tb15", label: "Total bases", unit: "TB", def: 1.5 },
+      hrr: { kind: "bat", api: "batter_hrr", key: "hrr", label: "H+R+RBI", unit: "H+R+RBI", def: 0.5 },
+      bk: { kind: "bat", api: "batter_k", key: "bk", label: "Batter strikeouts", unit: "K", def: 0.5 },
+      pk: { kind: "sp", api: "pitcher_k", label: "Strikeouts", unit: "K", def: null },
+      po: { kind: "sp", api: "pitcher_outs", label: "Outs recorded", unit: "outs", def: null },
+      ph: { kind: "sp", api: "pitcher_hits", label: "Hits allowed", unit: "H", def: null },
+      per: { kind: "sp", api: "pitcher_er", label: "Earned runs", unit: "ER", def: null },
+      pbb: { kind: "sp", api: "pitcher_bb", label: "Walks", unit: "BB", def: null },
+      ml: { kind: "game", label: "Moneyline", unit: "", def: null, noLine: true, noSide: true },
+      rl: { kind: "game", label: "Run line", unit: "runs", def: 1.5, lines: [1.5, 2.5, 3.5] },
+      tot: { kind: "game", label: "Total runs", unit: "runs", def: null, lines: [5.5, 6.5, 7.5, 8.5, 9.5, 10.5, 11.5, 12.5] },
+      tt: { kind: "game", label: "Team total", unit: "runs", def: null, lines: [1.5, 2.5, 3.5, 4.5, 5.5, 6.5] },
+    };
+    // The chips, grouped the way a bettor scans a menu. "Win prob" (live
+    // swing board) and "All starters" (every prop + form per starter) keep
+    // their dedicated tables.
+    PRED_GROUPS = [
+      ["Batters", [["hit", "Hits"], ["hr", "Home runs"], ["tb", "Total bases"], ["hrr", "H+R+RBI"], ["bk", "Batter Ks"]]],
+      ["Pitchers", [["pk", "Ks"], ["po", "Outs"], ["ph", "Hits allowed"], ["per", "ER"], ["pbb", "Walks"], ["sp", "All starters"]]],
+      ["Games", [["ml", "Moneyline"], ["rl", "Run line"], ["tot", "Total"], ["tt", "Team total"], ["wp", "Win prob"]]],
+    ];
+    // The legacy 1+ tables (league-rate tick, lift, rest-of-game) still own
+    // their market at its published line, over side; anything else is a line
+    // view.
+    isLineView(m) {
+      const s = this.state, mk = this.LINE_MKS[m || s.pMarket];
+      if (!mk) return false;
+      const mm = m || s.pMarket;
+      if (this.isBatMk(mm) || mm === "tot") return (s.pLine != null && s.pLine !== mk.def) || s.pSide === "under";
+      return true;
+    }
+    curLine() { const mk = this.LINE_MKS[this.state.pMarket]; return this.state.pLine != null ? this.state.pLine : (mk ? mk.def : null); }
+    // P(over `line`) off a projection row: the ladder rung, the published
+    // read when the line is the published one, ~0 beyond the ladder's last
+    // rung (the ladder stops once P(over) < 0.5%), null when unknown.
+    lineP(rec, line) {
+      if (!rec) return null;
+      const pub = rec.line != null ? Number(rec.line) : 0.5;
+      const L = line == null ? pub : line;
+      const lad = Array.isArray(rec.ladder) ? rec.ladder : null;
+      if (lad && lad.length) {
+        const r = lad.find((x) => Number(x.line) === L);
+        if (r) return Number(r.p_over);
+        if (L > Number(lad[lad.length - 1].line)) return 0;
+        if (L < Number(lad[0].line)) return 1;
+      }
+      if (L === pub && rec.probability != null) return Number(rec.probability);
+      return null;
+    }
+    sideP(pOver) { return pOver == null ? null : this.state.pSide === "under" ? 1 - pOver : pOver; }
+    sideWord(line, unit) { return `${this.state.pSide === "under" ? "U" : "O"} ${line}${unit ? ` ${unit}` : ""}`; }
+    // Graded off actual_count, so any line grades -- not just the published one.
+    lineResult(rec, line) {
+      if (!rec || rec.result == null) return rec && rec.result === undefined ? undefined : null;
+      if (rec.result === "void") return "void";
+      if (rec.actual_count == null) return null;
+      const over = Number(rec.actual_count) > line;
+      return (this.state.pSide === "under" ? !over : over) ? "hit" : "miss";
+    }
+    fairOdds(p) {
+      const a = PH.fairAmerican ? PH.fairAmerican(p) : null;
+      return a == null ? "—" : a > 0 ? `+${a}` : `${a}`;
+    }
+    // The headline number in the reader's chosen format, the other beneath.
+    probPairHtml(p) {
+      if (p == null) return `<span class="ph-missing-dash">—</span>`;
+      const pct = p < 0.005 ? "<1%" : p > 0.995 ? ">99%" : this.pct(p);
+      const us = this.fairOdds(p);
+      const [main, sub] = this.state.oddsFmt === "us" ? [us, pct] : [pct, `fair ${us}`];
+      return `<span class="ph-stack"><b class="ph-mono ph-lp-main">${esc(main)}</b><span class="ph-mono ph-small ph-mut">${esc(sub)}</span></span>`;
+    }
+    probBarHtml(p) {
+      const w = p == null ? 0 : Math.max(0, Math.min(100, p * 100));
+      return `<span class="ph-lp-bar" aria-hidden="true"><span style="width:${w.toFixed(1)}%"></span></span>`;
+    }
+    pBandOk(p) {
+      const s = this.state;
+      if (p == null) return s.pPmin <= 0 && s.pPmax >= 100;
+      return p * 100 >= s.pPmin - 1e-9 && p * 100 <= s.pPmax + 1e-9;
+    }
+    predLineRows() {
+      const s = this.state, m = s.pMarket, mk = this.LINE_MKS[m];
+      if (!mk) return [];
+      const L0 = this.curLine();
+      let rows = [];
+      if (mk.kind === "bat") {
+        (this.batters() || []).forEach((b) => {
+          const g = this.gameByPk(b.pk), rec = b[mk.key];
+          if (!g || !rec || !this.predStatusOk(g) || !this.predTeamOk(this.teamOf(b)) || (s.pConfOnly && !b.slot)) return;
+          const line = L0 == null ? (rec.line != null ? Number(rec.line) : 0.5) : L0;
+          const pOver = this.lineP(rec, line);
+          if (pOver == null) return;
+          rows.push({ key: `b:${b.key}`, pin: `b:${b.id}`, name: b.name, team: this.teamOf(b), g, line, pOver,
+            sub: `${this.teamOf(b)} · #${b.slot || "—"} · vs ${b.spName || "TBD"}`,
+            proj: rec.expected_value != null ? Number(rec.expected_value) : null, rec, ladder: rec.ladder, playerId: b.id,
+            version: rec.model_version, updatedAt: rec.updated_at, result: this.lineResult(rec, line) });
+        });
+      } else if (mk.kind === "sp") {
+        (this.projRows() || []).forEach((r) => {
+          if (r.role !== "pitcher" || r.market !== mk.api) return;
+          const g = this.gameByPk(r.game_pk);
+          if (!g || !this.predStatusOk(g)) return;
+          const team = r.is_home ? g.home : g.away, opp = r.is_home ? g.away : g.home;
+          if (!this.predTeamOk(team)) return;
+          const line = L0 == null ? Number(r.line) : L0;
+          const pOver = this.lineP(r, line);
+          if (pOver == null) return;
+          rows.push({ key: `p:${r.game_pk}:${r.player_id}`, pin: null, name: r.player, team, g, line, pOver,
+            sub: `${team} vs ${opp} · model line ${r.line}`, proj: r.expected_value != null ? Number(r.expected_value) : null,
+            rec: r, ladder: r.ladder, playerId: String(r.player_id), version: r.model_version, updatedAt: r.updated_at,
+            result: this.lineResult(r, line) });
+        });
+      } else {
+        this.todayGames().filter((g) => this.predStatusOk(g) && this.predTeamOk(g.away, g.home)).forEach((g) => {
+          rows.push(...this.gameLineRows(g, m, L0));
+        });
+      }
+      rows.forEach((r) => { r.p = r.noSide ? r.pOver : this.sideP(r.pOver); });
+      rows = rows.filter((r) => this.pBandOk(r.p));
+      const key = {
+        prob: (r) => (r.p == null ? -1 : r.p), lift: (r) => (r.p == null ? -1 : r.p),
+        proj: (r) => (r.proj == null ? -1 : r.proj), time: (r) => Date.parse(r.g.startTs || 0) || 0,
+      }[s.pSort] || ((r) => r.p);
+      rows.sort((a, z) => s.pSort === "name"
+        ? String(a.name || "").localeCompare(String(z.name || "")) * s.pDir
+        : (key(a) - key(z)) * s.pDir);
+      return rows;
+    }
+    // Game rows for the derived markets. Reads freeze at first pitch, like
+    // every other pregame read, so live games show the call they opened with.
+    gameLineRows(g, m, L0) {
+      const out = [];
+      const fin = g.phase === "final", a = Number(g.score && g.score.away), h = Number(g.score && g.score.home);
+      const graded = fin && isFinite(a) && isFinite(h);
+      const res = (won) => (graded ? (won ? "hit" : "miss") : g.phase === "live" ? null : null);
+      const base = { g, rec: null, version: g.mPre && g.mPre.game_total ? (g.mPre.game_total.model_version || g.modelVersion) : g.modelVersion };
+      if (m === "ml") {
+        const pw = this.gameWp(Object.assign({}, g, { phase: "pregame" }));
+        if (pw.prob == null) return out;
+        const pH = pw.team === g.home ? pw.prob : 1 - pw.prob;
+        [[g.home, g.away, pH, "home"], [g.away, g.home, 1 - pH, "away"]].forEach(([t, o, p, side]) => {
+          out.push(Object.assign({}, base, { key: `g:${g.gamePk}:${side}`, pin: `g:${g.gamePk}`, name: `${t} to win`, team: t,
+            sub: `${g.away} @ ${g.home} · vs ${o}`, line: null, pOver: p, noSide: true, proj: null,
+            result: graded && a !== h ? res((side === "home") === (h > a)) : null }));
+        });
+        return out;
+      }
+      const d = PH.runDists ? PH.runDists(g.runs) : null;
+      if (!d) return out;
+      const ladderOf = (pmf, lines) => lines.map((l) => ({ line: l, p_over: PH.overProb(pmf, l) }));
+      if (m === "rl") {
+        const L = L0 == null ? 1.5 : L0;
+        [["home", g.home, g.away], ["away", g.away, g.home]].forEach(([side, t, o]) => {
+          const other = side === "home" ? "away" : "home";
+          const fav = d.marginOver(side, L), dog = 1 - d.marginOver(other, L);
+          const under = this.state.pSide === "under";
+          const margin = side === "home" ? h - a : a - h;
+          // The run line is a side bet, not over/under: each row already is
+          // the side (favourite −L or underdog +L), so its ladder is that
+          // side's cover probability at each run line and is never inverted.
+          const cover = (l) => (under ? 1 - d.marginOver(other, l) : d.marginOver(side, l));
+          out.push(Object.assign({}, base, { key: `g:${g.gamePk}:rl:${side}`, pin: `g:${g.gamePk}`,
+            name: `${t} ${under ? "+" : "−"}${L}`, team: t, sub: `${g.away} @ ${g.home} · vs ${o}`, line: L,
+            pOver: under ? dog : fav, noSide: true, sidePrefix: under ? "+" : "−",
+            proj: side === "home" ? d.muH - d.muA : d.muA - d.muH, projUnit: "margin",
+            ladder: this.LINE_MKS.rl.lines.map((l) => ({ line: l, p_over: cover(l) })),
+            result: graded ? res(under ? margin > -L : margin > L) : null }));
+        });
+        return out;
+      }
+      if (m === "tot") {
+        const pre = g.mPre && g.mPre.game_total;
+        const L = L0 == null ? (pre && pre.line != null ? Number(pre.line) : Math.floor(d.muH + d.muA) + 0.5) : L0;
+        out.push(Object.assign({}, base, { key: `g:${g.gamePk}:tot`, pin: `g:${g.gamePk}`, name: `${g.away} @ ${g.home}`,
+          team: g.home, sub: `${g.venue || ""}${g.phase === "live" ? " · pregame call" : ""}`, line: L, pOver: PH.overProb(d.total, L),
+          proj: d.muH + d.muA, ladder: ladderOf(d.total, this.LINE_MKS.tot.lines),
+          result: graded && a + h !== L ? res(this.state.pSide === "under" ? a + h < L : a + h > L) : null }));
+        return out;
+      }
+      if (m === "tt") {
+        [["home", g.home, g.away, d.home, d.muH, h], ["away", g.away, g.home, d.away, d.muA, a]].forEach(([side, t, o, pmf, mu, runs]) => {
+          const L = L0 == null ? Math.floor(mu) + 0.5 : L0;
+          out.push(Object.assign({}, base, { key: `g:${g.gamePk}:tt:${side}`, pin: `g:${g.gamePk}`, name: `${t} team total`,
+            team: t, sub: `${g.away} @ ${g.home} · vs ${o}`, line: L, pOver: PH.overProb(pmf, L), proj: mu,
+            ladder: ladderOf(pmf, this.LINE_MKS.tt.lines),
+            result: graded ? res(this.state.pSide === "under" ? runs < L : runs > L) : null }));
+        });
+      }
+      return out;
+    }
+    // Lines worth offering for the current market: every rung where some row
+    // is between 3% and 97%, so a stepper never lands on a wall of 100%s.
+    lineOptions() {
+      const m = this.state.pMarket, mk = this.LINE_MKS[m];
+      if (!mk || mk.noLine) return [];
+      if (mk.lines) return mk.lines;
+      const seen = new Set();
+      const recs = mk.kind === "bat"
+        ? (this.batters() || []).map((b) => b[mk.key]).filter(Boolean)
+        : (this.projRows() || []).filter((r) => r.role === "pitcher" && r.market === mk.api);
+      recs.forEach((r) => {
+        (Array.isArray(r.ladder) ? r.ladder : [{ line: r.line != null ? r.line : 0.5, p_over: r.probability }])
+          .forEach((x) => { const p = Number(x.p_over); if (p >= 0.03 && p <= 0.97) seen.add(Number(x.line)); });
+      });
+      if (mk.def != null) seen.add(mk.def);
+      return [...seen].sort((a, z) => a - z).slice(0, 12);
+    }
+    lineHead() {
+      const m = this.state.pMarket, mk = this.LINE_MKS[m], L = this.curLine();
+      if (m === "ml") return "P(WIN)";
+      if (m === "rl") return `P(${this.state.pSide === "under" ? "+" : "−"}${L})`;
+      return L == null ? `P(${this.state.pSide === "under" ? "UNDER" : "OVER"} MODEL LINE)` : `P(${this.sideWord(L, mk.unit).toUpperCase()})`;
+    }
+    ladderMiniHtml(r) {
+      if (!r.ladder || !r.ladder.length) return `<span class="ph-missing-dash">—</span>`;
+      const under = !r.noSide && this.state.pSide === "under";
+      const pre = r.sidePrefix || (under ? "U" : "O");
+      const i = Math.max(0, r.ladder.findIndex((x) => Number(x.line) === r.line));
+      const pick = r.ladder.slice(Math.max(0, i - 1), i + 2);
+      return `<span class="ph-lmini">${pick.map((x) => {
+        const p = under ? 1 - Number(x.p_over) : Number(x.p_over);
+        return `<span class="ph-mono${Number(x.line) === r.line ? " is-on" : ""}">${pre} ${x.line} <b>${p < 0.005 ? "<1%" : this.pct(p)}</b></span>`;
+      }).join("")}</span>`;
+    }
+    ladderTableHtml(r, unit) {
+      if (!r.ladder || !r.ladder.length) return `<span class="ph-note">${esc(COPY.ladderNone)}</span>`;
+      const rows = r.ladder.map((x) => {
+        const po = Number(x.p_over), pu = 1 - po;
+        return `<div class="ph-ladder-row${Number(x.line) === r.line ? " is-on" : ""}">
+          <span class="ph-mono">${r.sidePrefix || ""}${x.line}${unit ? ` ${esc(unit)}` : ""}</span>
+          <span class="ph-ladder-cell">${this.probBarHtml(po)}<span class="ph-mono">${po < 0.005 ? "<1%" : this.pct(po)}</span><span class="ph-mono ph-mut">${this.fairOdds(po)}</span></span>
+          <span class="ph-ladder-cell">${this.probBarHtml(pu)}<span class="ph-mono">${pu > 0.995 ? ">99%" : this.pct(pu)}</span><span class="ph-mono ph-mut">${this.fairOdds(pu)}</span></span>
+        </div>`;
+      }).join("");
+      const [h1, h2] = r.sidePrefix ? ["COVERS · fair", "DOESN'T · fair"] : ["OVER · fair", "UNDER · fair"];
+      return `<div class="ph-ladder" role="table" aria-label="Every line">
+        <div class="ph-ladder-row ph-ladder-head"><span>LINE</span><span>${h1}</span><span>${h2}</span></div>${rows}</div>`;
+    }
+    projTxt(r, unit) {
+      if (r.proj == null) return "—";
+      if (r.projUnit === "margin") return `${r.proj >= 0 ? "+" : "−"}${Math.abs(r.proj).toFixed(1)} runs`;
+      return `${r.proj.toFixed(1)}${unit ? ` ${unit}` : ""}`;
+    }
+    predLineTableHtml(all) {
+      const s = this.state, m = s.pMarket, mk = this.LINE_MKS[m];
+      const rows = s.pAll ? all : all.slice(0, this.PRED_PAGE);
+      const more = all.length > this.PRED_PAGE
+        ? `<button class="ph-more" data-act="pAll">${s.pAll ? "Show top 25" : `Show all <span class="ph-mono">${all.length}</span> ▾`}</button>` : "";
+      const when = (g) => g.phase === "pregame" ? this.clockOf(g.startTs) || "TBD" : g.phase === "live" ? `${g.half}${g.inning == null ? "" : g.inning}` : "F";
+      const ph = (g) => g.phase === "live" ? ["pre", "PREGAME · GAME LIVE"] : g.phase === "final" ? ["final", "FINAL"] : ["pre", "PREGAME"];
+      const lineTxt = (r) => r.line == null ? "—" : m === "rl" ? r.name.split(" ").pop() : this.sideWord(r.line, "");
+      const detail = (r) => this.predDetailWrap(`
+        <span class="ph-meta ph-pdetail-wide"><span class="ph-meta-k">EVERY LINE · MODEL PROBABILITY · FAIR = BREAK-EVEN PRICE</span>${this.ladderTableHtml(r, mk.unit)}</span>
+        ${this.mPairHtml("PROJECTION", `<b class="ph-mono">${esc(this.projTxt(r, mk.unit))}</b>`)}
+        ${this.mPairHtml("MODEL", `<span class="ph-mono ph-small">${esc(r.version || "—")}</span>`)}
+        ${this.mPairHtml("GAME", `<span class="ph-meta-v">${this.numHtml(`${r.g.away} @ ${r.g.home} · ${r.g.venue || "—"} · ${this.clockOf(r.g.startTs) || "TBD"}`)}</span>`)}
+        <span class="ph-pdetail-act">${r.pin ? this.pinBtnHtml(r.pin, "Watch") : ""}${this.openGameBtnHtml(r.g.gamePk)}</span>`);
+      if (this.mob()) {
+        const cards = rows.map((r, i) => this.mCardHtml({
+          key: `pl:${m}:${r.key}`,
+          head: `<span class="ph-mono ph-dim ph-mcard-slot">${i + 1}</span>
+            ${r.pin ? this.pinBtnHtml(r.pin, "Watch") : ""}
+            <button class="ph-rowlink" data-act="mToggle" data-arg="pl:${m}:${esc(r.key)}" aria-expanded="${!!s.mOpen[`pl:${m}:${r.key}`]}">
+              <span class="ph-rowlink-top"><b class="ph-ellip">${esc(r.name || "—")}</b><span class="ph-mono">${esc(lineTxt(r))}</span></span>
+              <span class="ph-ellip">${this.numHtml(`${r.sub} · ${when(r.g)}`)}</span>
+            </button>
+            ${this.resultChipHtml(r.result, r.g)}`,
+          stats: `${this.mPairHtml(esc(this.lineHead()), this.probPairHtml(r.p))}
+            ${this.mPairHtml("PROJ", `<span class="ph-mono">${esc(this.projTxt(r, mk.unit))}</span>`)}
+            <span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">NEARBY LINES</span>${this.ladderMiniHtml(r)}</span>`,
+          more: `<span class="ph-meta ph-mcard-wide"><span class="ph-meta-k">EVERY LINE</span>${this.ladderTableHtml(r, mk.unit)}</span>
+            ${this.mPairHtml("MODEL", `<span class="ph-mono ph-small">${esc(r.version || "—")}</span>`)}
+            ${this.openGameBtnHtml(r.g.gamePk)}`,
+        })).join("");
+        const sorts = [["prob", "Prob"], ["proj", "Proj"], ["time", "Time"], ["name", "Name"]].map(([k, l]) => this.sortHeadHtml(k, l)).join("");
+        return `<div class="ph-msort"><span class="ph-kicker ph-kicker--mut">Sort</span>${sorts}</div><div class="ph-mlist">${cards}${more}</div>`;
+      }
+      const body = rows.map((r, i) => {
+        const [pk, pt] = ph(r.g);
+        const open = !!s.pOpen[`l:${r.key}`];
+        return `<div class="ph-ptable-row ph-ptable-line">
+          <span class="ph-mono ph-dim">${i + 1}</span>
+          ${r.pin ? this.pinBtnHtml(r.pin, "Watch") : "<span></span>"}
+          <button class="ph-rowlink" data-act="pOpen" data-arg="l:${esc(r.key)}" aria-expanded="${open}">
+            <span class="ph-rowlink-top"><b class="ph-ellip">${esc(r.name || "—")}</b></span>
+            <span class="ph-ellip">${this.numHtml(`${r.sub} · ${when(r.g)}`)}</span>
+          </button>
+          ${this.phaseChip(pk, pt)}
+          <span class="ph-mono ph-lp-line">${esc(lineTxt(r))}</span>
+          <span class="ph-lp">${this.probBarHtml(r.p)}${this.probPairHtml(r.p)}</span>
+          <span class="ph-mono">${esc(this.projTxt(r, mk.unit))}</span>
+          ${this.ladderMiniHtml(r)}
+          ${this.resultChipHtml(r.result, r.g)}
+        </div>${open ? detail(r) : ""}`;
+      }).join("");
+      return `<div class="ph-ptable">
+        <div class="ph-ptable-row ph-ptable-line ph-ptable-head">
+          <span>#</span><span></span>
+          ${this.sortHeadHtml("name", "SELECTION")}
+          ${this.sortHeadHtml("time", "PHASE")}
+          <span>LINE</span>
+          ${this.sortHeadHtml("prob", this.lineHead())}
+          ${this.sortHeadHtml("proj", "PROJECTION")}
+          <span>NEARBY LINES</span><span>RESULT</span>
+        </div>
+        ${body}${more}
+      </div>`;
+    }
+    // Phone chip rows scroll sideways; a selection made by link or by a chip
+    // further along must not sit off-screen. Only when the selection changes,
+    // so a reader's own sideways scroll survives the poll re-render.
+    revealActiveChips() {
+      const key = `${this.state.view}|${this.state.pMarket}|${this.state.pLine}|${this.state.pSide}`;
+      if (this._chipKey === key) return;
+      this._chipKey = key;
+      this.root.querySelectorAll(".ph-fscroll").forEach((row) => {
+        const on = row.querySelectorAll(".is-on");
+        const el = row.querySelector(".ph-linepick .is-on") || on[on.length - 1];
+        if (!el || row.scrollWidth <= row.clientWidth) return;
+        const left = el.offsetLeft - row.offsetLeft, right = left + el.offsetWidth;
+        if (left < row.scrollLeft || right > row.scrollLeft + row.clientWidth) row.scrollLeft = Math.max(0, left - 24);
+      });
+    }
+    predTableTitle() {
+      const s = this.state, m = s.pMarket, mk = this.LINE_MKS[m];
+      if (!this.isLineView()) return COPY.predTableTitle[m] || (mk ? mk.label : "");
+      const L = this.curLine();
+      if (m === "ml") return "Moneyline · both sides · pregame call";
+      if (m === "rl") return `Run line ${s.pSide === "under" ? "+" : "−"}${L} · every team`;
+      const who = mk.kind === "bat" ? "batters" : mk.kind === "sp" ? "starters" : m === "tt" ? "teams" : "games";
+      return `${mk.label} · ${L == null ? `${s.pSide} each one's model line` : this.sideWord(L, mk.unit)} · ${who}`;
+    }
+    predLineEmptyNote() {
+      const mk = this.LINE_MKS[this.state.pMarket];
+      if (mk && mk.kind === "game" && this.state.pMarket !== "ml" && !this.todayGames().some((g) => g.runs)) {
+        return `<div class="ph-empty ph-empty--dash"><b>${esc(COPY.runsNoneTitle)}</b><span>${esc(COPY.runsNoneBody)}</span></div>`;
+      }
+      return "";
+    }
+    predLineCsv() {
+      const m = this.state.pMarket, mk = this.LINE_MKS[m];
+      const head = ["rank", "selection", "team", "game", "game_pk", "player_id", "official_date", "market", "line", "side",
+        "probability", "fair_american", "projection", "model_version", "updated_at", "result"];
+      const date = this.predPast() || slateDate();
+      const rows = this.predLineRows().map((r, i) => [i + 1, r.name, r.team, `${r.g.away} @ ${r.g.home}`, r.g.gamePk,
+        r.playerId || "", date, mk.api || m, r.line == null ? "" : r.line, r.noSide ? "" : this.state.pSide,
+        r.p == null ? "" : r.p.toFixed(4), PH.fairAmerican(r.p) == null ? "" : PH.fairAmerican(r.p),
+        r.proj == null ? "" : r.proj.toFixed(2), r.version || "", r.updatedAt || "", r.result || ""]);
+      return [head, ...rows];
     }
 
     // ── filters ──────────────────────────────────────────────────────────
@@ -960,6 +1356,7 @@
       const d = this.PRED_DEFAULTS;
       Object.assign(this.state, {
         pTeams: [], pStatus: d.pStatus, pConfOnly: d.pConfOnly, pMin: d.pMin, pAll: false,
+        pLine: null, pSide: d.pSide, pPmin: d.pPmin, pPmax: d.pPmax,
       });
     }
     predStatusOk(g) {
@@ -990,11 +1387,39 @@
         </span>`;
       const exportBtn = count ? `<button class="ph-link" data-act="pExport" title="Download every row that matches these filters as CSV">Export CSV</button>` : "";
       const statusChips = `<span class="ph-fgroup">${[["all", "All"], ["live", "Live"], ["upcoming", "Upcoming"], ["final", "Final"]].map(([k, l]) => chip("pStatus", k, l, s.pStatus === k)).join("")}</span>`;
-      const batterCtl = batter ? `${chip("pConfOnly", "1", `${s.pConfOnly ? "✓ " : ""}Lineup confirmed only`, s.pConfOnly)}
-        <label class="ph-range">MIN LIFT
+      // Lift is against the league rate at the 1+ line, so the slider only
+      // means something on the 1+ tables; lineup filtering applies to any
+      // batter market.
+      const batBoard = batter || (this.LINE_MKS[s.pMarket] || {}).kind === "bat";
+      const liftCtl = batter && !this.isLineView();
+      const batterCtl = batBoard ? `${chip("pConfOnly", "1", `${s.pConfOnly ? "✓ " : ""}Lineup confirmed only`, s.pConfOnly)}
+        ${liftCtl ? `<label class="ph-range">MIN LIFT
           <input type="range" min="-10" max="15" step="1" value="${s.pMin}" data-pfilter="pMin" aria-label="Minimum lift in points">
           <span class="ph-mono ph-range-val">${esc(minLabel)}</span>
-        </label>` : "";
+        </label>` : ""}` : "";
+      // Market chips, grouped (Batters · Pitchers · Games).
+      const mkChips = this.PRED_GROUPS.map(([g, items]) => `<span class="ph-fgroup ph-mkgroup" role="group" aria-label="${esc(g)}">
+          <span class="ph-kicker ph-kicker--mut">${esc(g)}</span>
+          ${items.map(([k, l]) => chip("pMarket", k, l, s.pMarket === k)).join("")}
+        </span>`).join("");
+      // Line, side, probability band and the number format: the controls that
+      // turn "1+ hit" into "2+ hits, under, between 20 and 40%".
+      const mk = this.LINE_MKS[s.pMarket];
+      const lines = this.lineOptions();
+      const curL = this.curLine();
+      const lineCtl = mk && !mk.noLine ? `<span class="ph-fgroup ph-linepick" role="group" aria-label="Line">
+          <span class="ph-kicker ph-kicker--mut">Line</span>
+          ${mk.def == null ? chip("pLine", "", "Model line", s.pLine == null) : ""}
+          ${lines.map((l) => chip("pLine", String(l), String(l), curL === l && (s.pLine != null || mk.def != null))).join("")}
+        </span>` : "";
+      const sideCtl = mk && !mk.noSide
+        ? this.segHtml("pSide", s.pSide, s.pMarket === "rl" ? [["over", "Favourite −"], ["under", "Underdog +"]] : [["over", "Over"], ["under", "Under"]]) : "";
+      const bandCtl = this.LINE_MKS[s.pMarket] ? `<span class="ph-range ph-band">PROB
+          <input type="range" min="0" max="100" step="5" value="${s.pPmin}" data-pfilter="pPmin" aria-label="Minimum probability">
+          <input type="range" min="0" max="100" step="5" value="${s.pPmax}" data-pfilter="pPmax" aria-label="Maximum probability">
+          <span class="ph-mono ph-range-val">${s.pPmin}–${s.pPmax}%</span>
+        </span>` : "";
+      const fmtCtl = `<button class="ph-chip" data-act="oddsFmt" title="Show the model probability as a percentage or as its fair American price (the price at which a bet on the model's number breaks even)">${s.oddsFmt === "us" ? "Fair odds ⇄ %" : "% ⇄ Fair odds"}</button>`;
       // null while the rows are still on their way: a count of 0 there is a
       // claim about the data, and the data has not arrived.
       const countHtml = count == null
@@ -1011,18 +1436,24 @@
             <button class="ph-chip${n ? " is-on" : ""}" data-act="mToggle" data-arg="f:pred" aria-expanded="${open}">Filters${n ? ` <span class="ph-mono">${n}</span>` : ""} ${open ? "▴" : "▾"}</button>
             ${countHtml}
           </div>
-          <div class="ph-fscroll">${this.PRED_MARKETS.map(([k, l]) => chip("pMarket", k, l, s.pMarket === k)).join("")}</div>
-          ${open ? `<div class="ph-fbar-line ph-fbar-more">${teamSel}${statusChips}${batterCtl}<button class="ph-link" data-act="pClear">Clear</button>${exportBtn}</div>` : ""}
+          <div class="ph-fscroll">${mkChips}</div>
+          ${lineCtl || sideCtl ? `<div class="ph-fscroll">${lineCtl}${sideCtl}</div>` : ""}
+          ${open ? `<div class="ph-fbar-line ph-fbar-more">${teamSel}${statusChips}${batterCtl}${bandCtl}${fmtCtl}<button class="ph-link" data-act="pClear">Clear</button>${exportBtn}</div>` : ""}
         </div>`;
       }
       return `<div class="ph-fbar">
         ${this.segHtml("mode", this.effectiveMode(), [["pregame", "Pregame"], ["live", "Live"]], anyLive)}
         <span class="ph-vrule"></span>
-        <span class="ph-fgroup">${this.PRED_MARKETS.map(([k, l]) => chip("pMarket", k, l, s.pMarket === k)).join("")}</span>
         <span class="ph-vrule"></span>
+        ${mkChips}
+        <span class="ph-fbar-break"></span>
+        ${lineCtl}${sideCtl}
+        ${lineCtl || sideCtl ? `<span class="ph-vrule"></span>` : ""}
         ${teamSel}
         ${statusChips}
         ${batterCtl}
+        ${bandCtl}
+        ${fmtCtl}
         <button class="ph-link" data-act="pClear">Clear</button>
         ${exportBtn}
         ${countHtml}
@@ -1033,16 +1464,21 @@
     // a CSV download, in the order shown.
     predCsv() {
       const m = this.state.pMarket;
+      const q0 = (v) => { const t = v == null ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
+      if (this.isLineView()) return this.predLineCsv().map((r) => r.map(q0).join(",")).join("\n");
       const q = (v) => { const t = v == null ? "" : String(v); return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t; };
       let head, rows;
       if (this.isBatMk(m)) {
-        head = ["rank", "player", "team", "slot", "opposing_starter", "game", "status", "probability", "league_rate", "lift_pts", "xpa", "form_30d_rate", "result"];
+        head = ["rank", "player", "player_id", "team", "slot", "opposing_starter", "game", "game_pk", "official_date", "status", "market", "line", "probability", "fair_american", "league_rate", "lift_pts", "xpa", "form_30d_rate", "model_version", "updated_at", "result"];
         rows = this.predBatterRows().map((r, i) => {
           const f = r.b.form ? r.b.form[m === "hr" ? "hr_rate" : "hit_rate"] : null;
           const rec = r.b[m];
-          return [i + 1, r.b.name, this.teamOf(r.b), r.b.slot || "", r.b.spName || "", `${r.g.away} @ ${r.g.home}`, r.g.phase,
-            r.c.p == null ? "" : r.c.p.toFixed(4), r.c.base == null ? "" : r.c.base.toFixed(4), r.c.pts == null ? "" : r.c.pts.toFixed(1),
-            r.b.xpa == null ? "" : r.b.xpa.toFixed(2), f == null ? "" : f, rec && rec.result ? rec.result : ""];
+          return [i + 1, r.b.name, r.b.id, this.teamOf(r.b), r.b.slot || "", r.b.spName || "", `${r.g.away} @ ${r.g.home}`, r.b.pk,
+            this.predPast() || slateDate(), r.g.phase, rec ? rec.market : "", rec && rec.line != null ? rec.line : 0.5,
+            r.c.p == null ? "" : r.c.p.toFixed(4), PH.fairAmerican(r.c.p) == null ? "" : PH.fairAmerican(r.c.p),
+            r.c.base == null ? "" : r.c.base.toFixed(4), r.c.pts == null ? "" : r.c.pts.toFixed(1),
+            r.b.xpa == null ? "" : r.b.xpa.toFixed(2), f == null ? "" : f, rec ? rec.model_version || "" : "", rec ? rec.updated_at || "" : "",
+            rec && rec.result ? rec.result : ""];
         });
       } else if (m === "sp") {
         head = ["starter", "team", "opponent", "game_time", ...this.STARTER_MARKETS.map(([k]) => `${k}_line`), ...this.STARTER_MARKETS.map(([k]) => `${k}_p_over`)];
@@ -1064,7 +1500,8 @@
         const blob = new Blob([this.predCsv()], { type: "text/csv" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = `pitchhawk-${this.state.pMarket}-${slateDate()}.csv`;
+        const ln = this.isLineView() && this.curLine() != null ? `-${this.state.pSide}${this.curLine()}` : "";
+        a.download = `pitchhawk-${this.state.pMarket}${ln}-${this.predPast() || slateDate()}.csv`;
         document.body.appendChild(a); a.click(); a.remove();
         setTimeout(() => URL.revokeObjectURL(a.href), 1000);
       } catch (_e) { /* a browser without Blob downloads: nothing to do */ }
@@ -1078,7 +1515,8 @@
           && this.predStatusOk(r.g)
           && this.predTeamOk(this.teamOf(r.b))
           && (!s.pConfOnly || r.b.slot)
-          && (s.pMin <= -10 || (r.c.pts != null && r.c.pts >= s.pMin)));
+          && (s.pMin <= -10 || (r.c.pts != null && r.c.pts >= s.pMin))
+          && this.pBandOk(r.c.p));
       const key = {
         lift: (r) => (r.c.pts == null ? -Infinity : r.c.pts),
         prob: (r) => r.c.p,
@@ -1358,11 +1796,24 @@
         ${this.mPairHtml("1+ HR", this.probCellHtml(b, "hr"))}
         ${this.mPairHtml("1+ H+R+RBI", this.probCellHtml(b, "hrr"))}
         ${this.mPairHtml("TB 1.5+", this.baseBatterCellHtml(b.tb15, "tb"))}
+        ${this.batterLinesHtml(b)}
         ${this.mPairHtml("30D H · HR /PA", this.formCellHtml(b.form))}
         ${this.mPairHtml(`${esc(this.lastName(b.spName)).toUpperCase()} ALLOWS · 30D`, this.formCellHtml(opp))}
         ${this.mPairHtml("VS THIS STARTER", `<span class="ph-mono">${esc(h2h)}</span>`)}
         ${this.mPairHtml("GAME", `<span class="ph-meta-v">${this.numHtml(`${g.away} @ ${g.home} · ${g.venue || "—"} · ${this.clockOf(g.startTs) || "TBD"}`)}</span>`)}
         <span class="ph-pdetail-act">${this.pinBtnHtml("b:" + b.id, "Watch this batter")}${this.openGameBtnHtml(b.pk, b.side)}</span>`);
+    }
+    // Every line the model prices for this batter, at a glance: hits, total
+    // bases, home runs and strikeouts, over the line, from each row's ladder.
+    batterLinesHtml(b) {
+      const sets = [["HITS", b.hit, "H"], ["TOTAL BASES", b.tb15, "TB"], ["HOME RUNS", b.hr, "HR"], ["STRIKEOUTS", b.bk, "K"]]
+        .filter(([, r]) => r && Array.isArray(r.ladder) && r.ladder.length);
+      if (!sets.length) return "";
+      return `<span class="ph-meta ph-pdetail-wide"><span class="ph-meta-k">EVERY LINE · P(OVER) · FAIR</span>
+        <span class="ph-blines">${sets.map(([k, r, u]) => `<span class="ph-bline"><span class="ph-kicker ph-kicker--mut">${k}</span>${r.ladder.slice(0, 4).map((x) => {
+          const p = Number(x.p_over);
+          return `<span class="ph-mono">${Math.ceil(Number(x.line))}+ ${u}: <b>${p < 0.005 ? "<1%" : this.pct(p)}</b> <span class="ph-mut">${this.fairOdds(p)}</span></span>`;
+        }).join("")}</span>`).join("")}</span></span>`;
     }
     predGameDetailHtml(g) {
       if (!this.state.gameCtx[String(g.gamePk)]) this.loadGameContext(g.gamePk);
@@ -1669,8 +2120,8 @@
     // Projection markets served by /projections, and the key each batter
     // market folds into on a batter record. batter_hit / batter_hr are trained
     // models; the rest are base models (supabase/functions/_shared/basemodels.ts).
-    BATTER_MARKETS = ["batter_hit", "batter_hr", "batter_tb15", "batter_hrr"];
-    BATTER_KEY = { batter_hit: "hit", batter_hr: "hr", batter_tb15: "tb15", batter_hrr: "hrr" };
+    BATTER_MARKETS = ["batter_hit", "batter_hr", "batter_tb15", "batter_hrr", "batter_k"];
+    BATTER_KEY = { batter_hit: "hit", batter_hr: "hr", batter_tb15: "tb15", batter_hrr: "hrr", batter_k: "bk" };
     STARTER_MARKETS = [
       ["pitcher_k", "Ks"], ["pitcher_outs", "Outs"], ["pitcher_hits", "Hits"],
       ["pitcher_er", "ER"], ["pitcher_bb", "BB"],
@@ -1693,7 +2144,7 @@
             side: r.is_home ? "home" : "away", slot: null, xpa: null,
             spId: r.opposing_pitcher_id == null ? null : String(r.opposing_pitcher_id),
             spName: r.opposing_pitcher || null, updatedAt: null,
-            hit: null, hr: null, tb15: null, hrr: null,
+            hit: null, hr: null, tb15: null, hrr: null, bk: null,
             // 30-day per-PA form, the batter's own and the opposing
             // starter's rates allowed (see /projections form_30d).
             form: null, oppForm: null,
@@ -2643,16 +3094,16 @@
       const props = this.starterProps(pk, id) || {};
       const PROP_LABEL = { pitcher_k: "STRIKEOUTS", pitcher_outs: "OUTS REC.", pitcher_hits: "HITS ALLOWED", pitcher_er: "EARNED RUNS", pitcher_bb: "WALKS" };
       return this.STARTER_MARKETS.map(([m]) => [PROP_LABEL[m], this.propCellHtml(props[m])]).concat([
-        ["30D K%", `<span class="ph-mono">${this.pct(s.k)}</span>`],
-        ["WHIFF", `<span class="ph-mono">${this.pct(s.whiff)}</span>`],
+        ["30D K%", s.k == null ? this.missingHtml("spform") : `<span class="ph-mono">${this.pct(s.k)}</span>`],
+        ["WHIFF", s.whiff == null ? this.missingHtml("spform") : `<span class="ph-mono">${this.pct(s.whiff)}</span>`],
         ["HR/PA", (() => {
           const f = Object.values(props).map((r) => r && r.form_30d).find(Boolean);
           return f && f.hr_rate != null
             ? `<span class="ph-mono" title="${esc(`home runs allowed per PA, last 30 days (${f.pa} PA)`)}">${this.pct1(f.hr_rate)}</span>`
             : this.missingHtml("fewpa");
         })()],
-        ["FB VELO", `<span class="ph-mono">${s.velo == null ? "—" : s.velo.toFixed(1)}</span>`],
-        ["FATIGUE", `<span class="ph-mono ph-dim">${s.fat == null ? "—" : `${this.signed(s.fat)} mph`}</span>`],
+        ["FB VELO", s.velo == null ? this.missingHtml("spform") : `<span class="ph-mono">${s.velo.toFixed(1)}</span>`],
+        ["FATIGUE", s.fat == null ? this.missingHtml("spform") : `<span class="ph-mono ph-dim">${this.signed(s.fat)} mph</span>`],
       ]);
     }
     starterCellsHtml(id, pk) {
@@ -4671,6 +5122,7 @@
         const el = (sel ? this.root.querySelector(sel) : null) || this.root.querySelector("main");
         if (el) { try { el.focus({ preventScroll: true }); } catch (_e) { el.focus(); } }
       }
+      this.revealActiveChips();
       this.announceLive();
     }
 

@@ -1239,3 +1239,32 @@ body { margin: 0; }
   .ph-banner-err { padding: 10px 12px; gap: 6px 10px; }
   .ph-banner-err-body { font-size: 12.5px; }
 }
+
+/* ── Predictions: markets at a line (Phase 1) ──────────────────────────── */
+.ph-fbar-break { flex-basis: 100%; height: 0; }
+.ph-mkgroup { gap: 5px; }
+.ph-mkgroup > .ph-kicker, .ph-linepick > .ph-kicker { margin-right: 2px; }
+.ph-band input[type="range"] { width: 72px; }
+.ph-ptable-line { grid-template-columns: 30px 20px minmax(200px,1.4fr) 124px 74px minmax(150px,1fr) 96px minmax(210px,1.3fr) 72px; }
+.ph-lp { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.ph-lp-main { font-size: 15px; }
+.ph-lp-line { font-weight: 700; }
+.ph-lp-bar { display: block; height: 5px; border-radius: 3px; background: var(--track); overflow: hidden; }
+.ph-lp-bar > span { display: block; height: 100%; background: var(--accent); }
+.ph-lmini { display: flex; gap: 8px; flex-wrap: wrap; font-size: 11.5px; color: var(--muted); }
+.ph-lmini .is-on { color: var(--text); }
+.ph-lmini b { color: inherit; }
+.ph-ladder { display: grid; gap: 2px; width: 100%; max-width: 560px; }
+.ph-ladder-row { display: grid; grid-template-columns: 76px 1fr 1fr; gap: 12px; align-items: center; padding: 3px 6px; border-radius: 6px; font-size: 12px; }
+.ph-ladder-row.is-on { background: var(--grn-sel-bg, var(--good-bg)); }
+.ph-ladder-head { font-size: 10.5px; letter-spacing: .06em; color: var(--muted); font-weight: 700; }
+.ph-ladder-cell { display: grid; grid-template-columns: 1fr 38px 50px; gap: 8px; align-items: center; }
+.ph-ladder-cell .ph-mono:last-child { text-align: right; }
+@media (max-width: 1023px) {
+  .ph-ladder-row { grid-template-columns: 56px 1fr 1fr; gap: 8px; }
+  .ph-ladder-cell { grid-template-columns: 1fr 34px; }
+  .ph-ladder-cell .ph-lp-bar { display: none; }
+  .ph-ladder-cell { grid-template-columns: 38px 46px; }
+}
+.ph-blines { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.ph-bline { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }

@@ -23,6 +23,56 @@ window.PITCHHAWK = (function () {
   };
   const calcEdge = (model, implied) => +(model - implied).toFixed(4);
 
+  // Model probability as American odds, unrounded and unclamped: the price
+  // at which a bet on the model's number breaks even. A display of the
+  // model, not a sportsbook quote.
+  const fairAmerican = (p) => {
+    if (!(p > 0 && p < 1)) return null;
+    return Math.round(p >= 0.5 ? -(p / (1 - p)) * 100 : ((1 - p) / p) * 100);
+  };
+
+  // ── team-run distributions (mirrors _shared/props.ts) ─────────────────
+  // game-predict's v3 total stores each team's negative-binomial mean and the
+  // shared dispersion on the pregame game_total row (probs.mu_home/mu_away/
+  // alpha). Every game line a book posts -- run line, alt totals, team totals
+  // -- is arithmetic on those two distributions, so the board derives them
+  // here rather than storing a row per line.
+  const LGAMMA = (() => { const t = [0, 0]; for (let i = 2; i < 80; i++) t.push(t[i - 1] + Math.log(i - 1)); return t; })();
+  function negbinPmf(mu, alpha, nMax = 30) {
+    const m = Math.max(mu, 1e-6), out = new Array(nMax + 1).fill(0);
+    if (alpha < 1e-6) {
+      for (let k = 0; k <= nMax; k++) out[k] = Math.exp(-m + k * Math.log(m) - LGAMMA[k + 1]);
+      return out;
+    }
+    const r = 1 / alpha, p = r / (r + m);
+    let v = Math.pow(p, r);
+    for (let k = 0; k <= nMax; k++) { out[k] = v; v *= (k + r) / (k + 1) * (1 - p); }
+    return out;
+  }
+  const overProb = (pmf, line) => {
+    let s = 0;
+    for (let i = Math.floor(line) + 1; i < pmf.length; i++) s += pmf[i];
+    return s;
+  };
+  function convolve(a, b) {
+    const out = new Array(a.length + b.length - 1).fill(0);
+    for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) out[i + j] += a[i] * b[j];
+    return out;
+  }
+  // { home, away, total } pmfs plus margin helpers; null without v3 means.
+  function runDists(runs) {
+    if (!runs || !(runs.muH > 0) || !(runs.muA > 0)) return null;
+    const home = negbinPmf(runs.muH, runs.alpha), away = negbinPmf(runs.muA, runs.alpha);
+    // P(team margin > m) for team "home" or "away" -- the run line.
+    const marginOver = (team, m) => {
+      const a = team === "home" ? home : away, b = team === "home" ? away : home;
+      let s = 0;
+      for (let i = 0; i < a.length; i++) for (let j = 0; j < b.length; j++) if (i - j > m) s += a[i] * b[j];
+      return s;
+    };
+    return { home, away, total: convolve(home, away), marginOver, muH: runs.muH, muA: runs.muA };
+  }
+
   // ── MLB calendar dates ────────────────────────────────────────────────
   // The server keys every prediction off `games.official_date`, which is an
   // America/New_York date (see _shared/mlb.ts `mlbToday`). The browser's own
@@ -328,6 +378,13 @@ window.PITCHHAWK = (function () {
       pitchCountGame: sit.pitcher_pitch_count != null ? Number(sit.pitcher_pitch_count) : null,
       batterToday: lg.batter_today || null,
       pitches, nextPred, lastPitch: sit.last_pitch_ts, stale, m, mPre,
+      // v3 team-run means behind the pregame total (see runDists above);
+      // null for a game scored by the older total model.
+      runs: (() => {
+        const pr = preByMarket.game_total && preByMarket.game_total.probs;
+        return pr && pr.mu_home != null && pr.mu_away != null
+          ? { muH: Number(pr.mu_home), muA: Number(pr.mu_away), alpha: Number(pr.alpha != null ? pr.alpha : 0.1) } : null;
+      })(),
       modelVersion: lg.model_version || null,
       // Phase + coverage are what let the board render a scheduled game
       // honestly: which markets exist, which do not, and why the situation
@@ -485,6 +542,7 @@ window.PITCHHAWK = (function () {
   return {
     MARKETS, OUTCOME_LABEL,
     games,
+    fairAmerican, runDists, overProb,
     mlbDate,
     loadLive, loadBoard, loadFeed, loadGamePitches, loadAccuracy, loadTrends,
   };

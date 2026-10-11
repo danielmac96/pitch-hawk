@@ -66,6 +66,8 @@ def game(i, away, home, venue, phase):
     pk = 800000 + i
     start = NOW + timedelta(hours=(-2.5 if phase == "live" else -4 if phase == "final" else 1 + i * 0.5))
     hp = rnd.uniform(0.38, 0.66)
+    MH, MA = round(rnd.uniform(3.6, 5.2), 3), round(rnd.uniform(3.4, 5.0), 3)
+    TL = round(MH + MA) - 0.5 if round(MH + MA) > MH + MA else round(MH + MA) + 0.5
     g = {
         "game_pk": pk, "game_label": f"{away} @ {home}", "away_abbr": away, "home_abbr": home,
         "venue": venue, "phase": phase, "start_ts": iso(start),
@@ -76,8 +78,9 @@ def game(i, away, home, venue, phase):
         "markets_pregame": [
             {"market": "game_moneyline", "probs": {"home": round(hp, 3), "away": round(1 - hp, 3)},
              "recommendation": "home" if hp >= .5 else "away", "confidence": round(max(hp, 1 - hp), 3)},
-            {"market": "game_total", "line": 8.5, "predicted_value": round(rnd.uniform(7.2, 9.8), 1),
-             "recommendation": rnd.choice(["over", "under"]), "confidence": round(rnd.uniform(.51, .62), 3)},
+            {"market": "game_total", "line": TL, "predicted_value": round(MH + MA, 2),
+             "recommendation": "over" if MH + MA > TL else "under", "confidence": round(rnd.uniform(.51, .62), 3),
+             "probs": {"mu_home": MH, "mu_away": MA, "alpha": 0.12}},
         ],
         "markets": [],
     }
@@ -128,7 +131,7 @@ def game(i, away, home, venue, phase):
         {"market": "ab_pitches_ou", "predicted_value": 4.1, "line": 3.5, "recommendation": "over", "confidence": .58},
     ]
     g["live_models"] = {
-        "total": {"projected": round(a + h + rnd.uniform(1, 4), 1), "line": 8.5, "p_over": round(rnd.uniform(.3, .7), 3)},
+        "total": {"projected": round(a + h + rnd.uniform(1, 4), 1), "line": TL, "p_over": round(rnd.uniform(.3, .7), 3)},
         "rest_of_game": [{"player_id": 700000 + i * 20 + s, "hit": round(rnd.uniform(.2, .6), 3),
                           "hr": round(rnd.uniform(.03, .15), 3), "remaining_pa": round(rnd.uniform(1, 3), 1)} for s in range(1, 19)],
     }
@@ -139,38 +142,90 @@ PHASES = ["live", "live", "live", "final", "final", "pregame", "pregame"]
 GAMES = [game(i, *TEAMS[i], PHASES[i]) for i in range(len(TEAMS))]
 
 
+def _binom_over(p, n, line):
+    from math import comb
+    k = int(line)
+    return 1 - sum(comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(0, min(n, k) + 1))
+
+
+def _pois_over(mu, line):
+    from math import exp, factorial
+    k = int(line)
+    return 1 - sum(exp(-mu) * mu ** i / factorial(i) for i in range(k + 1))
+
+
+def _ladder(over, cap=14):
+    out = []
+    for k in range(cap):
+        p = over(k + 0.5)
+        if p < 0.005:
+            break
+        out.append({"line": k + 0.5, "p_over": round(p, 4)})
+    return out
+
+
+def _mix(xpa, f):
+    lo = int(xpa); w = xpa - lo
+    return (1 - w) * f(lo) + w * f(lo + 1)
+
+
 def projections(games=None):
     games = GAMES if games is None else games
     rows = []
     for i, g in enumerate(games):
         lineup_known = g["phase"] != "pregame" or i == 5
+        final = g["phase"] == "final"
         for side_i, side in enumerate(("away", "home")):
             opp = g["probable_home_pitcher" if side == "away" else "probable_away_pitcher"]
             for s in range(1, 10):
                 pid = 700000 + i * 20 + side_i * 9 + s
                 pname = name()
                 xpa = round(4.6 - s * 0.1, 2)
+                ph, phr, pk = rnd.uniform(.19, .31), rnd.uniform(.012, .06), rnd.uniform(.14, .32)
+                ptb = ph * 1.6
                 base = dict(game_pk=g["game_pk"], player_id=pid, player=pname, role="batter",
                             is_home=side == "home", lineup_slot=s if lineup_known else None,
                             expected_pa=xpa, opposing_pitcher_id=opp["id"], opposing_pitcher=opp["name"],
                             updated_at=iso(NOW - timedelta(minutes=12)), model_version="bh_v2",
                             form_30d={"pa": rnd.randint(8, 110), "hit_rate": round(rnd.uniform(.15, .32), 4), "hr_rate": round(rnd.uniform(0, .07), 4)},
                             opp_form_30d={"pa": rnd.randint(40, 160), "hit_rate": round(rnd.uniform(.18, .28), 4), "hr_rate": round(rnd.uniform(.015, .045), 4)})
-                res = (lambda: rnd.choice(["hit", "miss", "miss", "void"])) if g["phase"] == "final" else (lambda: None)
-                rows.append(dict(base, market="batter_hit", probability=round(rnd.uniform(.45, .78), 3),
-                                 per_pa_probability=round(rnd.uniform(.18, .32), 3), result=res()))
-                rows.append(dict(base, market="batter_hr", probability=round(rnd.uniform(.05, .24), 3),
-                                 per_pa_probability=round(rnd.uniform(.01, .06), 3), result=res()))
-                rows.append(dict(base, market="batter_tb15", probability=round(rnd.uniform(.3, .55), 3),
-                                 expected_value=round(rnd.uniform(1.1, 2.1), 2)))
-                rows.append(dict(base, market="batter_hrr", probability=round(rnd.uniform(.5, .8), 3),
-                                 per_pa_probability=round(rnd.uniform(.2, .4), 3), result=res()))
+                pa_done = rnd.choice([0, 3, 4, 4, 5]) if final else None
+                def graded(line, count):
+                    if not final:
+                        return dict(result=None)
+                    if pa_done == 0:
+                        return dict(result="void", actual_count=None, plate_appearances=0)
+                    return dict(result="hit" if count > line else "miss", actual_count=count, plate_appearances=pa_done)
+                h = sum(rnd.random() < ph for _ in range(pa_done or 0))
+                hr = min(h, sum(rnd.random() < phr for _ in range(pa_done or 0)))
+                ks = sum(rnd.random() < pk for _ in range(pa_done or 0))
+                tb = h + hr * 3 + (1 if h - hr > 1 else 0)
+                hit_l = _ladder(lambda L: _mix(xpa, lambda n: _binom_over(ph, n, L)), 6)
+                hr_l = _ladder(lambda L: _mix(xpa, lambda n: _binom_over(phr, n, L)), 6)
+                k_l = _ladder(lambda L: _mix(xpa, lambda n: _binom_over(pk, n, L)), 6)
+                tb_l = _ladder(lambda L: _pois_over(ptb * xpa, L), 10)
+                rows.append(dict(base, market="batter_hit", probability=hit_l[0]["p_over"], line=0.5,
+                                 per_pa_probability=round(ph, 3), ladder=hit_l, **graded(0.5, h)))
+                rows.append(dict(base, market="batter_hr", probability=hr_l[0]["p_over"], line=0.5,
+                                 per_pa_probability=round(phr, 3), ladder=hr_l, **graded(0.5, hr)))
+                rows.append(dict(base, market="batter_tb15", probability=tb_l[1]["p_over"], line=1.5,
+                                 expected_value=round(ptb * xpa, 2), ladder=tb_l, **graded(1.5, tb)))
+                rows.append(dict(base, market="batter_hrr", probability=round(rnd.uniform(.5, .8), 3), line=0.5,
+                                 per_pa_probability=round(rnd.uniform(.2, .4), 3), **graded(0.5, h + rnd.randint(0, 2))))
+                rows.append(dict(base, market="batter_k", probability=k_l[0]["p_over"], line=0.5,
+                                 expected_value=round(pk * xpa, 2), ladder=k_l, model_version="v3+k_raw", **graded(0.5, ks)))
         for key in ("probable_away_pitcher", "probable_home_pitcher"):
             p = g[key]
-            for m, line in (("pitcher_k", 5.5), ("pitcher_outs", 16.5), ("pitcher_hits", 5.5), ("pitcher_er", 2.5), ("pitcher_bb", 1.5)):
+            for m, lo, hi in (("pitcher_k", 3.6, 8.2), ("pitcher_outs", 13.5, 19.5), ("pitcher_hits", 3.8, 6.8),
+                              ("pitcher_er", 1.6, 3.4), ("pitcher_bb", 1.0, 2.8)):
+                mu = round(rnd.uniform(lo, hi), 2)
+                line = int(mu) + 0.5
+                lad = _ladder(lambda L: _pois_over(mu, L), 14)
+                cnt = max(0, int(rnd.gauss(mu, mu ** 0.5)))
+                gr = dict(result=("hit" if cnt > line else "miss"), actual_count=cnt, plate_appearances=24) if final else dict(result=None)
                 rows.append(dict(game_pk=g["game_pk"], player_id=p["id"], player=p["name"], role="pitcher",
-                                 market=m, line=line, probability=round(rnd.uniform(.4, .6), 3),
-                                 expected_value=round(line + rnd.uniform(-1, 1), 1), updated_at=iso(NOW)))
+                                 market=m, line=line, probability=round(_pois_over(mu, line), 4),
+                                 expected_value=mu, ladder=lad, model_version="base_v1", updated_at=iso(NOW), **gr))
     return rows
 
 
