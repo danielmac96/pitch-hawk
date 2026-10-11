@@ -26,6 +26,7 @@
 
   const API_BASE = window.PITCH_EDGE_API || "http://localhost:8080";
   const POLL_MS = 8000;   // backend polls MLB every ~8s (POLL_INTERVAL_SECONDS)
+  const HIDDEN_ALERT_POLL_MS = 30000; // background tab with alerts on: slow /live poll only
   // ★ Watching pins, `g:<game_pk>` and `b:<batter id>`, under the key the
   // redesign handoff names.
   const PINS_KEY = "ph-watch";
@@ -203,6 +204,9 @@
         // Today's batter projections (GET /projections), both markets.
         // `rows` is null until the first fetch settles.
         proj: { rows: null, err: false },
+        // Predictions on another day (?date=). null = the current slate.
+        pDate: null,
+        past: { date: null, rows: null, games: null, err: false },
       };
       this._projAt = 0;
       // Freshness stamps already flashed, so a re-render does not replay it.
@@ -278,6 +282,7 @@
       if ((s.view === "home" || s.view === "pred") && s.mode) q.set("mode", s.mode);
       if (s.view === "pred") {
         const d = this.PRED_DEFAULTS;
+        if (this.predPast()) q.set("date", s.pDate);
         if (s.pMarket !== d.pMarket) q.set("m", s.pMarket);
         if (s.pTeams.length) q.set("team", s.pTeams.join(","));
         if (s.pStatus !== d.pStatus) q.set("status", s.pStatus);
@@ -317,6 +322,8 @@
       }
       if (view === "pred") {
         const d = this.PRED_DEFAULTS;
+        const date = q.get("date");
+        patch.pDate = /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? date : null;
         const m = q.get("m");
         patch.pMarket = this.PRED_MARKETS.some(([k]) => k === m) ? m : d.pMarket;
         patch.pTeams = (q.get("team") || "").split(",").map((t) => t.trim().toUpperCase()).filter((t) => /^[A-Z]{2,3}$/.test(t));
@@ -443,6 +450,7 @@
         case "dMore": { this.loadGraded(true); return; }
         // ── Predictions ──
         case "pMarket": return this.setState({ pMarket: arg, pAll: false });
+        case "pDate": return this.setPredDate(arg || null);
         case "pStatus": return this.setState({ pStatus: arg, pAll: false });
         case "pConfOnly": return this.setState({ pConfOnly: !this.state.pConfOnly, pAll: false });
         // Same header flips direction; a new one starts from its natural order
@@ -875,7 +883,7 @@
     // drawing "no predictions match these filters" over a pending or failed
     // fetch told a reader their filters were the problem.
     projStatus() {
-      const p = this.state.proj;
+      const p = this.predPast() ? this.pastProj() : this.state.proj;
       if (p.rows === null) return p.err ? "error" : "loading";
       return "ok";
     }
@@ -890,6 +898,9 @@
     }
     predHtml() {
       this.loadTrust();
+      // A shared or reloaded ?date= link lands here before anything fetched it.
+      const past = this.predPast();
+      if (past && this.state.past.date !== past && this._pastLoading !== past) this.loadPast(past);
       const mk = this.state.pMarket;
       let table, count;
       const projMk = this.isBatMk(mk) || mk === "sp";
@@ -899,7 +910,8 @@
         const err = ps === "error" || (gamesPending && this.state.api.down);
         return `<div class="ph-titlerow">
             <h1 class="ph-h1">${esc(COPY.predTitle)}</h1>
-            <span class="ph-strip-sub">${esc(SLATE_IS_TODAY ? COPY.predSub : COPY.predSubNext)}</span>
+            <span class="ph-strip-sub">${esc(this.predPast() ? (this.predPast() < slateDate() ? COPY.predSubPast : COPY.predSubNext) : SLATE_IS_TODAY ? COPY.predSub : COPY.predSubNext)}</span>
+            ${this.predDateHtml()}
           </div>
           ${this.predFilterBarHtml(null)}
           ${this.trustTilesHtml()}
@@ -918,13 +930,18 @@
         count = rows.length;
         table = count ? this.predGameTableHtml(rows) : "";
       }
-      const live = this.effectiveMode() === "live";
+      // "Live mode" describes an ordering (in-progress games first). With the
+      // status filter on Upcoming or Final, or on another day, there are no
+      // in-progress games to put first, so the pregame wording is the true one.
+      const live = this.effectiveMode() === "live" && !this.predPast()
+        && !["upcoming", "final"].includes(this.state.pStatus);
       const sub = this.isBatMk(mk) ? (live ? COPY.predSubBatLive : COPY.predSubBatPre)
         : mk === "sp" ? COPY.predSubSp
           : live && mk === "wp" ? COPY.predSubWpLive : COPY.predSubGame;
       return `<div class="ph-titlerow">
           <h1 class="ph-h1">${esc(COPY.predTitle)}</h1>
-          <span class="ph-strip-sub">${esc(SLATE_IS_TODAY ? COPY.predSub : COPY.predSubNext)}</span>
+          <span class="ph-strip-sub">${esc(this.predPast() ? (this.predPast() < slateDate() ? COPY.predSubPast : COPY.predSubNext) : SLATE_IS_TODAY ? COPY.predSub : COPY.predSubNext)}</span>
+          ${this.predDateHtml()}
         </div>
         ${this.predFilterBarHtml(count)}
         ${this.postseasonNoteHtml()}
@@ -1480,7 +1497,12 @@
         // Phone: one line, tiles behind a tap. Five tiles stacked ran to more
         // than a screen before the first batter.
         const open = !!this.state.mOpen["trust"];
-        const hit = t && t.calib.batter_hit && t.calib.batter_hit.n ? `Hit ${this.pct(t.calib.batter_hit.hits / t.calib.batter_hit.n)}/${this.pct(t.calib.batter_hit.sumP / t.calib.batter_hit.n)}` : null;
+        // The record for the market being browsed, said in words: "Hit
+        // 37%/62%" read as a verdict on whatever was on screen, even under 1+ HR.
+        const calKey = { hit: "batter_hit", hr: "batter_hr", hrr: "batter_hrr" }[this.state.pMarket] || "batter_hit";
+        const calLbl = { batter_hit: "1+ Hit", batter_hr: "1+ HR", batter_hrr: "1+ HRR" }[calKey];
+        const c = t && t.calib[calKey];
+        const hit = c && c.n ? `${calLbl} landed ${this.pct(c.hits / c.n)} vs ${this.pct(c.sumP / c.n)} predicted` : null;
         const wpS = wp && wp.w + wp.l ? `Fav ${this.pct(wp.w / (wp.w + wp.l))}` : null;
         const abS = ab && ab.w + ab.l ? `AB ${this.pct(ab.w / (ab.w + ab.l))}` : null;
         const summary = [hit, wpS, abS].filter(Boolean).join(" · ") || (t ? "—" : "loading…");
@@ -1561,7 +1583,69 @@
     }
 
     // ── slate data ───────────────────────────────────────────────────────
-    todayGames() { return PH.games || []; }
+    todayGames() {
+      if (this.predPast()) return this.pastProj().games || [];
+      return PH.games || [];
+    }
+
+    // ── another day's Predictions (?date=) ───────────────────────────────
+    // The board is built around the current slate; Predictions can also show
+    // a past day (graded results) or the next one. Only the Predictions tab
+    // reads another day: Home, Live and alerts stay on the current slate.
+    predPast() {
+      const s = this.state;
+      return s.view === "pred" && s.pDate && s.pDate !== slateDate() ? s.pDate : null;
+    }
+    pastProj() {
+      const p = this.state.past;
+      return p.date === this.state.pDate ? p : { date: this.state.pDate, rows: null, games: null, err: false };
+    }
+    projRows() { return this.predPast() ? this.pastProj().rows : this.state.proj.rows; }
+    setPredDate(date) {
+      const d = date && date !== slateDate() ? date : null;
+      this.setState({ pDate: d, pAll: false, pOpen: {} });
+      if (d) this.loadPast(d);
+    }
+    async loadPast(date) {
+      if (this.state.past.date === date && (this.state.past.rows || this._pastLoading === date)) return;
+      this._pastLoading = date;
+      this.state.past = { date, rows: null, games: null, err: false };
+      const reqs = this.BATTER_MARKETS.map((m) => `/projections?date=${date}&market=${m}`)
+        .concat([`/projections?date=${date}&role=pitcher`]);
+      const [board, ...res] = await Promise.all([
+        PH.loadBoard(API_BASE, null, date).catch(() => null),
+        ...reqs.map((u) => fetchJson(u)),
+      ]);
+      if (this._pastLoading !== date) return;
+      this._pastLoading = null;
+      const games = board ? [].concat(board.live || [], board.upcoming || [], board.final || []) : null;
+      const ok = res[0] && res[1];
+      this.state.past = {
+        date, games: games || [], err: !ok,
+        rows: ok ? [].concat(...res.map((r) => (r && r.rows) || [])) : null,
+      };
+      this.render();
+    }
+    // Shift a YYYY-MM-DD by whole days (UTC arithmetic: dates, not instants).
+    shiftDate(date, n) {
+      const d = new Date(`${date}T12:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + n);
+      return d.toISOString().slice(0, 10);
+    }
+    predDateHtml() {
+      const today = slateDate(), cur = this.state.pDate || today;
+      const lbl = (d) => new Date(`${d}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
+      const prev = this.shiftDate(cur, -1), next = this.shiftDate(cur, 1);
+      // One day past the current slate at most: tomorrow's reads exist once
+      // the probables are posted, and nothing exists beyond that.
+      const canNext = next <= this.shiftDate(today, 1);
+      return `<span class="ph-datestep" role="group" aria-label="Choose a day">
+          <button class="ph-chip" data-act="pDate" data-arg="${prev}" aria-label="Previous day">‹</button>
+          <span class="ph-mono ph-datestep-lbl">${esc(cur === today ? `Today · ${lbl(cur)}` : lbl(cur))}</span>
+          ${canNext ? `<button class="ph-chip" data-act="pDate" data-arg="${next}" aria-label="Next day">›</button>` : ""}
+          ${cur !== today ? `<button class="ph-link" data-act="pDate" data-arg="">Back to today</button>` : ""}
+        </span>`;
+    }
     gameByPk(pk) {
       return this.todayGames().find((g) => String(g.gamePk) === String(pk)) || null;
     }
@@ -1593,7 +1677,7 @@
     ];
 
     batters() {
-      const rows = this.state.proj.rows;
+      const rows = this.projRows();
       if (!rows) return null;
       if (this._batMemo && this._batMemo.rows === rows) return this._batMemo.list;
       const by = new Map();
@@ -1631,7 +1715,7 @@
     // Starter props, keyed "gamePk:pitcherId" -> { market: row }. Memoised on
     // the rows array like batters().
     starterProps(pk, pitcherId) {
-      const rows = this.state.proj.rows;
+      const rows = this.projRows();
       if (!rows || pitcherId == null) return null;
       if (!this._spMemo || this._spMemo.rows !== rows) {
         const by = {};
@@ -3977,9 +4061,26 @@
     }
 
     // ── analysis ─────────────────────────────────────────────────────────
+    // Brier skill across several markets has to be measured against each
+    // market's OWN base rate. Pooling a ~13% HR market with a ~68% hit market
+    // into one base rate made "always guess the pooled rate" a terrible
+    // reference, so the All-markets tile read 24% while every market on its
+    // own read ~1%. by_market partitions exactly the rows the overall tile
+    // covers when the market filter is All, so the reference is summed per
+    // market there.
+    perMarketSkill(byMarket) {
+      let n = 0, sb = 0, ref = 0;
+      (byMarket || []).forEach((m) => {
+        const k = Number(m.n) || 0, act = Number(m.act);
+        if (!k || m.brier == null || !Number.isFinite(act)) return;
+        n += k; sb += k * Number(m.brier); ref += k * act * (1 - act);
+      });
+      return n && ref > 0 ? 1 - sb / ref : null;
+    }
     dKpiTilesHtml(sum) {
       const st = this.derive(sum.overall);
       const s = this.state;
+      if (s.dMk === "all" && st.n) st.skill = this.perMarketSkill(sum.by_market);
       const tile = (k, v, sub, tone, tip) => `<div class="ph-kpi" title="${esc(tip || "")}">
           <span class="ph-kpi-k">${k}</span>
           <b class="ph-mono ph-kpi-v ${tone ? `ph-tone-${tone}` : ""}">${v}</b>
@@ -3989,7 +4090,7 @@
           ${tile("GRADED", st.n.toLocaleString(), this.numHtml(`${this.dTfName().toLowerCase()} · ${s.dMk === "all" ? "all markets" : this.dMarketName(s.dMk).toLowerCase()}`))}
           ${tile("LANDED", this.pct1(st.act), this.numHtml(`model predicted ${this.pct1(st.exp)}`), null, "Share of reads where the pick happened")}
           ${tile("CALIBRATION GAP", this.gapTxt(st.gap), st.gap >= 0 ? "landed more often than predicted" : "landed less often than predicted", this.gapTone(st.gap), "Landed rate minus average predicted probability")}
-          ${tile("BRIER SKILL", st.skill == null ? "—" : `${(st.skill * 100).toFixed(1)}%`, this.numHtml(`Brier ${st.brier.toFixed(3)} vs base rate`), st.skill == null ? null : st.skill > 0 ? "good" : "bad", "1 − Brier ÷ Brier of always predicting the base rate")}
+          ${tile("BRIER SKILL", st.skill == null ? "—" : `${(st.skill * 100).toFixed(1)}%`, this.numHtml(`Brier ${st.brier.toFixed(3)} vs ${s.dMk === "all" ? "each market's base rate" : "base rate"}`), st.skill == null ? null : st.skill > 0 ? "good" : "bad", "1 − Brier ÷ Brier of always predicting the base rate")}
         </div>
         <p class="ph-caption">${esc(COPY.dCaption)}</p>`;
     }
@@ -4651,15 +4752,23 @@
     // The first success drops it straight back to 8s.
     pollDelay() {
       const n = Math.min(this._failStreak || 0, 3);
+      if (document.hidden && this.alertsWatching()) return Math.max(HIDDEN_ALERT_POLL_MS, POLL_MS * Math.pow(2, n));
       return POLL_MS * Math.pow(2, n);
     }
+    // Alerts exist for the moments the reader is NOT looking at the tab, and
+    // notify() only raises an OS notification while the tab is hidden. So a
+    // hidden tab with alerts on and something pinned keeps a slow /live poll
+    // going; without one there is nothing that could ever trigger an alert.
+    alertsWatching() { return !!(this.state.alerts && this.state.pins.length); }
     _scheduleNextPoll() {
       clearTimeout(this._pollTo);
       this._pollTo = setTimeout(() => this._pollTick(), this._jitter(this.pollDelay()));
     }
     async _pollTick() {
-      // Pause network work while the tab is backgrounded.
+      // Pause network work while the tab is backgrounded -- except the /live
+      // poll that pinned-player and pinned-game alerts are checked against.
       if (!document.hidden) { await this.poll(); await this.hydrate(); await this.checkHealth(); }
+      else if (this.alertsWatching()) await this.poll();
       this._scheduleNextPoll();
     }
     // Show a "data delayed" banner when /health reports live-poll is >2m stale

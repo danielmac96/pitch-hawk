@@ -41,7 +41,7 @@ window.PH_COPY = (function () {
     alertsOnTip: "Alert me when a batter I'm watching comes up or a game I'm watching swings",
     alertsOffTip: "Turn alerts off",
     alertsOnTitle: "Alerts on",
-    alertsOnBody: "You'll hear about your pinned batters coming up and big swings in pinned games while this tab is open.",
+    alertsOnBody: "You'll hear about your pinned batters coming up and big swings in pinned games while this tab is open, even in the background.",
     alertsFinalBody: "A game you were watching just ended.",
     alertsDenied: "notifications blocked — alerts show on this page",
 
@@ -56,7 +56,7 @@ window.PH_COPY = (function () {
     predSubBatLive: "Live mode: in-progress games first, then by your sort · reads froze at first pitch",
     predSubWpLive: "Live mode: biggest swing since first pitch first",
     predSubGame: "sorted by strength of the pregame read",
-    predSubSp: "every starter · props reserved until modeled · supporting form served",
+    predSubSp: "every starter · five props at the model's median line · supporting 30-day form",
     predLoading: "Loading today's projections…",
     predLoadError:
       "Couldn't load today's projections. A connection problem, not an empty " +
@@ -66,6 +66,7 @@ window.PH_COPY = (function () {
     predNoneTitle: "No predictions today",
     // Off day: the tab shows the next slate (see /games is_today).
     predSubNext: "No games today. Every model-fair probability on the next slate, ranked by lift over the league rate.",
+    predSubPast: "Every probability the model published for this day, with how each one landed.",
     predNoneTitleNext: "No predictions yet for the next slate",
     predNoneBody: "Nothing is scheduled, so there is nothing to rank.",
 
@@ -120,7 +121,7 @@ window.PH_COPY = (function () {
       "same spot — the lift is how far above or below it the model leans.",
     guideIntro:
       "Pitch Hawk publishes model probabilities for every at-bat and grades each " +
-      "one against what happened. Nothing here is a price or a pick.",
+      "one against what happened. They are the model's own probabilities, not sportsbook prices.",
     glossary: [
       ["Read", "A model probability for one outcome — a batter getting a hit, the next pitch being a ball, the home team winning."],
       ["League rate", "How often that outcome happens league-wide in the same spot. The white tick on each bar."],

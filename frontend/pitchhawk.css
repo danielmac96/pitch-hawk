@@ -302,6 +302,8 @@ body { margin: 0; }
 /* Title row */
 .ph-titlerow { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
 .ph-titlerow-date { font-size: 12px; color: var(--muted); }
+.ph-datestep { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.ph-datestep-lbl { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .ph-titlerow-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
 
 /* Segmented control and filter chips — shared by every tab from here on. */

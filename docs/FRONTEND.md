@@ -86,11 +86,13 @@ Two ways to restore it, no code change:
 2. **Runtime** — `localStorage["ph-feature-wagering"] = "true"`, reload.
    `"false"` forces it off; removing the key falls back to the build value.
 
-Turning it on restores: the sportsbook/prediction-market source filter chips,
-edge-threshold highlighting, the Edge column in the Data Feed's live at-bats
-table, the settled-picks table, the wagering hero and "how it works" copy, the
-21+/1-800-GAMBLER compliance lines, and the per-game `/edge/{game_pk}` API
-calls.
+Turning it on swaps in the wagering copy (`WAGERING_OVERRIDES` in `copy.js`:
+tab names, footer, the 21+/1-800-GAMBLER compliance lines) and makes
+`loadLive` fetch the per-game `/edge/{game_pk}` rows. **Nothing renders those
+rows today**: the source-filter chips, edge highlighting, Edge column and
+settled-picks table this flag once restored were removed with the 2026-09
+redesign, and the board shows model probabilities only — no sportsbook prices
+— whichever way the flag is set.
 
 Both voices live in `copy.js`: the base object positions the product as an
 analytics board, and `WAGERING_OVERRIDES` restores the betting framing.
