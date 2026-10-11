@@ -23,12 +23,18 @@ Deno.test("batterCountPmf is a distribution and P(>=1) matches the structural ro
   assertAlmostEquals(overProb(batterCountPmf(dists, paPmf, COUNT_OF.tb), 1.5), s.tb2, 1e-12);
 });
 
-Deno.test("ladder: half-point lines from 0.5, non-increasing, stops at the floor", () => {
+Deno.test("ladder: consecutive half-point lines, non-increasing, only lines still in doubt", () => {
   const l = ladder(negbinPmf(5.2, 0.1, 30));
-  assertEquals(l[0].line, 0.5);
-  assert(l.every((r, i) => r.line === i + 0.5));
+  assert(l.every((r, i) => i === 0 || r.line === l[i - 1].line + 1));
   assert(nonIncreasing(l));
-  assert(l.every((r) => r.p_over >= 0.005 - 1e-12));
+  assert(l.every((r) => r.p_over >= 0.005 - 1e-12 && r.p_over <= 0.995 + 1e-12));
+});
+
+Deno.test("ladder: a high-mean count (outs) reaches the lines around its median", () => {
+  const pmf = negbinPmf(16.8, 0.02, 60);
+  const l = ladder(pmf, undefined, 0.005, 16);
+  assert(l.some((r) => r.line === 16.5), JSON.stringify(l.map((r) => r.line)));
+  assert(l[0].line > 0.5);
 });
 
 Deno.test("ladder: a calibrator is applied per rung and keeps the ladder ordered", () => {

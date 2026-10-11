@@ -208,6 +208,8 @@
         proj: { rows: null, err: false },
         // Predictions on another day (?date=). null = the current slate.
         pDate: null,
+        // The game page (#/game/<pk>).
+        gameSel: null,
         past: { date: null, rows: null, games: null, err: false },
       };
       this._projAt = 0;
@@ -272,11 +274,12 @@
     // tabs instead of leaving the site.
     //   #/home?open=<pk,..>   #/pred?m=hr&team=NYY,BOS&status=live&lineup=1&min=3
     //   #/live/<pk>           #/data?tf=14&mk=batter_hit&team=NYY&park=..&hand=L&side=home
-    VIEWS = ["home", "pred", "live", "data"];
+    VIEWS = ["home", "pred", "live", "data", "game"];
     routeOf() {
       const s = this.state, q = new URLSearchParams();
       let path = s.view;
       if (s.view === "live" && s.liveSel && s.liveSel !== "top") path += `/${s.liveSel}`;
+      if (s.view === "game" && s.gameSel) path += `/${s.gameSel}`;
       if (s.view === "home") {
         const open = Object.keys(s.open).filter((k) => s.open[k]);
         if (open.length) q.set("open", open.join(","));
@@ -285,6 +288,7 @@
       if (s.view === "pred") {
         const d = this.PRED_DEFAULTS;
         if (this.predPast()) q.set("date", s.pDate);
+        if (s.pGame) q.set("game", s.pGame);
         if (s.pMarket !== d.pMarket) q.set("m", s.pMarket);
         if (s.pTeams.length) q.set("team", s.pTeams.join(","));
         if (s.pStatus !== d.pStatus) q.set("status", s.pStatus);
@@ -321,6 +325,7 @@
       const mode = q.get("mode");
       patch.mode = mode === "live" || mode === "pregame" ? mode : null;
       if (view === "live") patch.liveSel = seg && /^\d+$/.test(seg) ? seg : "top";
+      if (view === "game") { if (!seg || !/^\d+$/.test(seg)) return null; patch.gameSel = seg; }
       if (view === "home") {
         const open = {};
         (q.get("open") || "").split(",").filter((k) => /^\d+$/.test(k)).forEach((k) => { open[k] = true; });
@@ -328,6 +333,7 @@
       }
       if (view === "pred") {
         const d = this.PRED_DEFAULTS;
+        patch.pGame = /^\d+$/.test(q.get("game") || "") ? q.get("game") : null;
         const date = q.get("date");
         patch.pDate = /^\d{4}-\d{2}-\d{2}$/.test(date || "") ? date : null;
         const m = q.get("m");
@@ -374,7 +380,10 @@
       this._lastHash = h;
       const url = `${window.location.pathname}${window.location.search}${h}`;
       try {
-        if (prev && prev.split("?")[0] !== h.split("?")[0]) window.history.pushState(null, "", url);
+        if (prev && prev.split("?")[0] !== h.split("?")[0]) {
+          window.history.pushState(null, "", url);
+          this._navDepth = (this._navDepth || 0) + 1;
+        }
         else window.history.replaceState(null, "", url);
       } catch (_e) { /* sandboxed frames can refuse history writes */ }
     }
@@ -514,10 +523,27 @@
         case "pOpen":
           return this.setState({ pOpen: Object.assign({}, this.state.pOpen, { [arg]: !this.state.pOpen[arg] }) });
         // Explicitly leave for a game's Home pill. arg "pk" or "pk|side".
+        // Every "Open game" lands on the game page: its lines, its context and
+        // every prop in it, without losing the Predictions filters behind it.
         case "openGame": {
           const [pk, side] = String(arg).split("|");
           this.state.overlay = null;
-          return this.openPill(pk, side || null);
+          if (side && side !== "sp") this.state.tab = Object.assign({}, this.state.tab, { [pk]: side });
+          this.setState({ view: "game", gameSel: String(pk) });
+          try { window.scrollTo(0, 0); } catch (_e) { /* jsdom */ }
+          return;
+        }
+        case "gameBack": {
+          if (this._navDepth > 0) { try { window.history.back(); return; } catch (_e) { /* fall through */ } }
+          return this.setState({ view: "home" });
+        }
+        case "pGame": return this.setState({ pGame: arg || null, pAll: false, view: "pred",
+          pMarket: arg && this.state.view === "game" ? "top" : this.state.pMarket });
+        case "pGo": {
+          const [m, line, side] = String(arg).split("|");
+          return this.setState({ pMarket: m, pLine: line === "" || line == null ? null : Number(line),
+            pSide: side === "under" ? "under" : "over", pAll: false, pOpen: {},
+            pSort: this.isBatMk(m) && !(line && Number(line) !== 0.5) ? "lift" : "prob", pDir: -1 });
         }
         case "mode": return this.setState({ mode: arg === "live" || arg === "pregame" ? arg : null });
         case "goHome": return this.setState({ view: "home" });
@@ -896,7 +922,7 @@
     // Every probability on today's slate in one table, switchable by market.
     // Filters live in state (p*), never in the DOM, so they survive the poll.
     // Every market key Predictions answers to (chips are grouped in PRED_GROUPS).
-    PRED_MARKETS = [["hit", "Hits"], ["hr", "Home runs"], ["tb", "Total bases"], ["hrr", "H+R+RBI"], ["bk", "Batter Ks"],
+    PRED_MARKETS = [["top", "Top reads"], ["hit", "Hits"], ["hr", "Home runs"], ["tb", "Total bases"], ["hrr", "H+R+RBI"], ["bk", "Batter Ks"],
       ["pk", "Ks"], ["po", "Outs"], ["ph", "Hits allowed"], ["per", "ER"], ["pbb", "Walks"], ["sp", "All starters"],
       ["ml", "Moneyline"], ["rl", "Run line"], ["tot", "Total"], ["tt", "Team total"], ["wp", "Win prob"]];
     // The Predictions markets that rank batters (one row per batter-game).
@@ -904,7 +930,7 @@
     isBatMk(m) { return this.PRED_BATTER.includes(m); }
     // Column head for a batter market's probability.
     probHead(m) { return m === "hr" ? "P(1+ HR)" : m === "hrr" ? "P(1+ H+R+RBI)" : "P(1+ HIT)"; }
-    PRED_DEFAULTS = { pMarket: "hit", pTeams: [], pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false, pOpen: {},
+    PRED_DEFAULTS = { pMarket: "top", pGame: null, pTeams: [], pStatus: "all", pConfOnly: false, pMin: -10, pSort: "lift", pDir: -1, pAll: false, pOpen: {},
       pLine: null, pSide: "over", pPmin: 0, pPmax: 100 };
     PRED_PAGE = 25;
 
@@ -933,7 +959,7 @@
       if (past && this.state.past.date !== past && this._pastLoading !== past) this.loadPast(past);
       const mk = this.state.pMarket;
       let table, count;
-      const projMk = this.isBatMk(mk) || mk === "sp" || (this.LINE_MKS[mk] && this.LINE_MKS[mk].kind !== "game");
+      const projMk = this.isBatMk(mk) || mk === "sp" || mk === "top" || (this.LINE_MKS[mk] && this.LINE_MKS[mk].kind !== "game");
       const ps = projMk ? this.projStatus() : "ok";
       const gamesPending = !projMk && !this.todayGames().length && this.state.api.lastGood == null;
       if (ps !== "ok" || gamesPending) {
@@ -947,7 +973,11 @@
           ${this.trustTilesHtml()}
           <div class="ph-empty${err ? " ph-empty--err" : ""}" role="status">${esc(err ? COPY.predLoadError : COPY.predLoading)}</div>`;
       }
-      if (this.isLineView()) {
+      if (mk === "top") {
+        const top = this.topReads();
+        count = top.reduce((a, x) => a + x.rows.length, 0);
+        table = count ? this.topReadsHtml(top) : "";
+      } else if (this.isLineView()) {
         const rows = this.predLineRows();
         count = rows.length;
         table = count ? this.predLineTableHtml(rows) : this.predLineEmptyNote();
@@ -969,7 +999,7 @@
       // in-progress games to put first, so the pregame wording is the true one.
       const live = this.effectiveMode() === "live" && !this.predPast()
         && !["upcoming", "final"].includes(this.state.pStatus);
-      const sub = this.isLineView() ? COPY.predSubLine
+      const sub = mk === "top" ? COPY.predSubTop : this.isLineView() ? COPY.predSubLine
         : this.isBatMk(mk) ? (live ? COPY.predSubBatLive : COPY.predSubBatPre)
         : mk === "sp" ? COPY.predSubSp
           : live && mk === "wp" ? COPY.predSubWpLive : COPY.predSubGame;
@@ -1015,6 +1045,7 @@
     // swing board) and "All starters" (every prop + form per starter) keep
     // their dedicated tables.
     PRED_GROUPS = [
+      ["Start", [["top", "Top reads"]]],
       ["Batters", [["hit", "Hits"], ["hr", "Home runs"], ["tb", "Total bases"], ["hrr", "H+R+RBI"], ["bk", "Batter Ks"]]],
       ["Pitchers", [["pk", "Ks"], ["po", "Outs"], ["ph", "Hits allowed"], ["per", "ER"], ["pbb", "Walks"], ["sp", "All starters"]]],
       ["Games", [["ml", "Moneyline"], ["rl", "Run line"], ["tot", "Total"], ["tt", "Team total"], ["wp", "Win prob"]]],
@@ -1091,7 +1122,7 @@
           const pOver = this.lineP(rec, line);
           if (pOver == null) return;
           rows.push({ key: `b:${b.key}`, pin: `b:${b.id}`, name: b.name, team: this.teamOf(b), g, line, pOver,
-            sub: `${this.teamOf(b)} · #${b.slot || "—"} · vs ${b.spName || "TBD"}`,
+            sub: `${this.teamOf(b)} · #${b.slot || "—"} · ${this.handTxt(b)}vs ${b.spName || "TBD"}${b.spHand ? ` (${b.spHand})` : ""}`,
             proj: rec.expected_value != null ? Number(rec.expected_value) : null, rec, ladder: rec.ladder, playerId: b.id,
             version: rec.model_version, updatedAt: rec.updated_at, result: this.lineResult(rec, line) });
         });
@@ -1106,7 +1137,7 @@
           const pOver = this.lineP(r, line);
           if (pOver == null) return;
           rows.push({ key: `p:${r.game_pk}:${r.player_id}`, pin: null, name: r.player, team, g, line, pOver,
-            sub: `${team} vs ${opp} · model line ${r.line}`, proj: r.expected_value != null ? Number(r.expected_value) : null,
+            sub: `${r.pitch_hand ? `${r.pitch_hand}HP · ` : ""}${team} vs ${opp} · model line ${r.line}`, proj: r.expected_value != null ? Number(r.expected_value) : null,
             rec: r, ladder: r.ladder, playerId: String(r.player_id), version: r.model_version, updatedAt: r.updated_at,
             result: this.lineResult(r, line) });
         });
@@ -1321,8 +1352,149 @@
         if (left < row.scrollLeft || right > row.scrollLeft + row.clientWidth) row.scrollLeft = Math.max(0, left - 24);
       });
     }
+    // "L vs " / "S vs " -- the batter's side, ahead of the starter he faces.
+    handTxt(b) { return b && b.hand ? `${b.hand}HB ` : ""; }
+    // Park HR factor where it moves home runs, once the game's context has
+    // been fetched; asks for it otherwise (cached for the slate).
+    parkBadgeHtml(g) {
+      const m = this.state.pMarket;
+      if (!g || !["hr", "tb", "top"].includes(m)) return "";
+      const c = this.state.gameCtx[String(g.gamePk)];
+      if (!c) { this.loadGameContext(g.gamePk); return ""; }
+      if (c.park_hr_factor == null) return "";
+      const pct = Math.round((Number(c.park_hr_factor) - 1) * 100);
+      const wind = c.wind_mph != null && /^out/i.test(c.wind_direction || "") ? ` · wind out ${c.wind_mph}` : "";
+      return ` <span class="ph-tag ph-tag--park" title="Park home-run factor for ${esc(String(c.park_hr_factor_season || ""))}${wind ? ", and wind blowing out" : ""}">park ${pct >= 0 ? "+" : "−"}${Math.abs(pct)}% HR${esc(wind)}</span>`;
+    }
+    // Run a row builder under temporary Predictions state, so Top reads and
+    // the game page can reuse the same builders the tables use.
+    withPred(patch, fn) {
+      const keep = {};
+      Object.keys(patch).forEach((k) => { keep[k] = this.state[k]; this.state[k] = patch[k]; });
+      try { return fn(); } finally { Object.assign(this.state, keep); }
+    }
+    // ── Top reads: the strongest few in every market, one screen ─────────
+    // Ranked within each market on that market's own scale (lift over the
+    // league rate for the 1+ reads, probability at the line otherwise), and
+    // never across markets: a 75% 1+ hit and a 75% K over are not the same
+    // kind of strong.
+    TOP_N = 5;
+    TOP_SECTIONS = [
+      { m: "hit", title: "1+ Hit · biggest lift over league", patch: { pSort: "lift" } },
+      { m: "hr", title: "1+ Home run · biggest lift over league", patch: { pSort: "lift" } },
+      { m: "tb", line: 1.5, title: "2+ Total bases · most likely", patch: { pSort: "prob" } },
+      { m: "bk", line: 1.5, side: "under", title: "Batter Ks under 1.5 · most likely", patch: { pSort: "prob" } },
+      { m: "pk", title: "Starter Ks · strongest over the model line", patch: { pSort: "prob" } },
+      { m: "pk", side: "under", title: "Starter Ks · strongest under the model line", patch: { pSort: "prob" } },
+      { m: "po", title: "Outs recorded · strongest over", patch: { pSort: "prob" } },
+      { m: "ml", title: "Moneyline · biggest favourites", patch: { pSort: "prob" } },
+      { m: "tot", side: "both", title: "Totals · strongest lean at the model line", patch: { pSort: "prob" } },
+    ];
+    topReads() {
+      return this.TOP_SECTIONS.map((sec) => {
+        const base = Object.assign({ pMarket: sec.m, pLine: sec.line != null ? sec.line : null, pSide: sec.side === "under" ? "under" : "over",
+          pDir: -1, pAll: true, mode: "pregame" }, sec.patch);
+        let rows;
+        if (this.isBatMk(sec.m) && sec.line == null) {
+          rows = this.withPred(base, () => this.predBatterRows()).map((r) => ({
+            key: `${sec.m}:${r.b.key}`, pin: `b:${r.b.id}`, name: r.b.name, g: r.g, p: r.c.p, lift: r.c.lift, band: r.c.band,
+            sub: `${this.teamOf(r.b)} · ${this.handTxt(r.b)}vs ${r.b.spName || "TBD"}`, label: sec.m === "hr" ? "1+ HR" : "1+ Hit",
+            result: r.b[sec.m] ? r.b[sec.m].result : null,
+          }));
+        } else {
+          const one = (side) => this.withPred(Object.assign({}, base, { pSide: side }), () => this.predLineRows().map((r) => ({
+            key: `${sec.m}:${side}:${r.key}`, pin: r.pin, name: r.name, g: r.g, p: r.p, sub: r.sub,
+            label: sec.m === "ml" ? "to win" : this.withPred({ pSide: side }, () => this.sideWord(r.line, (this.LINE_MKS[sec.m] || {}).unit)),
+            result: r.result,
+          })));
+          rows = sec.side === "both" ? one("over").concat(one("under")).sort((a, z) => z.p - a.p)
+            : one(sec.side === "under" ? "under" : "over");
+        }
+        return Object.assign({}, sec, { rows: rows.slice(0, this.TOP_N) });
+      }).filter((x) => x.rows.length);
+    }
+    topReadsHtml(top) {
+      return `<div class="ph-top">${top.map((sec) => `<section class="ph-top-sec">
+          <div class="ph-top-head"><b>${esc(sec.title)}</b>
+            <button class="ph-link" data-act="pGo" data-arg="${esc(`${sec.m}|${sec.line == null ? "" : sec.line}|${sec.side === "under" ? "under" : "over"}`)}">See all ›</button></div>
+          ${sec.rows.map((r, i) => `<div class="ph-top-row${r.lift ? " has-lift" : ""}">
+            <span class="ph-mono ph-dim">${i + 1}</span>
+            ${r.pin ? this.pinBtnHtml(r.pin, "Watch") : "<span></span>"}
+            <span class="ph-top-who"><b class="ph-ellip">${esc(r.name || "—")}</b>
+              <span class="ph-ellip ph-small"><span class="ph-mono ph-top-lbl">${esc(r.label)}</span> · ${this.numHtml(r.sub)}${this.parkBadgeHtml(sec.m === "hr" ? r.g : null)}</span></span>
+            ${this.probPairHtml(r.p)}
+            ${r.lift ? `<span class="ph-mono ph-lift ph-lift--${r.band || "avg"}">${esc(r.lift)}</span>` : ""}
+            ${this.resultChipHtml(r.result, r.g)}
+          </div>`).join("")}
+        </section>`).join("")}</div>`;
+    }
+
+    // ── the game page (#/game/<pk>) ──────────────────────────────────────
+    // One game: every game line the model prices, the matchup context, both
+    // starters' props and every batter's reads, with a way into Predictions
+    // filtered to just this game.
+    gamePageHtml() {
+      const pk = String(this.state.gameSel || "");
+      const g = (PH.games || []).find((x) => String(x.gamePk) === pk)
+        || ((this.state.past.games || []).find((x) => String(x.gamePk) === pk)) || null;
+      const back = `<button class="ph-link ph-back" data-act="gameBack">‹ Back</button>`;
+      if (!g) {
+        return `<div class="ph-titlerow">${back}<h1 class="ph-h1">${esc(COPY.gameTitle)}</h1></div>
+          <div class="ph-empty ph-empty--dash"><b>${esc(COPY.gameNotFound)}</b></div>`;
+      }
+      this.loadGameContext(g.gamePk);
+      const score = g.phase === "pregame" ? `${this.clockOf(g.startTs) || "TBD"} ${this.tzLabel()}`
+        : `${g.score.away}–${g.score.home}${g.phase === "final" ? " · Final" : ` · ${g.half || ""}${g.inning || ""}`}`;
+      const lines = this.withPred({ pSide: "over", pLine: null, pStatus: "all", pTeams: [], pGame: null, pPmin: 0, pPmax: 100 }, () => {
+        const ml = this.gameLineRows(g, "ml", null);
+        const rlFav = this.withPred({ pSide: "over" }, () => this.gameLineRows(g, "rl", 1.5));
+        const rlDog = this.withPred({ pSide: "under" }, () => this.gameLineRows(g, "rl", 1.5));
+        const tot = this.gameLineRows(g, "tot", null);
+        const tt = this.gameLineRows(g, "tt", null);
+        return { ml, rlFav, rlDog, tot, tt };
+      });
+      const cell = (label, p, extra) => `<div class="ph-gl-cell"><span class="ph-meta-k">${esc(label)}</span>${this.probPairHtml(p)}${extra ? `<span class="ph-small ph-mut">${esc(extra)}</span>` : ""}</div>`;
+      const mlHtml = lines.ml.map((r) => cell(r.name, r.pOver)).join("");
+      const rlHtml = lines.rlFav.concat(lines.rlDog).map((r) => cell(r.name, r.pOver)).join("");
+      const t = lines.tot[0];
+      const totHtml = t ? `${cell(`Over ${t.line}`, t.pOver, `${t.proj.toFixed(1)} runs projected`)}${cell(`Under ${t.line}`, 1 - t.pOver)}` : "";
+      const ttHtml = lines.tt.map((r) => cell(`${r.team} o${r.line}`, r.pOver, `${r.proj.toFixed(1)} projected`)).join("");
+      const noRuns = !g.runs ? `<div class="ph-note">${esc(COPY.runsNoneBody)}</div>` : "";
+      const pregameNote = g.phase !== "pregame" ? `<div class="ph-note">${esc(COPY.gameFrozenNote)}</div>` : "";
+      const ladders = t ? `<details class="ph-gl-more"><summary>Every total and team-total line</summary>
+          <div class="ph-gl-ladders">
+            <div><span class="ph-meta-k">GAME TOTAL</span>${this.ladderTableHtml(t, "runs")}</div>
+            ${lines.tt.map((r) => `<div><span class="ph-meta-k">${esc(r.team)} TEAM TOTAL</span>${this.ladderTableHtml(r, "runs")}</div>`).join("")}
+          </div></details>` : "";
+      const bat = (side) => `<div class="ph-gp-sec"><div class="ph-strip-head"><span class="ph-table-title">${esc(side === "home" ? g.home : g.away)} batters</span>
+          <span class="ph-strip-sub">tap a name for every read · batting order</span></div>${this.pillBatterTableHtml(g, side, "order")}</div>`;
+      return `<div class="ph-titlerow">${back}
+          <h1 class="ph-h1">${esc(`${g.away} @ ${g.home}`)}</h1>
+          <span class="ph-strip-sub ph-mono">${esc(score)}</span>
+          <span class="ph-titlerow-right">
+            <button class="ph-chip is-on" data-act="pGame" data-arg="${esc(pk)}">Every prop in this game ›</button>
+            ${g.phase === "live" ? `<button class="ph-chip" data-act="liveGo" data-arg="${esc(pk)}">Live at-bat ›</button>` : ""}
+          </span>
+        </div>
+        <div class="ph-gp-sec ph-card">
+          <div class="ph-strip-head"><span class="ph-table-title">Game lines</span><span class="ph-strip-sub">${esc(COPY.predSubLine)}</span></div>
+          ${pregameNote}${noRuns}
+          <div class="ph-gl-grid">
+            <div class="ph-gl-group"><span class="ph-kicker">Moneyline</span><div class="ph-gl-row">${mlHtml || "—"}</div></div>
+            ${rlHtml ? `<div class="ph-gl-group"><span class="ph-kicker">Run line</span><div class="ph-gl-row">${rlHtml}</div></div>` : ""}
+            ${totHtml ? `<div class="ph-gl-group"><span class="ph-kicker">Total</span><div class="ph-gl-row">${totHtml}</div></div>` : ""}
+            ${ttHtml ? `<div class="ph-gl-group"><span class="ph-kicker">Team totals</span><div class="ph-gl-row">${ttHtml}</div></div>` : ""}
+          </div>
+          ${ladders}
+        </div>
+        <div class="ph-gp-sec"><div class="ph-strip-head"><span class="ph-table-title">Matchup</span></div>${this.pillMetaGridHtml(g)}</div>
+        <div class="ph-gp-sec"><div class="ph-strip-head"><span class="ph-table-title">Starting pitchers</span>
+          <button class="ph-link" data-act="pGo" data-arg="pk||over">Rank every starter's Ks ›</button></div>${this.pillStartersTableHtml(g)}</div>
+        ${bat("away")}${bat("home")}`;
+    }
     predTableTitle() {
       const s = this.state, m = s.pMarket, mk = this.LINE_MKS[m];
+      if (m === "top") return "Top reads · every market";
       if (!this.isLineView()) return COPY.predTableTitle[m] || (mk ? mk.label : "");
       const L = this.curLine();
       if (m === "ml") return "Moneyline · both sides · pregame call";
@@ -1356,10 +1528,11 @@
       const d = this.PRED_DEFAULTS;
       Object.assign(this.state, {
         pTeams: [], pStatus: d.pStatus, pConfOnly: d.pConfOnly, pMin: d.pMin, pAll: false,
-        pLine: null, pSide: d.pSide, pPmin: d.pPmin, pPmax: d.pPmax,
+        pLine: null, pSide: d.pSide, pPmin: d.pPmin, pPmax: d.pPmax, pGame: null,
       });
     }
     predStatusOk(g) {
+      if (this.state.pGame && String(g.gamePk) !== this.state.pGame) return false;
       const s = this.state.pStatus;
       return s === "all" || (s === "upcoming" ? g.phase === "pregame" : g.phase === s);
     }
@@ -1419,6 +1592,8 @@
           <input type="range" min="0" max="100" step="5" value="${s.pPmax}" data-pfilter="pPmax" aria-label="Maximum probability">
           <span class="ph-mono ph-range-val">${s.pPmin}–${s.pPmax}%</span>
         </span>` : "";
+      const pg = s.pGame ? this.gameByPk(s.pGame) : null;
+      const gameCtl = s.pGame ? `<button class="ph-chip is-on" data-act="pGame" data-arg="" title="Show every game again">${esc(pg ? `${pg.away} @ ${pg.home}` : `Game ${s.pGame}`)} ✕</button>` : "";
       const fmtCtl = `<button class="ph-chip" data-act="oddsFmt" title="Show the model probability as a percentage or as its fair American price (the price at which a bet on the model's number breaks even)">${s.oddsFmt === "us" ? "Fair odds ⇄ %" : "% ⇄ Fair odds"}</button>`;
       // null while the rows are still on their way: a count of 0 there is a
       // claim about the data, and the data has not arrived.
@@ -1438,6 +1613,7 @@
           </div>
           <div class="ph-fscroll">${mkChips}</div>
           ${lineCtl || sideCtl ? `<div class="ph-fscroll">${lineCtl}${sideCtl}</div>` : ""}
+          ${gameCtl ? `<div class="ph-fbar-line">${gameCtl}</div>` : ""}
           ${open ? `<div class="ph-fbar-line ph-fbar-more">${teamSel}${statusChips}${batterCtl}${bandCtl}${fmtCtl}<button class="ph-link" data-act="pClear">Clear</button>${exportBtn}</div>` : ""}
         </div>`;
       }
@@ -1449,6 +1625,7 @@
         <span class="ph-fbar-break"></span>
         ${lineCtl}${sideCtl}
         ${lineCtl || sideCtl ? `<span class="ph-vrule"></span>` : ""}
+        ${gameCtl}
         ${teamSel}
         ${statusChips}
         ${batterCtl}
@@ -1643,7 +1820,7 @@
           ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
           <button class="ph-rowlink" data-act="pOpen" data-arg="b:${esc(b.key)}" aria-expanded="${!!s.pOpen[`b:${b.key}`]}">
             <span class="ph-rowlink-top"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-mono">${esc(this.teamOf(b))} · #${b.slot || "—"}</span></span>
-            <span class="ph-ellip">${this.numHtml(`vs ${b.spName || "TBD"} · ${g.away} @ ${g.home} ${when(g)}`)}</span>
+            <span class="ph-ellip">${this.numHtml(`${this.handTxt(b)}vs ${b.spName || "TBD"}${b.spHand ? ` (${b.spHand})` : ""} · ${g.away} @ ${g.home} ${when(g)}`)}${this.parkBadgeHtml(g)}</span>
           </button>
           <span class="ph-stack">
             ${this.phaseChip(pk, pt)}
@@ -2153,6 +2330,8 @@
         }
         b[mk] = r;
         if (b.slot == null && r.lineup_slot != null) b.slot = Number(r.lineup_slot);
+        if (b.hand == null && r.bat_side) b.hand = r.bat_side;
+        if (b.spHand == null && r.opposing_pitcher_hand) b.spHand = r.opposing_pitcher_hand;
         if (b.xpa == null && r.expected_pa != null) b.xpa = Number(r.expected_pa);
         if (!b.form && r.form_30d) b.form = r.form_30d;
         if (!b.oppForm && r.opp_form_30d) b.oppForm = r.opp_form_30d;
@@ -2918,6 +3097,7 @@
           <span class="ph-kicker">Player game markets</span>
           ${tabs}${sorts}
           <span class="ph-gpill-note">${esc(COPY.marketsNote)}</span>
+          <button class="ph-chip ph-opengame" data-act="openGame" data-arg="${esc(pk)}">Full game page ›</button>
         </div>
         ${g.phase === "final" ? `<div class="ph-note">${esc(COPY.finalGradedNote)}</div>` : ""}
         ${tab === "sp" ? this.pillStartersTableHtml(g) : this.pillBatterTableHtml(g, tab, srt)}
@@ -3059,7 +3239,7 @@
           return `<div class="ph-btable-row">
             ${this.pinBtnHtml("b:" + b.id, "Watch this batter")}
             <span class="ph-mono ph-dim">${b.slot || "—"}</span>
-            <span class="ph-bname"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-ellip">vs ${esc(b.spName || "TBD")}</span></span>
+            <button class="ph-bname ph-linkish" data-act="ovPlayer" data-arg="${esc(b.id)}|${esc(String(g.gamePk))}" title="Every read for ${esc(b.name || "this batter")}"><b class="ph-ellip">${esc(b.name || "—")}</b><span class="ph-ellip">${this.handTxt(b)}vs ${esc(b.spName || "TBD")}</span></button>
             ${this.probCellHtml(b, "hit")}
             ${this.probCellHtml(b, "hr")}
             ${this.baseBatterCellHtml(b.hrr, "hrr")}${this.baseBatterCellHtml(b.tb15, "tb")}
@@ -5090,6 +5270,7 @@
         if (view === "home") main = this.homeHtml();
         else if (view === "pred") main = this.predHtml();
         else if (view === "live") main = this.liveHtml();
+        else if (view === "game") main = this.gamePageHtml();
         else main = this.dataHtml();
       } catch (e) {
         console.error(`[pitchhawk] ${view} view failed to render`, e);

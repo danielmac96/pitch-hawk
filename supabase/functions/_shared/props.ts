@@ -203,17 +203,20 @@ export function batterCountPmf(dists: Vec[], paPmf: Vec, valueOf: number[], cap 
 export interface Rung { line: number; p_over: number }
 
 /**
- * P(over) at every half-point line from 0.5 up while the raw tail is at
- * least `floor`, at most `maxRungs` rungs. Each rung goes through the
- * market's calibrator -- fitted at the published line, applied to the
- * others as the best available map -- and a running minimum keeps the ladder
- * non-increasing whatever the calibrator does.
+ * P(over) at every half-point line where the outcome is still in doubt --
+ * raw P(over) between `floor` and 1 - `floor` -- at most `maxRungs` rungs.
+ * Lines below the window are near-certain overs (a starter's 3.5 outs), lines
+ * above it near-certain unders; a reader of the ladder treats both as such.
+ * Each rung goes through the market's calibrator -- fitted at the published
+ * line, applied to the others as the best available map -- and a running
+ * minimum keeps the ladder non-increasing whatever the calibrator does.
  */
-export function ladder(pmf: Vec, cal?: Params, floor = 0.005, maxRungs = 10): Rung[] {
+export function ladder(pmf: Vec, cal?: Params, floor = 0.005, maxRungs = 12): Rung[] {
   const out: Rung[] = [];
   let prev = 1;
   for (let k = 0; k < pmf.length - 1 && out.length < maxRungs; k++) {
     const raw = overProb(pmf, k + 0.5);
+    if (raw > 1 - floor) continue;
     if (raw < floor) break;
     const p = Math.min(prev, calibrate(raw, cal));
     out.push({ line: k + 0.5, p_over: p });
@@ -477,7 +480,7 @@ export function starterMarkets(
       line,
       p_over: calibrate(overProb(pmf!, line), prm.cal),
       expected: pmf!.reduce((a, v, i) => a + v * i, 0),
-      ladder: ladder(pmf!, prm.cal, 0.005, 14),
+      ladder: ladder(pmf!, prm.cal, 0.005, 16),
     };
   }
   return out;

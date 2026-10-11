@@ -1268,3 +1268,30 @@ body { margin: 0; }
 }
 .ph-blines { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
 .ph-bline { display: flex; flex-direction: column; gap: 2px; font-size: 12px; }
+
+/* ── Top reads + game page (Phase 2) ─────────────────────────────────── */
+.ph-top { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 14px; }
+.ph-top-sec { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
+.ph-top-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
+.ph-top-row { display: grid; grid-template-columns: 18px 20px minmax(0,1fr) 72px 60px; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--row-border); font-size: 12.5px; }
+.ph-top-row.has-lift { grid-template-columns: 18px 20px minmax(0,1fr) 72px 64px 60px; }
+.ph-top-who { display: flex; flex-direction: column; min-width: 0; }
+.ph-top-lbl { font-size: 11.5px; color: var(--text-2); }
+.ph-tag--park { margin-left: 6px; }
+.ph-back { margin-right: 4px; }
+.ph-gp-sec { margin: 16px 0; }
+.ph-card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 14px 16px; }
+.ph-gl-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 8px; }
+.ph-gl-group { display: flex; flex-direction: column; gap: 6px; }
+.ph-gl-row { display: flex; gap: 14px; flex-wrap: wrap; }
+.ph-gl-cell { display: flex; flex-direction: column; gap: 2px; min-width: 96px; }
+.ph-gl-more { margin-top: 12px; font-size: 12.5px; }
+.ph-gl-more summary { cursor: pointer; color: var(--text-2); }
+.ph-gl-ladders { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; margin-top: 10px; }
+.ph-linkish { background: none; border: 0; padding: 0; text-align: left; color: inherit; cursor: pointer; font: inherit; }
+.ph-linkish:hover b { text-decoration: underline; }
+@media (max-width: 1023px) {
+  .ph-top { grid-template-columns: 1fr; }
+  .ph-top-row, .ph-top-row.has-lift { grid-template-columns: 16px 20px minmax(0,1fr) 66px 60px; }
+  .ph-top-row > .ph-lift { display: none; }
+}

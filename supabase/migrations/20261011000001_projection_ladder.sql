@@ -7,7 +7,10 @@
 --
 --     ladder = [{"line": 0.5, "p_over": 0.71}, {"line": 1.5, "p_over": 0.33}, ...]
 --
--- P(count > line), non-increasing, calibrated with the market's calibrator.
+-- P(count > line) at every half-point line still in doubt (raw P(over)
+-- between 0.5% and 99.5%), non-increasing, calibrated with the market's
+-- calibrator. A line below the first rung is a near-certain over, a line
+-- above the last a near-certain under.
 -- `line`/`probability` stay the graded, published read; any rung grades from
 -- `actual_count` (`actual_count > line`), so settle needs no change.
 --

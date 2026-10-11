@@ -131,14 +131,16 @@ def batter_count_pmf(dists: np.ndarray, pa_pmf: np.ndarray, value_of, cap: int =
 
 
 def ladder(pmf, cal: dict | None = None, floor: float = 0.005,  # noqa: ANN001
-           max_rungs: int = 10) -> list[dict]:
-    """Calibrated P(over) at each half-point line, non-increasing."""
+           max_rungs: int = 12) -> list[dict]:
+    """Calibrated P(over) at each half-point line still in doubt, non-increasing."""
     pmf = np.asarray(pmf, float)
     out, prev = [], 1.0
     for k in range(len(pmf) - 1):
         if len(out) >= max_rungs:
             break
         raw = D.over_prob(pmf, k + 0.5)
+        if raw > 1 - floor:
+            continue
         if raw < floor:
             break
         p = min(prev, D.calibrate(raw, cal))
@@ -215,7 +217,7 @@ def starter_markets(bundle: dict, *, sp_r, sp_hand: str, lineup: list[tuple],  #
         out[mkt] = {"line": line,
                     "p_over": D.calibrate(D.over_prob(pmf, line), prm.get("cal")),
                     "expected": float(np.dot(np.arange(len(pmf)), pmf)),
-                    "ladder": ladder(pmf, prm.get("cal"), 0.005, 14)}
+                    "ladder": ladder(pmf, prm.get("cal"), 0.005, 16)}
     return out
 
 
