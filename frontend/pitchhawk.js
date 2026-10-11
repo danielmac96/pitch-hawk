@@ -538,6 +538,12 @@
           try { window.scrollTo(0, 0); } catch (_e) { /* jsdom */ }
           return;
         }
+        case "dGo": {
+          const [mk, tf] = String(arg).split("|");
+          this.setState({ view: "data" });
+          return this.dSet({ dMk: this.D_MARKETS.some((x) => x[0] === mk) ? mk : "all", dTf: Number(tf) || 30 });
+        }
+        case "dExport": { this.exportGraded(); return; }
         case "legToggle": return this.toggleLeg(arg);
         case "legRemove": { this.saveCard((this.state.card || []).filter((l) => l.id !== arg)); return this.render(); }
         case "cardExport": {
@@ -1347,7 +1353,7 @@
             <span class="ph-rowlink-top"><b class="ph-ellip">${esc(r.name || "—")}</b></span>
             <span class="ph-ellip">${this.numHtml(`${r.sub} · ${when(r.g)}`)}</span>
           </button>
-          ${this.phaseChip(pk, pt)}
+          <span class="ph-stack">${this.phaseChip(pk, pt)}${this.versionTagHtml(r.version)}</span>
           <span class="ph-mono ph-lp-line">${esc(lineTxt(r))}</span>
           <span class="ph-lp">${this.probBarHtml(r.p)}${this.probPairHtml(r.p)}</span>
           <span class="ph-mono">${esc(this.projTxt(r, mk.unit))}</span>
@@ -1729,6 +1735,13 @@
       } catch (_e) { return null; }
     }
 
+    // Which model made a number, on the number: BASE (league rates x 30-day
+    // form, a placeholder) is badged; a trained model shows its version.
+    versionTagHtml(v) {
+      if (!v) return "";
+      const base = /^base/i.test(v);
+      return `<span class="ph-tag ${base ? "ph-tag--base" : "ph-tag--ver"}" title="${esc(base ? `Base model (${v}): league rates × 30-day form, not a trained model` : `Trained model ${v}`)}">${esc(base ? "Base" : v.replace(/\+.*$/, ""))}</span>`;
+    }
     predTableTitle() {
       const s = this.state, m = s.pMarket, mk = this.LINE_MKS[m];
       if (m === "top") return "Top reads · every market";
@@ -2062,6 +2075,7 @@
           <span class="ph-stack">
             ${this.phaseChip(pk, pt)}
             <span class="ph-mono ph-card-fresh ph-small ${this.flashIf(`pred:${b.key}`, b.updatedAt)}">${esc(fresh)}</span>
+            ${this.versionTagHtml(rec && rec.model_version)}
           </span>
           <span class="ph-status ph-status--${b.slot ? "solid" : "dashed"} ph-status--left">${b.slot ? "LINEUP ✓" : "LINEUP PENDING"}</span>
           ${this.probCellHtml(b, m, true)}
@@ -2262,17 +2276,35 @@
       const to = PH.mlbDate(0), from = PH.mlbDate(-(this.TRUST_DAYS - 1));
       const dates = [];
       for (let i = this.TRUST_DAYS - 1; i >= 0; i -= 1) dates.push(PH.mlbDate(-i));
+      // Per market, like loadProjections: /projections without a market
+      // returns at most 1,000 rows ordered by probability, and a slate across
+      // every market is more than that, so the unfiltered call silently
+      // dropped the lowest-probability reads -- most of 1+ HR -- and biased
+      // the very tiles meant to show how well-calibrated the model is.
+      const perDay = (d) => Promise.all(this.BATTER_MARKETS.map((m) => fetchJson(`/projections?date=${d}&market=${m}`))
+        .concat([fetchJson(`/projections?date=${d}&role=pitcher`)]))
+        .then((rs) => (rs.some((r) => !r) ? null : { rows: [].concat(...rs.map((r) => r.rows || [])) }));
       const [projDays, feed] = await Promise.all([
-        Promise.all(dates.map((d) => fetchJson(`/projections?date=${d}`))),
+        Promise.all(dates.map(perDay)),
         PH.loadFeed(API_BASE, { from, to, market: "game_moneyline", phase: "pregame", limit: 1000 }).catch(() => null),
       ]);
       // Calibration, per market: the same sums as projection_calibration().
       const calib = { batter_hit: null, batter_hr: null, batter_hrr: null };
+      // Every ladder rung graded from actual_count: how each LINE (not just
+      // the published one) has landed against what the model said.
+      const byLine = {};
       let served = null, failed = false;
       projDays.forEach((res) => {
         if (!res) { failed = true; return; }
         (res.rows || []).forEach((r) => {
           if (served === null) served = Object.prototype.hasOwnProperty.call(r, "result");
+          if ((r.result === "hit" || r.result === "miss") && r.actual_count != null && Array.isArray(r.ladder)) {
+            r.ladder.forEach((x) => {
+              const k = `${r.market}|${x.line}`;
+              const b = byLine[k] || (byLine[k] = { market: r.market, line: Number(x.line), n: 0, sumP: 0, hits: 0 });
+              b.n += 1; b.sumP += Number(x.p_over); if (Number(r.actual_count) > Number(x.line)) b.hits += 1;
+            });
+          }
           const c = calib[r.market] || (calib[r.market] = { n: 0, sumP: 0, hits: 0, voids: 0, version: null });
           if (r.model_version) c.version = r.model_version;
           if (r.result === "void") { c.voids += 1; return; }
@@ -2287,7 +2319,7 @@
           if (r.result === "win") wp.w += 1; else if (r.result === "loss") wp.l += 1;
         });
       }
-      this.setState({ trust: { from, to, calib, served, failed, wp, loaded: true } });
+      this.setState({ trust: { from, to, calib, byLine, served, failed, wp, loaded: true } });
     }
     // At-bat calls and velo error, from the accuracy rollup already held for
     // the Data Feed — no second request.
@@ -2319,11 +2351,13 @@
     }
     trustTilesHtml() {
       const t = this.state.trust;
-      const tile = (label, valHtml, sub, tone, tip) => `<div class="ph-kpi" title="${esc(tip || "")}">
-          <span class="ph-kpi-k">${esc(label)}</span>
+      // A tile opens the Data Feed on the same market and window, so the
+      // seven-day number and the full record are one click apart.
+      const tile = (label, valHtml, sub, tone, tip, go) => `<${go ? `button data-act="dGo" data-arg="${esc(go)}"` : "div"} class="ph-kpi${go ? " ph-kpi--link" : ""}" title="${esc(tip || "")}">
+          <span class="ph-kpi-k">${esc(label)}${go ? " ›" : ""}</span>
           <b class="ph-mono ph-kpi-v ${tone ? `ph-tone-${tone}` : ""}">${valHtml}</b>
           <span class="ph-kpi-sub">${sub}</span>
-        </div>`;
+        </${go ? "button" : "div"}>`;
       const small = (n) => n < this.MIN_GRADED ? ` · small sample` : "";
       const calTile = (label, key) => {
         if (!t) return tile(label, "—", "loading…");
@@ -2333,8 +2367,8 @@
         if (!c || !c.n) return tile(label, "—", "nothing graded yet", null, tip);
         const exp = c.sumP / c.n, act = c.hits / c.n, gap = Math.abs(act - exp) * 100;
         return tile(label, this.numHtml(`${this.pct(act)} / ${this.pct(exp)}`),
-          this.numHtml(`landed / predicted · ${c.n} graded${c.voids ? ` · ${c.voids} DNP` : ""}${small(c.n)}`),
-          c.n < this.MIN_GRADED ? null : gap < 2 ? "good" : gap < 4 ? "amber" : "bad", tip);
+          this.numHtml(`landed / predicted · ${c.n} graded${c.voids ? ` · ${c.voids} DNP` : ""}${small(c.n)}${c.version ? ` · ${c.version}` : ""}`),
+          c.n < this.MIN_GRADED ? null : this.gapBand(act - exp, exp) === "ok" ? "good" : gap < 4 ? "amber" : "bad", tip, `${key}|7`);
       };
       const wp = t && t.wp;
       const ab = this.trustRollup("ab_result");
@@ -2344,6 +2378,7 @@
         calTile("1+ HIT CALIBRATION · 7 DAYS", "batter_hit"),
         calTile("1+ HR CALIBRATION · 7 DAYS", "batter_hr"),
         calTile("1+ HRR CALIBRATION · 7 DAYS", "batter_hrr"),
+        calTile("STARTER Ks · 7 DAYS", "pitcher_k"),
         !wp ? tile("WIN PROB · 7 DAYS", "—", t ? "couldn't load" : "loading…")
           : tile("WIN PROB · 7 DAYS", this.numHtml(this.ratioPct(wp.w, wp.l + wp.w)),
             wp.w + wp.l ? this.numHtml(`pregame favourite won${small(wp.w + wp.l)}`) : "nothing graded yet",
@@ -4594,6 +4629,13 @@
       ["batter_hit", "1+ Hit", "1+ Hit", "1+ HIT"],
       ["batter_hr", "1+ HR", "1+ HR", "1+ HR"],
       ["batter_hrr", "1+ HRR", "1+ H+R+RBI", "1+ HRR"],
+      ["batter_tb15", "TB 1.5", "Total bases 1.5", "TB"],
+      ["batter_k", "Batter K", "Batter Ks 0.5", "BAT K"],
+      ["pitcher_k", "SP Ks", "Starter Ks", "SP K"],
+      ["pitcher_outs", "SP outs", "Starter outs", "SP OUTS"],
+      ["pitcher_hits", "SP hits", "Starter hits allowed", "SP H"],
+      ["pitcher_er", "SP ER", "Starter earned runs", "SP ER"],
+      ["pitcher_bb", "SP BB", "Starter walks", "SP BB"],
       ["game_moneyline", "Win prob", "Win prob", "WIN"],
       ["game_total", "Totals", "Totals", "TOTAL"],
       ["ab_result", "At-bat", "At-bat result", "AT-BAT"],
@@ -4651,6 +4693,7 @@
            ${this.dailyGapChartHtml(sum)}
            ${this.accuracyTrendHtml()}
            ${this.byMarketTableHtml(sum)}
+           ${this.byLineTableHtml()}
            ${this.byTeamGridHtml(sum)}
            ${this.splitsHtml(sum)}`
         : this.dEmptyHtml() + this.accuracyTrendHtml();
@@ -4843,6 +4886,8 @@
         overall: this.statOf(cur),
         bins: group(cur, (r) => Math.min(9, Math.floor(Number(r.probability) * 10)), "bin")
           .map((b) => Object.assign(b, { bin: Number(b.bin) })),
+        bins_fine: group(cur.filter((r) => Number(r.probability) < 0.3), (r) => Math.floor(Number(r.probability) * 20), "k")
+          .map((b) => Object.assign(b, { lo: Number(b.k) * 5, hi: Number(b.k) * 5 + 5 })),
         daily: group(G.filter((r) => this.dPass(r, "tf") && r.official_date >= d0 && r.official_date <= w.to), (r) => r.official_date, "date"),
         by_market: group(G.filter((r) => this.dPass(r, "mk")), (r) => r.market, "market"),
         by_team: group(G.filter((r) => this.dPass(r, "team")), (r) => r.team_abbrs, "team"),
@@ -4859,7 +4904,14 @@
     gapTxt(g) { return g == null ? "—" : `${g >= 0 ? "+" : "−"}${Math.abs(g * 100).toFixed(1)} pts`; }
     gapTone(g) { if (g == null) return null; const a = Math.abs(g) * 100; return a < 2 ? "good" : a < 4 ? "amber" : "bad"; }
     // Calibration colour: within 3 pts green; landed more blue; landed less amber.
-    gapBand(g) { return g == null ? "none" : Math.abs(g) * 100 <= 3 ? "ok" : g > 0 ? "more" : "less"; }
+    // Within 3 points is fine for a 60% read, but 3 points on a 12% HR read is
+    // a quarter of the number: below 30% the band is relative (within 10% of
+    // the predicted rate, and never tighter than 1 point).
+    gapBand(g, exp) {
+      if (g == null) return "none";
+      const tol = exp != null && exp < 0.3 ? Math.max(0.01, 0.1 * exp) : 0.03;
+      return Math.abs(g) <= tol ? "ok" : g > 0 ? "more" : "less";
+    }
 
     // ── filter bar ───────────────────────────────────────────────────────
     parkLabel(v) {
@@ -4901,6 +4953,7 @@
             ${this.segHtml("dHand", s.dHand, [["any", "Any SP"], ["L", "vs LHP"], ["R", "vs RHP"]])}
             ${this.segHtml("dSide", s.dSide, [["any", "Home + away"], ["home", "Home"], ["away", "Away"]])}
             <button class="ph-link" data-act="dClear">Clear</button>
+          <button class="ph-link" data-act="dExport" title="Every graded read in this scenario, as CSV">Export CSV</button>
           </div>` : ""}
           <span class="ph-mono ph-fbar-count">${esc(scenario)} · <b>${n == null ? "—" : n.toLocaleString()}</b> graded</span>
         </div>`;
@@ -4923,6 +4976,7 @@
           ${this.segHtml("dHand", s.dHand, [["any", "Any SP"], ["L", "vs LHP"], ["R", "vs RHP"]])}
           ${this.segHtml("dSide", s.dSide, [["any", "Home + away"], ["home", "Home"], ["away", "Away"]])}
           <button class="ph-link" data-act="dClear">Clear</button>
+          <button class="ph-link" data-act="dExport" title="Every graded read in this scenario, as CSV">Export CSV</button>
           <span class="ph-mono ph-fbar-count">${esc(scenario)} · <b>${n == null ? "—" : n.toLocaleString()}</b> graded</span>
         </div>
       </div>`;
@@ -4968,6 +5022,49 @@
         ${body}
       </div>`;
     }
+    // Every line of the ladders, graded: the published read is one rung, and
+    // a reader betting 2+ hits or 6.5 Ks needs to know how THAT line has done.
+    byLineTableHtml() {
+      this.loadTrust();
+      const t = this.state.trust;
+      const want = this.state.dMk;
+      const rows = t && t.byLine ? Object.values(t.byLine).filter((b) => b.n >= 5 && (want === "all" || b.market === want))
+        .sort((a, z) => a.market.localeCompare(z.market) || a.line - z.line) : [];
+      const name = (m) => (this.D_MARKETS.find((x) => x[0] === m) || [m, m, m])[2];
+      const body = !t ? `<div class="ph-empty">loading…</div>` : !rows.length
+        ? `<div class="ph-empty">${esc(COPY.byLineNone)}</div>`
+        : `<div class="ph-bl">${[`<div class="ph-bl-row ph-bl-head"><span>MARKET</span><span>LINE</span><span>GRADED</span><span>MODEL</span><span>LANDED</span><span>GAP</span></div>`]
+          .concat(rows.map((b) => {
+            const exp = b.sumP / b.n, act = b.hits / b.n, g = act - exp;
+            return `<div class="ph-bl-row"><span>${esc(name(b.market))}</span><span class="ph-mono">O ${b.line}</span><span class="ph-mono">${b.n}</span>
+              <span class="ph-mono">${this.pct1(exp)}</span><span class="ph-mono">${this.pct1(act)}</span>
+              <span class="ph-mono ph-gb-txt--${this.gapBand(g, exp)}">${this.gapTxt(g)}</span></div>`;
+          })).join("")}</div>`;
+      return this.dCard("By line", "every line of the ladders · last 7 days · graded from the box score count", body);
+    }
+    async exportGraded() {
+      const sig = this.dQuery().toString();
+      let all = [];
+      let cursor = 0;
+      for (let i = 0; i < 25 && cursor != null; i++) {
+        const res = await this.dFetch(`/graded?${sig}&limit=200&cursor=${cursor}`);
+        if (res.body) { all.push(...(res.body.rows || [])); cursor = res.body.next_cursor; continue; }
+        // No graded route (dev): the same labelled fixture the page shows.
+        if (res.missing) all = ((await this.loadFixture()) || []).filter((r) => this.dPass(r));
+        break;
+      }
+      const q = (v) => { const x = v == null ? "" : String(v); return /[",\n]/.test(x) ? `"${x.replace(/"/g, '""')}"` : x; };
+      const head = ["official_date", "resolved_at", "market", "game_pk", "matchup", "subject", "probability", "result", "actual_label", "opp_pitcher_hand", "batting_side", "lineup_slot", "venue_name"];
+      const lines = [head].concat(all.map((r) => [r.official_date, r.resolved_at, r.market, r.game_pk, `${r.away_abbr} @ ${r.home_abbr}`, r.subject,
+        r.probability, r.result, r.actual_label, r.opp_pitcher_hand, r.batting_side, r.lineup_slot, r.venue_name]));
+      try {
+        const blob = new Blob([lines.map((r) => r.map(q).join(",")).join("\n")], { type: "text/csv" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = `pitchhawk-graded-${this.state.dMk}-${this.state.dTf}d.csv`;
+        document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      } catch (_e) { /* no Blob downloads */ }
+    }
     calibrationChartHtml(sum) {
       const bins = {};
       (sum.bins || []).forEach((b) => { bins[Number(b.bin)] = this.derive(b); });
@@ -4984,7 +5081,7 @@
         return `<div class="ph-cal-col${on ? " is-sel" : ""}" title="${esc(tip)}"${mob ? ` data-act="mSel" data-arg="d:cal|${i}"` : ""}>
           <span class="ph-mono ph-cal-val">${has ? this.pct(t.act) : ""}</span>
           <div class="ph-cal-plot">
-            ${has ? `<span class="ph-cal-bar ph-gb--${this.gapBand(t.gap)}" style="height:${(t.act * 100).toFixed(1)}%"></span>
+            ${has ? `<span class="ph-cal-bar ph-gb--${this.gapBand(t.gap, t.exp)}" style="height:${(t.act * 100).toFixed(1)}%"></span>
             <span class="ph-cal-exp" style="bottom:${(t.exp * 100).toFixed(1)}%"></span>` : ""}
           </div>
           <span class="ph-mono ph-cal-lbl">${i * 10}–${i * 10 + 10}</span>
@@ -4996,7 +5093,17 @@
           <span><i class="ph-gb--less"></i>landed less</span><span><i class="ph-legend-line"></i>mean predicted</span>
         </div>`;
       const note = mob ? `<div class="ph-mono ph-chart-sel">${esc(selTip || "tap a band for its counts")}</div>` : "";
-      return this.dCard("Calibration", "landed rate per 10-pt probability band", `<div class="ph-cal">${cols}</div>${note}${legend}`);
+      // Below 30% in 5-point bands, where HR and longshot reads live.
+      const fine = (sum.bins_fine || []).map((b) => Object.assign(this.derive(b), { lo: Number(b.lo), hi: Number(b.hi) })).filter((b) => b.n);
+      const fineHtml = fine.length >= 2 ? `<div class="ph-cal-fine"><span class="ph-kicker ph-kicker--mut">Below 30% · 5-pt bands</span>
+          <div class="ph-cal ph-cal--fine">${fine.map((t) => `<div class="ph-cal-col" title="${esc(`${t.n} reads · predicted ${this.pct1(t.exp)} · landed ${this.pct1(t.act)}`)}">
+            <span class="ph-mono ph-cal-val">${this.pct(t.act)}</span>
+            <div class="ph-cal-plot"><span class="ph-cal-bar ph-gb--${this.gapBand(t.gap, t.exp)}" style="height:${Math.min(100, t.act / 0.3 * 100).toFixed(1)}%"></span>
+              <span class="ph-cal-exp" style="bottom:${Math.min(100, t.exp / 0.3 * 100).toFixed(1)}%"></span></div>
+            <span class="ph-mono ph-cal-lbl">${t.lo}–${t.hi}</span><span class="ph-mono ph-cal-n">${t.n}</span>
+          </div>`).join("")}</div></div>` : "";
+      return this.dCard("Calibration", "landed rate per 10-pt probability band · below 30%, within 10% of predicted counts as on target",
+        `<div class="ph-cal">${cols}</div>${note}${legend}${fineHtml}`);
     }
     dailyGapChartHtml(sum) {
       const s = this.state, w = this.dWindow();
@@ -5335,7 +5442,9 @@
       } else if (o.kind === "help") {
         title = "How to read Pitch Hawk";
         body = `<p class="ph-ov-note">${esc(COPY.guideIntro)}</p>
-          <dl class="ph-gloss">${COPY.glossary.map(([t, d]) => `<dt>${esc(t)}</dt><dd>${esc(d)}</dd>`).join("")}</dl>`;
+          <dl class="ph-gloss">${COPY.glossary.map(([t, d]) => `<dt>${esc(t)}</dt><dd>${esc(d)}</dd>`).join("")}</dl>
+          <h3 class="ph-ov-h">How each market is modelled</h3>
+          <dl class="ph-gloss">${COPY.methods.map(([t, d]) => `<dt>${esc(t)}</dt><dd>${esc(d)}</dd>`).join("")}</dl>`;
       } else if (o.kind === "player") {
         const b = (this.batters() || []).find((x) => x.id === String(o.id) && (!o.pk || x.pk === String(o.pk)));
         title = b ? b.name : "Player";

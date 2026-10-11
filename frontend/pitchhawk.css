@@ -1309,3 +1309,16 @@ body { margin: 0; }
   .ph-cleg { grid-template-columns: 24px minmax(0,1fr) 70px 64px; }
   .ph-cleg > .ph-stack:nth-of-type(2), .ph-cleg > .ph-opengame { display: none; }
 }
+
+/* ── Trust (Phase 4) ─────────────────────────────────────────────────── */
+.ph-kpi--link { cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.ph-kpi--link:hover { border-color: var(--accent); }
+.ph-tag--ver { background: var(--blue-bg); color: var(--blue); }
+.ph-cal-fine { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+.ph-cal--fine .ph-cal-plot { height: 90px; }
+.ph-bl { display: grid; font-size: 12.5px; }
+.ph-bl-row { display: grid; grid-template-columns: minmax(140px,1.4fr) 70px 70px 70px 70px 80px; gap: 10px; padding: 6px 0; border-top: 1px solid var(--row-border); }
+.ph-bl-head { font-size: 10.5px; letter-spacing: .06em; color: var(--muted); font-weight: 700; border-top: 0; }
+.ph-gb-txt--ok { color: var(--good-label); } .ph-gb-txt--more { color: var(--blue); } .ph-gb-txt--less { color: var(--amber); }
+.ph-ov-h { font-size: 13px; margin: 16px 0 6px; }
+@media (max-width: 1023px) { .ph-bl-row { grid-template-columns: minmax(0,1fr) 50px 44px 52px 52px 62px; gap: 6px; font-size: 11.5px; } }
