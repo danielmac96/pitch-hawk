@@ -570,6 +570,8 @@ def cmd_backfill(args) -> int:
         argv += ["--workers", str(args.workers)]
     if args.no_boxscore:
         argv += ["--no-boxscore"]
+    if args.force:
+        argv += ["--force"]
     old, sys.argv = sys.argv, ["warehouse_backfill.py"] + argv
     try:
         return bf.main()
@@ -703,6 +705,9 @@ def build_parser() -> argparse.ArgumentParser:
     b.add_argument("--seasons", nargs="*", type=int, default=None)
     b.add_argument("--workers", type=int, default=6)
     b.add_argument("--no-boxscore", action="store_true")
+    b.add_argument("--force", action="store_true",
+                   help="re-ingest days already held (fills new columns; "
+                        "clears their verification)")
     b.set_defaults(fn=cmd_backfill)
 
     return ap

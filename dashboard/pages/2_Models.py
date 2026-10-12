@@ -69,10 +69,11 @@ def load_live_versions() -> dict:
 
 @st.cache_data(ttl=CACHE_TTL, show_spinner=False)
 def load_graded_projections() -> list[dict]:
-    return (get_client().table("player_game_projections")
-            .select("market, model_version, probability, result")
-            .in_("result", ["hit", "miss"])
-            .order("graded_at", desc=True).limit(5000).execute().data or [])
+    db = get_client()
+    return M.fetch_all(lambda: db.table("player_game_projections")
+                       .select("market, model_version, probability, result")
+                       .in_("result", ["hit", "miss"])
+                       .order("game_pk").order("player_id").order("market"))
 
 
 params, runs_df, live = load_params(), load_runs(), load_live_versions()

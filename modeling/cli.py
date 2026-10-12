@@ -212,8 +212,16 @@ def cmd_markets(args) -> int:
     """Every player and game market, walk-forward, stacked on the PA model."""
     from modeling import markets
 
-    markets.run(_store(), record=args.record, C=args.C)
+    markets.run(_store(), record=args.record, C=args.C,
+                proposal=args.proposal)
     return 0
+
+
+def cmd_report(args) -> int:
+    """Rewrite the generated blocks of docs/models/LAB.md."""
+    from modeling import report
+
+    return report.main(args)
 
 
 def cmd_publish_ratings(args) -> int:
@@ -223,13 +231,14 @@ def cmd_publish_ratings(args) -> int:
     return publish_ratings.main(_store(), dry_run=args.dry_run)
 
 
-# pitcher_bb is deliberately absent. On the 2026-10-08 run its expected-walks
-# MAE (1.063) did not beat the pitcher's own average (1.056) and its 2026
-# holdout calibration was 0.90, so it stays on base_v1 until a run shows it
-# winning. Stage it explicitly with --market pitcher_bb to override.
+# Every v3 market. Which of them may be staged is decided per run by the
+# promotion rule (modeling/report.py::verdict), not by this list: pitcher_bb
+# used to be left out by hand because its 2026-10-08 run lost to the pitcher's
+# own average (MAE 1.063 vs 1.056), and the rule now says so itself.
 V3_MARKETS = ("pa_outcome", "workload", "team_runs", "game_moneyline",
               "batter_hit", "batter_hr", "batter_tb15", "batter_hrr",
-              "pitcher_k", "pitcher_hits", "pitcher_outs", "pitcher_er")
+              "pitcher_k", "pitcher_bb", "pitcher_hits", "pitcher_outs",
+              "pitcher_er")
 
 
 def cmd_stage_v3(args) -> int:
@@ -240,17 +249,24 @@ def cmd_stage_v3(args) -> int:
     reading model_version on a row) can tell the families apart. Activation
     is still a separate `python -m modeling activate <market> <version>`,
     pa_outcome first: the nightly ratings publish reads its rating configs.
+
+    A run is staged only if it passes the promotion rule: beats its baseline
+    on validation and on the 2026 test, with test calibration inside the
+    band. There is no override flag -- a refused market is the rule working.
     """
     from datetime import date
 
+    from modeling.report import verdict
     from warehouse.config import supabase_client
 
     version = args.version or f"v3_{date.today():%Y%m%d}"
     client = supabase_client()
     markets = tuple(args.market) if args.market else V3_MARKETS
+    staged, refused = [], []
     for market in markets:
         rows = (client.table("model_runs")
-                .select("run_id, params, oos_metrics, config, created_at")
+                .select("run_id, params, oos_metrics, holdout_metrics, config, "
+                        "created_at")
                 .eq("market", market).order("created_at", desc=True).limit(10)
                 .execute().data)
         rows = [r for r in rows if (r.get("config") or {}).get("pipeline") == "markets_v3"]
@@ -258,8 +274,30 @@ def cmd_stage_v3(args) -> int:
             print(f"[modeling] {market}: no markets_v3 run recorded; skipped")
             continue
         r = rows[0]
+        # The champion is the active v3 version, whose registry `metrics` are
+        # the validation metrics it was staged with. A v2 or base_v1 row is
+        # scored on a different grain and is not comparable.
+        active = (client.table("model_params").select("version, metrics")
+                  .eq("market", market).eq("is_active", True).execute().data)
+        champion = next((a["metrics"] for a in active
+                         if str(a["version"]).startswith("v3_")), None)
+        v = verdict(r.get("oos_metrics"), r.get("holdout_metrics"),
+                    champion_oos=champion)
+        for note in v["notes"]:
+            print(f"[modeling] {market}: note -- {note}")
+        if not v["ok"]:
+            refused.append(market)
+            print(f"[modeling] {market}: NOT staged -- " + "; ".join(v["reasons"]))
+            continue
         registry.insert_version(market, version, r["params"], r.get("oos_metrics") or {},
                                 notes=f"staged from model_runs {r['run_id']}")
+        staged.append(market)
+    if refused:
+        print(f"[modeling] refused by the promotion rule: {', '.join(refused)}. "
+              f"They keep their current version.")
+    markets = tuple(staged)
+    if not markets:
+        return 0
     print(f"\nActivate in this order (pa_outcome first -- publish-ratings reads it):\n"
           + "\n".join(f"  python -m modeling activate {m} {version}" for m in markets))
     return 0
@@ -354,12 +392,20 @@ def build_parser() -> argparse.ArgumentParser:
     mk = sub.add_parser("markets", help="all player/game markets: walk-forward, record")
     mk.add_argument("--C", type=float, default=1.0)
     mk.add_argument("--record", action="store_true")
+    mk.add_argument("--proposal", default=None,
+                    help="proposal id from docs/models/LAB.md (e.g. P-003); "
+                         "stored on every recorded run")
+    rp = sub.add_parser("report", help="rewrite docs/models/LAB.md's generated blocks")
+    rp.add_argument("--readiness", action="store_true",
+                    help="also refresh the data-readiness block (reads R2 footers; minutes)")
+    rp.add_argument("--print", action="store_true",
+                    help="print the leaderboard instead of writing the doc")
     pr = sub.add_parser("publish-ratings", help="today's ratings -> model_ratings")
     pr.add_argument("--dry-run", action="store_true")
     sv = sub.add_parser("stage-v3", help="latest markets-v3 runs -> model_params (inactive)")
     sv.add_argument("--version", default=None)
     sv.add_argument("--market", action="append",
-                    help="stage only these markets (repeatable); default: every v3 market that beat its baseline")
+                    help="stage only these markets (repeatable); default: every v3 market. Each must still pass the promotion rule.")
     rs = sub.add_parser("research", help="read-only lab diagnostic (modeling/research/)")
     rs.add_argument("name")
     rs.add_argument("--seasons", default=None)
@@ -382,6 +428,7 @@ _COMMANDS = {
     "baseline": cmd_baseline, "list": cmd_list, "show": cmd_show,
     "status": cmd_status, "activate": cmd_activate, "rollback": cmd_rollback,
     "research": cmd_research, "pa": cmd_pa, "markets": cmd_markets,
+    "report": cmd_report,
     "publish-ratings": cmd_publish_ratings, "stage-v3": cmd_stage_v3,
 }
 

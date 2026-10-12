@@ -136,6 +136,15 @@ edge function. A total Vercel outage costs the website; it costs no data.
 `scripts/warehouse_backfill.py`, and the two `workflow_dispatch` workflows.
 None of these run unattended.
 
+Added 2026-10-12:
+
+| command / workflow | does |
+|---|---|
+| `python -m warehouse readiness [--seasons …]` | Per season: verified days, fill of the columns models read, `outs` range. Read-only; exits non-zero while a season is incomplete. |
+| `python -m warehouse postseason --season Y` | Playoff games into the `post_*` datasets, apart from the regular season. |
+| `warehouse-backfill.yml` (`workflow_dispatch`) | Re-ingests whole seasons with `--force`, re-verifies them, ingests their postseason and ends on `readiness`. Shares the nightly's concurrency group. **Run long backfills here, not on a laptop** — a local run overwrites concurrent manifest writes. |
+| `warehouse.yml` input `export_days` | Trailing days of our own predictions to re-export (default 7; 35 refills the hot window). |
+
 ---
 
 ## 3. System flow

@@ -128,7 +128,8 @@ def season_params(s: int, holdout_params: dict) -> dict:
     return P.FOLD_PARAMS[max(s, min(P.FOLD_PARAMS))]
 
 
-def run(store, *, record: bool = False, C: float = 1.0) -> dict:  # noqa: ANN001
+def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
+        proposal: str | None = None) -> dict:
     t0 = time.time()
     pa = P.load_pa(store)
     pa, configs = P.attach_ratings(pa, tune=True)
@@ -220,7 +221,7 @@ def run(store, *, record: bool = False, C: float = 1.0) -> dict:  # noqa: ANN001
     print(json.dumps({m: {k: v for k, v in r.items() if k != "folds"}
                       for m, r in report.items()}, indent=1, default=str))
     if record:
-        _record(report, final)
+        _record(report, final, proposal)
     return {"report": report, "final": final}
 
 
@@ -574,9 +575,10 @@ def _agg(folds: list[dict]) -> dict:
     return out
 
 
-def _record(report: dict, final: dict) -> None:
+def _record(report: dict, final: dict, proposal: str | None = None) -> None:
     from modeling import runs as runs_mod
 
+    config_extra = {"proposal": proposal} if proposal else {}
     for mkt, params in final.items():
         r = report.get(mkt, {})
         run = {
@@ -585,7 +587,8 @@ def _record(report: dict, final: dict) -> None:
             "git_sha": runs_mod.git_sha(),
             "data_through": f"{P.HOLDOUT}-12-31",
             "train_seasons": list(SEASONS),
-            "config": {"family": params.get("type"), "pipeline": "markets_v3"},
+            "config": {"family": params.get("type"), "pipeline": "markets_v3",
+                       **config_extra},
             "folds": r.get("folds", []), "oos_metrics": r.get("oos", {}),
             "holdout_metrics": (r.get("oos") or {}).get("holdout_2026")
             or r.get("holdout"),

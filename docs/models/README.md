@@ -12,6 +12,9 @@ training → validation → test → live → how we got here → next steps.
 | [game](game.md) | `game_moneyline`, `game_total` (pregame and live) |
 | [micro](micro.md) | `pitch_result`, `ab_result`, `pitch_speed_ou`, `ab_pitches_ou` |
 
+Model development — proposals, experiment results, decisions, and the state
+of the training data — is tracked in **[LAB.md](LAB.md)**.
+
 Read in this order: this page → [`../MODELING-METHODS.md`](../MODELING-METHODS.md)
 (the maths) → the cards → [`../MODELS.md`](../MODELS.md) (registry: stage,
 activate, roll back) → [`../DATA-PIPELINE.md`](../DATA-PIPELINE.md) (where the
