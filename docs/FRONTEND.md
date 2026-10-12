@@ -29,12 +29,31 @@ the reader's place, a link can be shared and Back steps between tabs:
 ```
 #/home?open=<pk,...>            #/live/<pk>
 #/pred?m=hr&team=NYY,BOS&status=live&lineup=1&min=3&sort=prob-
+#/pred?m=pk&line=6.5&side=under&pmin=55&date=2026-10-09
 #/data?tf=14&mk=batter_hit&team=NYY&park=3313&hand=L&side=home
 ```
 
 `routeOf()` writes it after every render (push on a new tab or game, replace on
 a filter change); `routePatch()` reads it on boot and on `popstate`. Unknown
 values fall back to the defaults.
+
+## Markets at a line
+
+Predictions answers to every market key in `PRED_MARKETS`, grouped as
+Batters (hits, HR, total bases, H+R+RBI, batter Ks), Pitchers (Ks, outs,
+hits allowed, ER, walks, all starters) and Games (moneyline, run line, total,
+team total, win prob). A market at a non-default line or on the under side
+renders the generic line table (`predLineRows` / `predLineTableHtml`):
+
+- batter and starter rows read the projection's `ladder` (P(over) at every
+  half-point, written by game-predict from the model's count distribution);
+- run line, alternate totals and team totals derive from the v3 team-run
+  means on the pregame total (`PH.runDists`), so no extra rows are stored;
+- every row grades at the chosen line from `actual_count`.
+
+All numbers are the model's probability. "Fair" odds are that probability as
+an American price (the break-even price for the model's number) — never a
+sportsbook quote.
 
 ## Rendering
 

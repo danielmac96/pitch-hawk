@@ -67,6 +67,13 @@ def test_case(golden, i):
                  ("tb15", "batter_tb15"), ("hrr", "batter_hrr")):
         assert bm[m] == pytest.approx(out["batter3"][k], abs=TOL), k
 
+    bl = S.batter_ladders(b, d3, p3)
+    assert bl["e_k"] == pytest.approx(out["batter3_e_k"], abs=TOL)
+    for m, want in out["batter3_ladders"].items():
+        got = bl["ladders"][m]
+        assert [r["line"] for r in got] == [r["line"] for r in want], m
+        np.testing.assert_allclose([r["p_over"] for r in got], [r["p_over"] for r in want], atol=TOL)
+
     sm = S.starter_markets(b, sp_r=x["sp_r"], sp_hand=x["sp_hand"],
                            lineup=[(rb, side) for rb, side in lineup],
                            batting_home=x["is_home"], pk=x["pk"], L=L,
@@ -75,6 +82,9 @@ def test_case(golden, i):
         assert sm[mkt]["line"] == v["line"], mkt
         assert sm[mkt]["p_over"] == pytest.approx(v["p_over"], abs=TOL), mkt
         assert sm[mkt]["expected"] == pytest.approx(v["expected"], abs=1e-8), mkt
+        assert [r["line"] for r in sm[mkt]["ladder"]] == [r["line"] for r in v["ladder"]], mkt
+        np.testing.assert_allclose([r["p_over"] for r in sm[mkt]["ladder"]],
+                                   [r["p_over"] for r in v["ladder"]], atol=TOL)
 
     gm = S.game_markets(b, mu_home=out["mu_home"], mu_away=out["mu_away"])
     for k in ("p_home", "total_line", "p_over", "mu_total"):

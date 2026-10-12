@@ -102,6 +102,67 @@ def batter_value(dists: np.ndarray, pmf: np.ndarray) -> float:
     return float(np.dot(surv, dists[: len(surv)] @ np.asarray(RUN_WEIGHTS)))
 
 
+# ── count distributions and line ladders (props.ts batterCountPmf / ladder) ──
+
+COUNT_OF = {
+    "hits": (0, 0, 1, 1, 1, 1, 0),
+    "hr": (0, 0, 0, 0, 0, 1, 0),
+    "tb": (0, 0, 1, 2, 3, 4, 0),
+    "k": (1, 0, 0, 0, 0, 0, 0),
+}
+
+
+def batter_count_pmf(dists: np.ndarray, pa_pmf: np.ndarray, value_of, cap: int = 12) -> np.ndarray:
+    """P(count = n) for a per-PA count summed over the batter's PAs."""
+    state = np.zeros(cap + 1)
+    state[0] = 1.0
+    out = state * pa_pmf[0]
+    for i in range(1, len(pa_pmf)):
+        d = dists[i - 1]
+        nxt = np.zeros(cap + 1)
+        for have in range(cap + 1):
+            if state[have] == 0.0:
+                continue
+            for c in range(7):
+                nxt[min(cap, have + value_of[c])] += state[have] * d[c]
+        state = nxt
+        out = out + pa_pmf[i] * state
+    return out
+
+
+def ladder(pmf, cal: dict | None = None, floor: float = 0.005,  # noqa: ANN001
+           max_rungs: int = 12) -> list[dict]:
+    """Calibrated P(over) at each half-point line still in doubt, non-increasing."""
+    pmf = np.asarray(pmf, float)
+    out, prev = [], 1.0
+    for k in range(len(pmf) - 1):
+        if len(out) >= max_rungs:
+            break
+        raw = D.over_prob(pmf, k + 0.5)
+        if raw > 1 - floor:
+            continue
+        if raw < floor:
+            break
+        p = min(prev, D.calibrate(raw, cal))
+        out.append({"line": k + 0.5, "p_over": p})
+        prev = p
+    return out
+
+
+def batter_ladders(bundle: dict, dists: np.ndarray, pmf: np.ndarray) -> dict:
+    k_pmf = batter_count_pmf(dists, pmf, COUNT_OF["k"])
+    cal = lambda m: (bundle.get(m) or {}).get("cal")  # noqa: E731
+    return {
+        "ladders": {
+            "batter_hit": ladder(batter_count_pmf(dists, pmf, COUNT_OF["hits"]), cal("batter_hit")),
+            "batter_hr": ladder(batter_count_pmf(dists, pmf, COUNT_OF["hr"]), cal("batter_hr")),
+            "batter_tb15": ladder(batter_count_pmf(dists, pmf, COUNT_OF["tb"]), cal("batter_tb15")),
+            "batter_k": ladder(k_pmf, cal("batter_k")),
+        },
+        "e_k": float(np.dot(np.arange(len(k_pmf)), k_pmf)),
+    }
+
+
 def batter_markets(bundle: dict, dists: np.ndarray, pmf: np.ndarray, *,
                    slot: int, team_value: float) -> dict:
     s = D.batter_structural(dists, pmf)
@@ -155,7 +216,8 @@ def starter_markets(bundle: dict, *, sp_r, sp_hand: str, lineup: list[tuple],  #
         line = D.median_line(pmf)
         out[mkt] = {"line": line,
                     "p_over": D.calibrate(D.over_prob(pmf, line), prm.get("cal")),
-                    "expected": float(np.dot(np.arange(len(pmf)), pmf))}
+                    "expected": float(np.dot(np.arange(len(pmf)), pmf)),
+                    "ladder": ladder(pmf, prm.get("cal"), 0.005, 16)}
     return out
 
 

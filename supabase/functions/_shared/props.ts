@@ -163,6 +163,82 @@ export function batterStructural(dists: Vec[], paPmf: Vec): Structural {
   };
 }
 
+// ── count distributions and line ladders ────────────────────────────────────
+// A published read is one line of a count distribution the model already
+// computes (hits, total bases, a starter's Ks). A ladder is that distribution
+// read off at every half-point a book or pick'em app might post, so a reader
+// can see 2+ hits or 7+ Ks rather than only the one line we chose to publish.
+
+/** Per-PA value of each outcome class (K, BB, 1B, 2B, 3B, HR, OUT). */
+export const COUNT_OF: Record<string, number[]> = {
+  hits: [0, 0, 1, 1, 1, 1, 0],
+  hr: [0, 0, 0, 0, 0, 1, 0],
+  tb: TB_OF,
+  k: [1, 0, 0, 0, 0, 0, 0],
+};
+
+/**
+ * P(count = n) for a per-PA count summed over the batter's plate
+ * appearances: dists[i] is PA i+1's outcome distribution, paPmf[j] is
+ * P(exactly j PAs). Counts at or above `cap` collect in the last cell. For
+ * "hits" and "hr" P(count >= 1) equals batterStructural's hit / hr exactly.
+ */
+export function batterCountPmf(dists: Vec[], paPmf: Vec, valueOf: number[], cap = 12): Vec {
+  let state = new Array(cap + 1).fill(0);
+  state[0] = 1;
+  const out = state.map((v) => v * paPmf[0]);
+  for (let i = 1; i < paPmf.length; i++) {
+    const d = dists[i - 1];
+    const nxt = new Array(cap + 1).fill(0);
+    for (let have = 0; have <= cap; have++) {
+      if (state[have] === 0) continue;
+      for (let c = 0; c < NC; c++) nxt[Math.min(cap, have + valueOf[c])] += state[have] * d[c];
+    }
+    state = nxt;
+    for (let n = 0; n <= cap; n++) out[n] += paPmf[i] * state[n];
+  }
+  return out;
+}
+
+export interface Rung { line: number; p_over: number }
+
+/**
+ * P(over) at every half-point line where the outcome is still in doubt --
+ * raw P(over) between `floor` and 1 - `floor` -- at most `maxRungs` rungs.
+ * Lines below the window are near-certain overs (a starter's 3.5 outs), lines
+ * above it near-certain unders; a reader of the ladder treats both as such.
+ * Each rung goes through the market's calibrator -- fitted at the published
+ * line, applied to the others as the best available map -- and a running
+ * minimum keeps the ladder non-increasing whatever the calibrator does.
+ */
+export function ladder(pmf: Vec, cal?: Params, floor = 0.005, maxRungs = 12): Rung[] {
+  const out: Rung[] = [];
+  let prev = 1;
+  for (let k = 0; k < pmf.length - 1 && out.length < maxRungs; k++) {
+    const raw = overProb(pmf, k + 0.5);
+    if (raw > 1 - floor) continue;
+    if (raw < floor) break;
+    const p = Math.min(prev, calibrate(raw, cal));
+    out.push({ line: k + 0.5, p_over: p });
+    prev = p;
+  }
+  return out;
+}
+
+/** Ladders for the batter count markets, plus expected strikeouts. */
+export function batterLadders(b: Bundle, dists: Vec[], pmf: Vec): { ladders: Record<string, Rung[]>; e_k: number } {
+  const kPmf = batterCountPmf(dists, pmf, COUNT_OF.k);
+  return {
+    ladders: {
+      batter_hit: ladder(batterCountPmf(dists, pmf, COUNT_OF.hits), b.batter_hit?.cal),
+      batter_hr: ladder(batterCountPmf(dists, pmf, COUNT_OF.hr), b.batter_hr?.cal),
+      batter_tb15: ladder(batterCountPmf(dists, pmf, COUNT_OF.tb), b.batter_tb15?.cal),
+      batter_k: ladder(kPmf, b.batter_k?.cal),
+    },
+    e_k: kPmf.reduce((a, v, i) => a + v * i, 0),
+  };
+}
+
 function binomRow(n: number, p: number, nMax: number): Vec {
   const q = Math.min(Math.max(p, 1e-12), 1 - 1e-12);
   const out = new Array(nMax + 1).fill(0);
@@ -354,7 +430,7 @@ export function batterMarkets(
   };
 }
 
-export interface StarterProp { line: number; p_over: number; expected: number }
+export interface StarterProp { line: number; p_over: number; expected: number; ladder: Rung[] }
 
 export function starterMarkets(
   b: Bundle,
@@ -404,6 +480,7 @@ export function starterMarkets(
       line,
       p_over: calibrate(overProb(pmf!, line), prm.cal),
       expected: pmf!.reduce((a, v, i) => a + v * i, 0),
+      ladder: ladder(pmf!, prm.cal, 0.005, 16),
     };
   }
   return out;

@@ -14,7 +14,7 @@
 
 import { svc } from "./db.ts";
 import {
-  batterDists, batterMarkets, batterValue, type Bundle, convolve, gameMarkets,
+  batterDists, batterLadders, batterMarkets, batterValue, type Bundle, type Rung, convolve, gameMarkets,
   negbinPmf, overProb, paPmf, starterMarkets, type StarterProp, tempC, teamMu,
   type Vec, windOut, workload,
 } from "./props.ts";
@@ -135,6 +135,10 @@ export interface BatterOut {
   opp_sp: number | null; probs: Record<string, number>; expected_pa: number; e_tb: number;
   /** Mean per-PA hit / HR probability over his expected trips (live rest-of-game input). */
   per_pa: { batter_hit: number; batter_hr: number };
+  /** P(over) at every half-point line, per count market (props.ts ladder). */
+  ladders: Record<string, Rung[]>;
+  /** Expected strikeouts, for batter_k's expected_value. */
+  e_k: number;
 }
 
 function perPa(d: Vec[], pmf: Vec): { batter_hit: number; batter_hr: number } {
@@ -199,6 +203,7 @@ export function scoreGame(b: Bundle, r: Ratings, g: GameInputs): GameOut {
                    batter_tb15: m.batter_tb15, batter_hrr: m.batter_hrr },
           expected_pa: m.structural.e_pa, e_tb: m.structural.e_tb,
           per_pa: perPa(x.d, x.pmf),
+          ...batterLadders(b, x.d, x.pmf),
         });
       }
     }

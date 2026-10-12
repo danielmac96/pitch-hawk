@@ -20,7 +20,7 @@ import {
   projectBatter,
 } from "../_shared/batterprojection.ts";
 import {
-  BASE_VERSION, batterHrr, batterTb15, starterProp, type StarterMarket,
+  BASE_VERSION, batterHrr, batterTb15, binomLadder, starterProp, type StarterMarket,
 } from "../_shared/basemodels.ts";
 import {
   getProbables,
@@ -168,13 +168,13 @@ async function projectBatters(
       const r = batterTb15(inputs, pa, models["batter_tb15"]);
       out.push({ ...rowBase, market: "batter_tb15", probability: r.probability,
         expected_pa: pa, per_pa_probability: null, expected_value: r.expected_value, line: 1.5,
-        model_version: models["batter_tb15"].version ?? BASE_VERSION });
+        ladder: null, model_version: models["batter_tb15"].version ?? BASE_VERSION });
     }
     if (models["batter_hrr"] && !isV3Row(models["batter_hrr"])) {
       const r = batterHrr(inputs, pa, models["batter_hrr"]);
       out.push({ ...rowBase, market: "batter_hrr", probability: r.probability,
         expected_pa: pa, per_pa_probability: r.per_pa, expected_value: null, line: 0.5,
-        model_version: models["batter_hrr"].version ?? BASE_VERSION });
+        ladder: null, model_version: models["batter_hrr"].version ?? BASE_VERSION });
     }
 
     for (const market of ["batter_hit", "batter_hr"].filter((m) => !isV3Row(models[m]))) {
@@ -200,6 +200,8 @@ async function projectBatters(
         role: "batter",
         line: null,
         expected_value: null,
+        ladder: p.per_pa_probability != null && p.expected_pa != null
+          ? binomLadder(Number(p.per_pa_probability), Number(p.expected_pa)) : null,
         model_version: p.model_version,
         book: "model_fair",
         updated_at: new Date().toISOString(),
@@ -273,6 +275,7 @@ async function projectStarters(
           opposing_pitcher_id: null,
           probability: r.probability,     // P(over line)
           line: r.line,
+          ladder: r.ladder,
           expected_value: r.expected_value,
           expected_pa: null,
           per_pa_probability: null,
@@ -327,7 +330,18 @@ async function writeV3Projections(
         const ppa = (b.per_pa as Record<string, number>)[m];
         out.push({ ...base, market: m, probability: Math.round(b.probs[m] * 1e4) / 1e4,
                    line, expected_value: ev, model_version: ver(m),
-                   per_pa_probability: ppa != null ? Math.round(ppa * 1e4) / 1e4 : null });
+                   per_pa_probability: ppa != null ? Math.round(ppa * 1e4) / 1e4 : null,
+                   ladder: roundLadder(b.ladders[m]) });
+      }
+      // Batter strikeouts are read straight off the PA-outcome distribution
+      // the hit and HR markets already use, so they ride on batter_hit being
+      // a v3 row. No calibrator of their own yet: raw distribution, said so
+      // by the model_version suffix.
+      if (isV3Row(models["batter_hit"]) && b.ladders.batter_k?.length) {
+        const k5 = b.ladders.batter_k.find((r) => r.line === 0.5);
+        out.push({ ...base, market: "batter_k", probability: Math.round((k5?.p_over ?? 0) * 1e4) / 1e4,
+                   line: 0.5, expected_value: Math.round(b.e_k * 1e4) / 1e4,
+                   model_version: `${ver("batter_hit")}+k_raw`, ladder: roundLadder(b.ladders.batter_k) });
       }
     }
     for (const s of r.starters) {
@@ -341,6 +355,7 @@ async function writeV3Projections(
           probability: Math.round(p.p_over * 1e4) / 1e4, line: p.line,
           expected_value: Math.round(p.expected * 1e4) / 1e4, expected_pa: null,
           per_pa_probability: null, model_version: ver(m), book: "model_fair", updated_at: now,
+          ladder: roundLadder(p.ladder),
         });
       }
     }
@@ -352,6 +367,11 @@ async function writeV3Projections(
     if (error) throw new Error(`v3 projections: ${error.message}`);
   }
   return { games: [...v3.keys()].length, rows: out.length };
+}
+
+/** A ladder as stored: 4dp, the same precision as `probability`. */
+function roundLadder(l: Array<{ line: number; p_over: number }> | undefined) {
+  return l && l.length ? l.map((r) => ({ line: r.line, p_over: Math.round(r.p_over * 1e4) / 1e4 })) : null;
 }
 
 Deno.serve(async (req) => {

@@ -683,7 +683,7 @@ async function projections(url: URL): Promise<Response> {
   const date = parseDate(url.searchParams.get("date")) ?? (await resolveSlate(svc())).date;
   const market = url.searchParams.get("market");
   const valid = [
-    "batter_hit", "batter_hr", "batter_tb15", "batter_hrr",
+    "batter_hit", "batter_hr", "batter_tb15", "batter_hrr", "batter_k",
     "pitcher_k", "pitcher_bb", "pitcher_hits", "pitcher_outs", "pitcher_er",
   ];
   if (market && !valid.includes(market)) {
@@ -700,7 +700,7 @@ async function projections(url: URL): Promise<Response> {
     .select("game_pk,player_id,market,team_id,opponent_id,is_home," +
             "lineup_slot,opposing_pitcher_id,probability,per_pa_probability," +
             "expected_pa,model_version,book,updated_at," +
-            "result,actual_count,plate_appearances,role,line,expected_value")
+            "result,actual_count,plate_appearances,role,line,expected_value,ladder")
     .eq("official_date", date);
   if (market) q = q.eq("market", market);
   if (role) q = q.eq("role", role);
@@ -713,13 +713,14 @@ async function projections(url: URL): Promise<Response> {
     ...rows.filter(isPitcherRow).map((r: any) => r.player_id),
     ...rows.map((r: any) => r.opposing_pitcher_id).filter(Boolean),
   ])];
-  const [names, form] = await Promise.all([
-    playerNames([
+  const [info, form] = await Promise.all([
+    playerInfo([
       ...rows.map((r: any) => r.player_id),
       ...rows.map((r: any) => r.opposing_pitcher_id).filter(Boolean),
     ]),
     rollingForm(batterIds as number[], pitcherIds as number[]),
   ]);
+  const names = new Map([...info].map(([id, v]) => [id, v.name]));
   return json({
     date,
     market: market ?? "all",
@@ -736,6 +737,11 @@ async function projections(url: URL): Promise<Response> {
       lineup_slot: r.lineup_slot,
       opposing_pitcher_id: r.opposing_pitcher_id,
       opposing_pitcher: names.get(r.opposing_pitcher_id) ?? null,
+      // Handedness for the platoon read: the batter's side (S = switch), the
+      // starter's arm, and the arm the batter faces.
+      bat_side: isPitcherRow(r) ? null : (info.get(r.player_id)?.bat ?? null),
+      pitch_hand: isPitcherRow(r) ? (info.get(r.player_id)?.throws ?? null) : null,
+      opposing_pitcher_hand: info.get(r.opposing_pitcher_id)?.throws ?? null,
       probability: r.probability != null ? Number(r.probability) : null,
       per_pa_probability: r.per_pa_probability != null
         ? Number(r.per_pa_probability) : null,
@@ -751,6 +757,9 @@ async function projections(url: URL): Promise<Response> {
       role: r.role ?? "batter",
       line: r.line != null ? Number(r.line) : null,
       expected_value: r.expected_value != null ? Number(r.expected_value) : null,
+      // P(over) at every half-point line ([{line, p_over}]); null on rows
+      // written before ladders existed or by a writer with no distribution.
+      ladder: Array.isArray(r.ladder) ? r.ladder : null,
       // 30-day per-PA form from the rolling-stats tables the live scorer
       // reads: the player's own, and for a batter, the opposing starter's
       // rates allowed. null when the player has no row (too few PAs).
@@ -886,6 +895,16 @@ async function gradedVenues(): Promise<Response> {
   const { data, error } = await svc().rpc("graded_venues");
   if (error) return json({ error: error.message }, 500);
   return json({ venues: data ?? [] });
+}
+
+// Name plus handedness, for routes that show a platoon read.
+async function playerInfo(ids: number[]): Promise<Map<number, { name: string | null; bat: string | null; throws: string | null }>> {
+  const uniq = [...new Set(ids.filter(Boolean))];
+  if (!uniq.length) return new Map();
+  const { data } = await svc().from("player_info")
+    .select("player_id,full_name,bat_side,pitch_hand").in("player_id", uniq);
+  return new Map((data ?? []).map((r: any) => [r.player_id,
+    { name: r.full_name ?? null, bat: r.bat_side ?? null, throws: r.pitch_hand ?? null }]));
 }
 
 async function playerNames(ids: number[]): Promise<Map<number, string>> {
