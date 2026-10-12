@@ -683,7 +683,7 @@ body { margin: 0; }
   font-size: 10px; font-weight: 800; letter-spacing: .06em; color: var(--muted);
 }
 .ph-ptable-head + .ph-ptable-row { border-top: 0; }
-.ph-ptable-bat { grid-template-columns: 30px 20px minmax(180px,1.25fr) 124px 92px minmax(170px,1.1fr) 70px minmax(220px,1.6fr) 96px 72px; }
+.ph-ptable-bat { grid-template-columns: 30px 48px minmax(180px,1.25fr) 124px 92px minmax(170px,1.1fr) 70px minmax(220px,1.6fr) 96px 72px; }
 .ph-ptable-game { grid-template-columns: 20px 86px minmax(200px,1.3fr) minmax(260px,1.6fr) 84px 140px 108px 80px; gap: 12px; padding: 9px 14px; }
 .ph-ptable-sp { grid-template-columns: minmax(200px,1.3fr) 96px repeat(5, minmax(0,.75fr)) repeat(5, 62px); font-size: 12.5px; }
 .ph-ptable-sp .ph-missing { flex-direction: column; align-items: flex-start; gap: 3px; }
@@ -1215,11 +1215,15 @@ body { margin: 0; }
 /* Touch: controls a thumb can hit. Measured before this: 55% of phone
    controls were under 32px (pins 24px, chevrons, segments, sort heads). */
 @media (max-width: 1023.98px), (pointer: coarse) {
-  .ph-pin, .ph-chev, .ph-watch-unpin { min-width: 40px; min-height: 40px; display: inline-flex; align-items: center; justify-content: center; }
-  .ph-chip, .ph-seg-btn, .ph-sorth, .ph-select { min-height: 40px; }
-  .ph-link { min-height: 40px; display: inline-flex; align-items: center; padding: 0 6px; }
-  .ph-watch-go { min-height: 40px; }
-  .ph-brand, .ph-footer-brand { min-height: 40px; }
+  /* 44px: Apple's minimum hit target. 93 of 98 Predictions controls were
+     40px and the star sat flush against the row it was confused with. */
+  .ph-pin, .ph-chev, .ph-watch-unpin, .ph-leg { min-width: 44px; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
+  .ph-leg { border-radius: 10px; }
+  .ph-chip, .ph-seg-btn, .ph-sorth, .ph-select { min-height: 44px; }
+  .ph-link { min-height: 44px; display: inline-flex; align-items: center; padding: 0 6px; }
+  .ph-watch-go { min-height: 44px; }
+  .ph-brand, .ph-footer-brand { min-height: 44px; }
+  [data-act="pillToggle"], .ph-rowlink, .ph-iconbtn { min-height: 44px; }
 }
 /* The tab bar never wraps a label onto two lines (344px Fold). */
 .ph-tab { white-space: nowrap; }
@@ -1245,7 +1249,7 @@ body { margin: 0; }
 .ph-mkgroup { gap: 5px; }
 .ph-mkgroup > .ph-kicker, .ph-linepick > .ph-kicker { margin-right: 2px; }
 .ph-band input[type="range"] { width: 72px; }
-.ph-ptable-line { grid-template-columns: 30px 20px minmax(200px,1.4fr) 124px 74px minmax(150px,1fr) 96px minmax(210px,1.3fr) 72px; }
+.ph-ptable-line { grid-template-columns: 30px 48px minmax(200px,1.4fr) 124px 74px minmax(150px,1fr) 96px minmax(210px,1.3fr) 72px; }
 .ph-lp { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .ph-lp-main { font-size: 15px; }
 .ph-lp-line { font-weight: 700; }
@@ -1273,8 +1277,8 @@ body { margin: 0; }
 .ph-top { display: grid; grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 14px; }
 .ph-top-sec { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); padding: 12px 14px; display: flex; flex-direction: column; gap: 6px; }
 .ph-top-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
-.ph-top-row { display: grid; grid-template-columns: 18px 20px minmax(0,1fr) 72px 60px; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--row-border); font-size: 12.5px; }
-.ph-top-row.has-lift { grid-template-columns: 18px 20px minmax(0,1fr) 72px 64px 60px; }
+.ph-top-row { display: grid; grid-template-columns: 18px 24px minmax(0,1fr) 72px 60px; gap: 8px; align-items: center; padding: 5px 0; border-top: 1px solid var(--row-border); font-size: 12.5px; }
+.ph-top-row.has-lift { grid-template-columns: 18px 24px minmax(0,1fr) 72px 64px 60px; }
 .ph-top-who { display: flex; flex-direction: column; min-width: 0; }
 .ph-top-lbl { font-size: 11.5px; color: var(--text-2); }
 .ph-tag--park { margin-left: 6px; }
@@ -1292,6 +1296,60 @@ body { margin: 0; }
 .ph-linkish:hover b { text-decoration: underline; }
 @media (max-width: 1023px) {
   .ph-top { grid-template-columns: 1fr; }
-  .ph-top-row, .ph-top-row.has-lift { grid-template-columns: 16px 20px minmax(0,1fr) 66px 60px; }
+  .ph-top-row, .ph-top-row.has-lift { grid-template-columns: 16px 44px minmax(0,1fr) 66px 60px; }
   .ph-top-row > .ph-lift { display: none; }
 }
+
+/* ── My card (Phase 3) ─────────────────────────────────────────────── */
+.ph-rowbtns { display: inline-flex; gap: 2px; align-items: center; }
+.ph-leg { width: 22px; height: 22px; border-radius: 6px; border: 1px solid var(--border-2); background: transparent; color: var(--text-2); font-weight: 800; font-size: 13px; line-height: 1; cursor: pointer; padding: 0; flex: 0 0 auto; }
+.ph-leg:hover { border-color: var(--accent); color: var(--accent); }
+.ph-leg.is-on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.ph-gl-cell .ph-meta-k { display: inline-flex; align-items: center; gap: 6px; }
+.ph-cleg { display: grid; grid-template-columns: 24px minmax(0,1.4fr) 110px 90px 90px 70px 64px; gap: 10px; align-items: center; padding: 8px 0; border-top: 1px solid var(--row-border); font-size: 12.5px; }
+.ph-cleg-who { display: flex; flex-direction: column; min-width: 0; }
+.ph-combo-v .ph-lp-main { font-size: 22px; }
+@media (max-width: 1023px) {
+  .ph-cleg { grid-template-columns: 24px minmax(0,1fr) 70px 64px; }
+  .ph-cleg > .ph-stack:nth-of-type(2), .ph-cleg > .ph-opengame { display: none; }
+}
+
+/* ── Trust (Phase 4) ─────────────────────────────────────────────────── */
+.ph-kpi--link { cursor: pointer; text-align: left; font: inherit; color: inherit; }
+.ph-kpi--link:hover { border-color: var(--accent); }
+.ph-tag--ver { background: var(--blue-bg); color: var(--blue); }
+.ph-cal-fine { margin-top: 14px; display: flex; flex-direction: column; gap: 6px; }
+.ph-cal--fine .ph-cal-plot { height: 90px; }
+.ph-bl { display: grid; font-size: 12.5px; }
+.ph-bl-row { display: grid; grid-template-columns: minmax(140px,1.4fr) 70px 70px 70px 70px 80px; gap: 10px; padding: 6px 0; border-top: 1px solid var(--row-border); }
+.ph-bl-head { font-size: 10.5px; letter-spacing: .06em; color: var(--muted); font-weight: 700; border-top: 0; }
+.ph-gb-txt--ok { color: var(--good-label); } .ph-gb-txt--more { color: var(--blue); } .ph-gb-txt--less { color: var(--amber); }
+.ph-ov-h { font-size: 13px; margin: 16px 0 6px; }
+@media (max-width: 1023px) { .ph-bl-row { grid-template-columns: minmax(0,1fr) 50px 44px 52px 52px 62px; gap: 6px; font-size: 11.5px; } }
+
+/* ── Phone pass (Phase 5) ──────────────────────────────────────────────── */
+.ph-dot.is-down { background: var(--bad); }
+.ph-hdr-down { color: var(--bad); font-weight: 700; }
+@media (max-width: 600px) {
+  /* The title's description and the table's subtitle cost two lines above
+     the first read; the Guide and the column heads carry the same meaning. */
+  .ph-titlerow > .ph-strip-sub, .ph-strip-head > .ph-strip-sub { display: none; }
+  .ph-titlerow { margin-bottom: 6px; gap: 8px; }
+  .ph-hide-sm { display: none; }
+  .ph-datestep .ph-chip { min-width: 44px; }
+  /* A sideways-scrolling chip row says so: the last chip fades out. */
+  .ph-fscroll { -webkit-mask-image: linear-gradient(to right, #000 86%, transparent); mask-image: linear-gradient(to right, #000 86%, transparent); }
+  .ph-mcard { padding: 10px 12px; }
+  .ph-mcard-head .ph-rowlink-top b { min-width: 0; }
+  .ph-mcard-stats { gap: 8px; }
+}
+@media (max-height: 500px) and (orientation: landscape) {
+  .ph-header-inner { padding-top: 4px; padding-bottom: 4px; }
+  .ph-livecount { display: none; }
+}
+@media (max-width: 1023.98px), (pointer: coarse) {
+  .ph-root .ph-iconbtn { min-width: 44px; min-height: 44px; }
+  .ph-root .ph-chip { min-width: 44px; justify-content: center; }
+  .ph-root .ph-more { min-height: 44px; }
+}
+@media (max-width: 400px) { .ph-hide-xs { display: none; } .ph-fbar-count { white-space: nowrap; margin-left: auto; } }

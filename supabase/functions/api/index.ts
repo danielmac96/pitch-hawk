@@ -869,7 +869,12 @@ async function graded(url: URL): Promise<Response> {
       away_abbr: r.away_abbr, home_abbr: r.home_abbr,
       venue_id: r.venue_id, venue_name: r.venue_name, team_abbrs: r.team_abbrs,
       // Batter markets store no subject: the subject is the batter.
-      subject: r.subject ?? names.get(r.batter_id) ?? null,
+      // A starter prop's subject is the starter (pitcher_id, no batter).
+      subject: r.batter_id == null && r.pitcher_id != null && String(r.id).startsWith("p:")
+        ? `${names.get(r.pitcher_id) ?? "Starter"}${r.subject ? ` · ${r.subject}` : ""}`
+        : r.subject && String(r.id).startsWith("p:")
+          ? `${names.get(r.batter_id) ?? "Batter"} · ${r.subject}`
+          : r.subject ?? names.get(r.batter_id) ?? null,
       probability: Number(r.probability),
       result: r.result, actual_label: r.actual_label,
       opp_pitcher_hand: r.opp_pitcher_hand, batting_side: r.batting_side,

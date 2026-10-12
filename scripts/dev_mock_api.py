@@ -62,6 +62,17 @@ def norm(d):
     return {k: round(v / t, 3) for k, v in d.items()}
 
 
+def _negbin(mu, alpha=0.12, n=30):
+    from math import lgamma, exp, log
+    r = 1 / alpha; p = r / (r + mu)
+    return [exp(lgamma(k + r) - lgamma(k + 1) - lgamma(r) + r * log(p) + k * log(1 - p)) for k in range(n + 1)]
+
+
+def _tot_over(mh, ma, line):
+    h, a = _negbin(mh), _negbin(ma)
+    return sum(h[i] * a[j] for i in range(len(h)) for j in range(len(a)) if i + j > line)
+
+
 def game(i, away, home, venue, phase):
     pk = 800000 + i
     start = NOW + timedelta(hours=(-2.5 if phase == "live" else -4 if phase == "final" else 1 + i * 0.5))
@@ -79,7 +90,10 @@ def game(i, away, home, venue, phase):
             {"market": "game_moneyline", "probs": {"home": round(hp, 3), "away": round(1 - hp, 3)},
              "recommendation": "home" if hp >= .5 else "away", "confidence": round(max(hp, 1 - hp), 3)},
             {"market": "game_total", "line": TL, "predicted_value": round(MH + MA, 2),
-             "recommendation": "over" if MH + MA > TL else "under", "confidence": round(rnd.uniform(.51, .62), 3),
+             # Same arithmetic as game-predict's v3 total: P(over) from the two
+             # team-run distributions, so Home and the game page agree.
+             "recommendation": "over" if _tot_over(MH, MA, TL) >= .5 else "under",
+             "confidence": round(max(_tot_over(MH, MA, TL), 1 - _tot_over(MH, MA, TL)), 3),
              "probs": {"mu_home": MH, "mu_away": MA, "alpha": 0.12}},
         ],
         "markets": [],
@@ -229,7 +243,7 @@ def projections(games=None):
                 cnt = max(0, int(rnd.gauss(mu, mu ** 0.5)))
                 gr = dict(result=("hit" if cnt > line else "miss"), actual_count=cnt, plate_appearances=24) if final else dict(result=None)
                 rows.append(dict(game_pk=g["game_pk"], player_id=p["id"], player=p["name"], role="pitcher",
-                                 pitch_hand="L" if p["id"] % 3 == 0 else "R",
+                                 pitch_hand="L" if p["id"] % 3 == 0 else "R", is_home=key == "probable_home_pitcher",
                                  market=m, line=line, probability=round(_pois_over(mu, line), 4),
                                  expected_value=mu, ladder=lad, model_version="base_v1", updated_at=iso(NOW), **gr))
     return rows
