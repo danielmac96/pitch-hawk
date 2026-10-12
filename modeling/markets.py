@@ -40,6 +40,7 @@ from modeling import games as G
 from modeling import metrics as M
 from modeling import pa_model as P
 from modeling import ratings as R
+from modeling import serve
 
 NC = R.NC
 SEASONS = tuple(range(P.FIRST_TRAIN_SEASON, P.HOLDOUT + 1))
@@ -192,6 +193,10 @@ def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
         sv = G.batch_structural(dists, pa_pmf)
         for k, v in sv.items():
             b[f"s_{k}"] = v
+        # Full count distributions, for scoring every ladder line (P-003).
+        for name, cap in G.COUNT_CAP.items():
+            b[f"c_{name}"] = list(G.batch_count_pmf(
+                dists, pa_pmf, serve.COUNT_OF[name], cap))
         bat_parts.append(b.drop(columns=[c for c in b.columns
                                          if c[:3] in ("rb_", "rs_", "pk_")]))
 
@@ -362,6 +367,12 @@ _BATTER = {
 }
 
 
+# market -> (count pmf column, boxscore count). H+R+RBI has no structural
+# count distribution: its probability is P(hit) through a calibrator.
+_BATTER_COUNT = {"batter_hit": ("c_hits", "h"), "batter_hr": ("c_hr", "hr"),
+                 "batter_tb15": ("c_tb", "tb")}
+
+
 def _extra(mkt: str, b: pd.DataFrame) -> dict | None:
     """Extra calibrator inputs. H+R+RBI needs more than P(hit): getting on
     base and batting in a run-scoring spot both create runs and RBIs."""
@@ -395,6 +406,26 @@ def batter_markets(B: pd.DataFrame, final: dict) -> dict:
             rate = pd.Series(y[tr]).groupby(B.loc[tr, "slot"].to_numpy()).mean()
             base = B.loc[te, "slot"].map(rate).fillna(y[tr].mean()).to_numpy()
             m["slot_baseline_logloss"] = G.binary_metrics(base, y[te])["logloss"]
+            if mkt in _BATTER_COUNT:
+                # Every line on the ladder at once. Uncalibrated: the
+                # calibrator is fitted at one line and has no claim on the
+                # others. Baseline: the training seasons' count distribution
+                # for the lineup slot.
+                pcol, ycol = _BATTER_COUNT[mkt]
+                cap = G.COUNT_CAP[pcol[2:]]
+                y_cnt = np.minimum(B.loc[te, ycol].to_numpy().astype(int), cap)
+                pm = np.stack(B.loc[te, pcol].to_numpy())
+                by_slot = {sl: M.count_pmf(np.minimum(g, cap), cap + 1)
+                           for sl, g in B.loc[tr, ycol].astype(int).groupby(
+                               B.loc[tr, "slot"])}
+                allp = M.count_pmf(np.minimum(
+                    B.loc[tr, ycol].to_numpy().astype(int), cap), cap + 1)
+                marg = np.stack([by_slot.get(sl, allp)
+                                 for sl in B.loc[te, "slot"]])
+                m["rps"] = round(M.rps(pm, y_cnt), 5)
+                m["rps_baseline"] = round(M.rps(marg, y_cnt), 5)
+                m["count_nll"] = round(M.count_nll(pm, y_cnt), 5)
+                m["count_nll_baseline"] = round(M.count_nll(marg, y_cnt), 5)
             m["season"] = s
             folds.append(m)
             _log(f"{mkt} {s}: {m}")

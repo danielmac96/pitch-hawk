@@ -95,3 +95,22 @@ def test_calibrate_identity_and_monotone():
     assert D.calibrate(0.3, None) == 0.3
     cal = {"a": 0.1, "b": 0.9}
     assert D.calibrate(0.2, cal) < D.calibrate(0.4, cal)
+
+
+def test_batch_count_pmf_matches_the_serving_roll_up():
+    """Training scores the ladder from the vectorised roll-up; production
+    publishes it from serve.batter_count_pmf. They must be the same numbers."""
+    from modeling import games as G
+    from modeling import serve
+
+    rng = np.random.default_rng(7)
+    n, max_pa = 40, 8
+    dists = rng.dirichlet(np.ones(7), size=(n, max_pa - 1))
+    pa_pmf = rng.dirichlet(np.ones(max_pa), size=n)
+    for name, cap in G.COUNT_CAP.items():
+        got = G.batch_count_pmf(dists, pa_pmf, serve.COUNT_OF[name], cap)
+        want = np.stack([serve.batter_count_pmf(dists[i], pa_pmf[i],
+                                                serve.COUNT_OF[name], cap)
+                         for i in range(n)])
+        np.testing.assert_allclose(got, want, atol=1e-12)
+        np.testing.assert_allclose(got.sum(axis=1), 1.0, atol=1e-12)

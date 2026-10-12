@@ -60,3 +60,10 @@ def test_starter_folds_score_the_whole_count_distribution(result):
         for k in ("rps", "rps_baseline", "count_nll", "count_nll_baseline"):
             assert f[k] > 0, (m, k, f)
         assert "rps" in result["report"][m]["oos"], m
+
+
+def test_batter_count_markets_score_every_ladder_line(result):
+    for m in ("batter_hit", "batter_hr", "batter_tb15"):
+        f = result["report"][m]["folds"][-1]
+        assert 0 < f["rps"] and 0 < f["rps_baseline"], (m, f)
+    assert "rps" not in result["report"]["batter_hrr"]["folds"][-1]
