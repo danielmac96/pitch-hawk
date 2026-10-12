@@ -1,0 +1,107 @@
+name: warehouse-backfill
+
+# Re-ingest whole seasons into R2, then re-verify them. Manual only.
+#
+# Why this exists as a workflow and not a command someone runs: a `--force`
+# backfill holds the manifest in memory and flushes it every 25 days, so any
+# other writer in that window is silently overwritten (measured 2026-09-24: a
+# laptop run erased the nightly's entry for the previous day). Sharing the
+# nightly's concurrency group makes the two mutually exclusive, and a runner
+# does not go to sleep mid-season the way a laptop does.
+#
+# What a run does, per season, in order:
+#   1. backfill --force   rewrites every day with the current flattener, which
+#                         fills the pitch-physics columns and the pre-pitch
+#                         `outs`. Clears verification, by design.
+#   2. verify --record    independent re-derivation; re-earns verification.
+#   3. postseason         playoff games into the post_* datasets.
+# and ends on `readiness`, which fails the run if a season is still not
+# complete -- so green means the season is usable, not just that it ran.
+#
+# One or two seasons per dispatch keeps a run well inside the job limit and
+# makes a failure cheap to repeat.
+
+on:
+  workflow_dispatch:
+    inputs:
+      seasons:
+        description: "Seasons, space-separated (e.g. '2019 2020')"
+        required: true
+      force:
+        description: "Re-ingest days the manifest already holds (needed to fill new columns)"
+        type: boolean
+        default: true
+      verify:
+        description: "Re-verify each season after ingesting it"
+        type: boolean
+        default: true
+      postseason:
+        description: "Also ingest each season's playoff games"
+        type: boolean
+        default: true
+
+concurrency:
+  group: warehouse-nightly     # the same group as warehouse.yml, on purpose
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      SEASONS: ${{ inputs.seasons }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install warehouse deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-warehouse.txt
+
+      - name: Check the seasons input
+        run: |
+          set -euo pipefail
+          for s in $SEASONS; do
+            [[ "$s" =~ ^20[0-9]{2}$ ]] || { echo "::error::not a season: '$s'"; exit 1; }
+          done
+
+      - name: Re-ingest
+        run: |
+          set -euo pipefail
+          python scripts/warehouse_backfill.py --seasons $SEASONS \
+            ${{ inputs.force && '--force' || '' }}
+
+      - name: Verify
+        if: ${{ inputs.verify }}
+        run: |
+          set -euo pipefail
+          yesterday=$(date -u -d yesterday +%F)
+          for s in $SEASONS; do
+            end="$s-11-15"
+            [[ "$end" > "$yesterday" ]] && end="$yesterday"
+            python -m warehouse verify --range "$s-03-01..$end" --record
+          done
+
+      - name: Postseason
+        if: ${{ inputs.postseason }}
+        run: |
+          set -euo pipefail
+          for s in $SEASONS; do
+            python -m warehouse postseason --season "$s" \
+              ${{ inputs.force && '--force' || '' }}
+          done
+
+      - name: Readiness
+        if: always()
+        run: python -m warehouse readiness --seasons $SEASONS

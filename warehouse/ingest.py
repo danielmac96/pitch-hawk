@@ -23,7 +23,8 @@ import pyarrow.parquet as pq
 from warehouse.store import ObjectStore
 from warehouse import manifest
 from warehouse.config import (
-    DATASETS, KEY_COLUMNS, SCHEMAS, object_key, snapshot_key,
+    DATASETS, KEY_COLUMNS, POSTSEASON_GAME_TYPES, POSTSEASON_PREFIX, SCHEMAS,
+    object_key, snapshot_key,
 )
 from warehouse.weather import fetch_hourly, rows_for_games
 from warehouse.mlb import (
@@ -74,14 +75,20 @@ def daterange(start: str, end: str) -> list[str]:
 
 
 def ingest_day(store: ObjectStore, day: str, *, with_boxscore: bool = True,
-               workers: int = WORKERS, m: dict | None = None) -> dict:
+               workers: int = WORKERS, m: dict | None = None,
+               postseason: bool = False) -> dict:
     """Fetch, flatten and write one day. Returns manifest facts per dataset.
 
     Pass `m` to record into an in-memory manifest that the caller flushes.
     Over a multi-season backfill that turns ~2,800 read-modify-write round
     trips against a growing JSON blob into a handful.
+
+    `postseason=True` fetches the day's playoff games instead and writes them
+    to the POSTSEASON_DATASETS, leaving the regular-season files untouched.
     """
-    games = schedule(day)
+    prefix = POSTSEASON_PREFIX if postseason else ""
+    games = (schedule(day, POSTSEASON_GAME_TYPES) if postseason
+             else schedule(day))
     if not games:
         return {"day": day, "games": 0, "pitches": 0, "at_bats": 0,
                 "bytes": 0, "written": False, "player_ids": set()}
@@ -124,8 +131,9 @@ def ingest_day(store: ObjectStore, day: str, *, with_boxscore: bool = True,
         m = manifest.load(store)
     now = datetime.now(timezone.utc).isoformat()
     total_bytes = 0
-    for dataset, rows in (("pitches", pitches), ("at_bats", at_bats),
-                          ("games", game_rows)):
+    for dataset, rows in ((prefix + "pitches", pitches),
+                          (prefix + "at_bats", at_bats),
+                          (prefix + "games", game_rows)):
         blob = to_parquet(rows, dataset)
         store.put(object_key(dataset, day), blob)
         total_bytes += len(blob)
@@ -141,7 +149,7 @@ def ingest_day(store: ObjectStore, day: str, *, with_boxscore: bool = True,
                     for r in flatten_player_box(
                         g["gamePk"], _date(game_dates.get(g["gamePk"])),
                         results[g["gamePk"]]["boxscore"])]
-        _write_derived(store, m, "player_box", day, box_rows,
+        _write_derived(store, m, prefix + "player_box", day, box_rows,
                        games=len(game_rows), now=now)
 
     if owns_manifest:
@@ -154,7 +162,8 @@ def ingest_day(store: ObjectStore, day: str, *, with_boxscore: bool = True,
 
 def ingest_range(store: ObjectStore, start: str, end: str, *, with_boxscore: bool = True,
                  workers: int = WORKERS, skip_existing: bool = True,
-                 on_day=None, flush_every: int = 25) -> dict:
+                 on_day=None, flush_every: int = 25,
+                 postseason: bool = False) -> dict:
     """Ingest a date window, skipping days already in the manifest.
 
     The manifest is flushed every `flush_every` days and on exit. A crash
@@ -162,7 +171,8 @@ def ingest_range(store: ObjectStore, start: str, end: str, *, with_boxscore: boo
     picks them up because the Parquet writes themselves are idempotent.
     """
     m = manifest.load(store)
-    done = set(manifest.days(m, "pitches"))
+    done = set(manifest.days(
+        m, (POSTSEASON_PREFIX if postseason else "") + "pitches"))
     days = daterange(start, end)
     todo = [d for d in days if not (skip_existing and d in done)]
 
@@ -174,7 +184,7 @@ def ingest_range(store: ObjectStore, start: str, end: str, *, with_boxscore: boo
     for i, day in enumerate(todo, 1):
         try:
             res = ingest_day(store, day, with_boxscore=with_boxscore,
-                             workers=workers, m=m)
+                             workers=workers, m=m, postseason=postseason)
         except MlbApiError as exc:
             totals["failed"].append(str(exc)[:200])
             if on_day:

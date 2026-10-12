@@ -162,6 +162,32 @@ def test_base_state_is_pre_play_and_ignores_the_leaky_splits_field(game):
     assert "Loaded" not in {p["men_on_base"] for p in pitches}
 
 
+def test_outs_are_pre_pitch_not_the_plate_appearances_final_count():
+    """play.count.outs is the count AFTER the at-bat. Read directly it put
+    outs = 3 on every pitch of an inning-ending strikeout."""
+    def play(abi, top, events, event_type, outs_after):
+        p = _play(abi, 1, top, events, event_type, 0, 0)
+        p["count"] = {"outs": outs_after}
+        return p
+
+    # A caught stealing between the two pitches of AB1 takes outs 1 -> 2.
+    caught = {"type": "action", "count": {"balls": 0, "strikes": 1, "outs": 2},
+              "details": {"eventType": "caught_stealing_2b"}}
+    pbp = {"allPlays": [
+        play(0, True, [_pitch_event(1, 0, 1), _pitch_event(2, 0, 1, "X")],
+             "field_out", 1),
+        play(1, True, [_pitch_event(1, 0, 1), caught, _pitch_event(2, 0, 2),
+                       _pitch_event(3, 0, 3)], "strikeout", 3),
+        play(2, False, [_pitch_event(1, 0, 1, "X")], "field_out", 1),
+    ]}
+    pitches, _ = flatten_play_by_play(1, date(2025, 8, 20), pbp)
+    by_ab = {}
+    for p in pitches:
+        by_ab.setdefault(p["at_bat_index"], []).append(p["outs"])
+    assert by_ab == {0: [0, 0], 1: [1, 2, 2], 2: [0]}
+    assert max(p["outs"] for p in pitches) <= 2
+
+
 def test_score_is_pre_plate_appearance(game):
     pitches, _ = flatten_play_by_play(1, date(2025, 8, 20), game)
     by_ab = {}

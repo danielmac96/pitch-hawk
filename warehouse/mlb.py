@@ -271,6 +271,7 @@ def flatten_play_by_play(game_pk: int, game_date: date | None,
     # Carried state
     home_score = away_score = 0
     on1 = on2 = on3 = None
+    outs = 0
     last_half: tuple[int | None, bool | None] = (None, None)
     pitcher_pitch_count: dict[int, int] = {}
     faced: dict[tuple[int, int], int] = {}
@@ -283,9 +284,10 @@ def flatten_play_by_play(game_pk: int, game_date: date | None,
 
         inning = _int(about.get("inning"))
         top = about.get("isTopInning")
-        # Bases clear at each half-inning change.
+        # Bases and outs clear at each half-inning change.
         if (inning, top) != last_half:
             on1 = on2 = on3 = None
+            outs = 0
             last_half = (inning, top)
 
         pitcher_id = _int((matchup.get("pitcher") or {}).get("id"))
@@ -304,12 +306,24 @@ def flatten_play_by_play(game_pk: int, game_date: date | None,
         men_on = men_on_base(on1, on2, on3)
         pre_home, pre_away = home_score, away_score
 
-        events = [e for e in (play.get("playEvents") or [])
-                  if e.get("type") == "pitch"]
+        all_events = play.get("playEvents") or []
+        events = [e for e in all_events if e.get("type") == "pitch"]
 
         # Pre-pitch count: the feed's event count is POST-pitch.
+        #
+        # Outs are lagged the same way, and for the same reason men_on_base
+        # is: play.count.outs is the count AFTER the plate appearance, so
+        # reading it stamped every pitch of an inning-ending at-bat with
+        # outs = 3 (22% of rows carried the wrong value, 2015-2026). Non-pitch
+        # events are walked too -- a pickoff or caught stealing between
+        # pitches changes the outs the next pitch is thrown with.
         balls = strikes = 0
-        for ev in events:
+        for ev in all_events:
+            if ev.get("type") != "pitch":
+                o = _int((ev.get("count") or {}).get("outs"))
+                if o is not None:
+                    outs = o
+                continue
             details = ev.get("details") or {}
             pd = ev.get("pitchData") or {}
             coords = pd.get("coordinates") or {}
@@ -337,7 +351,7 @@ def flatten_play_by_play(game_pk: int, game_date: date | None,
                 "pitch_ts": _ts(ev.get("startTime")),
                 "balls": balls,
                 "strikes": strikes,
-                "outs": _int((play.get("count") or {}).get("outs")),
+                "outs": outs,
                 "inning": inning,
                 "top_inning": top,
                 "men_on_base": men_on,
@@ -403,6 +417,9 @@ def flatten_play_by_play(game_pk: int, game_date: date | None,
             cnt = ev.get("count") or {}
             balls = _int(cnt.get("balls")) or 0
             strikes = _int(cnt.get("strikes")) or 0
+            o = _int(cnt.get("outs"))
+            if o is not None:
+                outs = o
 
         event_type = result.get("eventType")
         if event_type:
@@ -431,6 +448,9 @@ def flatten_play_by_play(game_pk: int, game_date: date | None,
             })
 
         # Carry post-play state forward.
+        o = _int((play.get("count") or {}).get("outs"))
+        if o is not None:
+            outs = o
         if result.get("homeScore") is not None:
             home_score = _int(result.get("homeScore")) or 0
             away_score = _int(result.get("awayScore")) or 0

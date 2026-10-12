@@ -43,6 +43,10 @@ on:
         description: "Re-ingest the day even if the manifest already has it"
         type: boolean
         default: false
+      export_days:
+        description: "Trailing days of our own predictions to (re-)export (nightly default 7; 35 covers the whole hot window)"
+        required: false
+        default: "7"
       player_box_catchup:
         description: "Historical game-days of per-player boxscore lines to backfill this run (nightly default 60; ~2000 drains all history)"
         required: false
@@ -118,7 +122,14 @@ jobs:
       # Doubles as the R2_BUCKET check: R2Store probes the bucket at
       # construction and raises on a wrong name, rather than reporting an empty
       # manifest the way the mistyped local .env did until 2026-08-02.
+      #
+      # Bounded and non-fatal: this step hung until the job was cancelled on
+      # most nights from 2026-09-24, and a cancelled `ingest` skips export and
+      # publish. It is a report; the ingest step below builds its own store
+      # and fails properly if R2 is unreachable.
       - name: Status before
+        timeout-minutes: 5
+        continue-on-error: true
         run: python -m warehouse status
 
       - name: Resolve the days to ingest
@@ -209,6 +220,8 @@ jobs:
 
       - name: Status after
         if: always()
+        timeout-minutes: 5
+        continue-on-error: true
         run: python -m warehouse status
 
   # Per-player boxscore lines (player_box) for history.
@@ -262,8 +275,13 @@ jobs:
   #
   # The ordering that IS required is manifest safety: both jobs do a
   # load-modify-save on one JSON object, so they must not overlap.
+  #
+  # `player_box` is in `needs` for the same reason and no other: it was added
+  # later as a third manifest writer and ran alongside this job, so whichever
+  # saved last erased the other's entries. `always()` below still lets the
+  # export run when the box catch-up fails.
   export:
-    needs: [guard, ingest]
+    needs: [guard, ingest, player_box]
     if: ${{ always() && needs.guard.outputs.run == 'true' && needs.ingest.result != 'cancelled' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -287,8 +305,18 @@ jobs:
 
       # No --skip-existing: re-exporting is how grades that landed after the
       # fact (a suspended game finishing the next afternoon) reach R2.
-      - name: Export yesterday's predictions, picks and game_predictions
-        run: python -m warehouse export
+      #
+      # A trailing window, not just yesterday: a night this job does not run
+      # (the ingest job was cancelled most nights from 2026-09-24) would
+      # otherwise leave a hole nothing ever fills, and Supabase deletes the
+      # source rows on a retention timer. Dates are Eastern, like the slate.
+      - name: Export the last week of predictions, picks and projections
+        run: |
+          set -euo pipefail
+          n="${{ inputs.export_days || '7' }}"
+          a=$(TZ=America/New_York date -d "$n days ago" +%F)
+          b=$(TZ=America/New_York date -d "yesterday" +%F)
+          python -m warehouse export --range "$a..$b"
 
   # Runs only if ingest+verify succeeded. Publishing aggregates built from a
   # day that failed verification would put unverified numbers on the site.

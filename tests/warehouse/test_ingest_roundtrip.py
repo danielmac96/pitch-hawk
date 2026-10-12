@@ -60,15 +60,16 @@ def stub_api(monkeypatch, pbp):
     and `calls` records every fetch so idempotency can be asserted on API
     traffic rather than only on the manifest.
     """
-    state = {"fail": set(), "calls": []}
+    state = {"fail": set(), "calls": [], "game_types": []}
 
     def fake_schedule(day, game_type="R"):
         # Days outside the fixture's window are legitimately empty, which is
         # what the All-Star break and every off-day look like.
+        state["game_types"].append(game_type)
         if day != DAY:
             return []
         return [
-            {"gamePk": pk, "officialDate": day, "gameType": "R",
+            {"gamePk": pk, "officialDate": day, "gameType": game_type[0],
              "season": "2026",
              "status": {"detailedState": "Final"},
              "venue": {"id": 3313, "name": "Fenway Park"},
@@ -97,6 +98,45 @@ def stub_api(monkeypatch, pbp):
 def pitch_rows(pbp) -> list[dict]:
     rows, _ = flatten_play_by_play(GAME_PKS[0], date.fromisoformat(DAY), pbp)
     return rows
+
+
+# ── postseason ──────────────────────────────────────────────────────────────
+
+def test_postseason_is_written_apart_from_the_regular_season(store, stub_api):
+    """October must never appear to a reader that asked for `pitches`.
+
+    Most readers of pitches / at_bats do not join `games` to filter on
+    game_type, so the separation has to be in the dataset name.
+    """
+    from warehouse import duck
+
+    ingest.ingest_day(store, DAY, with_boxscore=False, postseason=True)
+    assert stub_api["game_types"] == ["F,D,L,W"]
+
+    m = manifest.load(store)
+    assert manifest.days(m, "pitches") == []
+    assert manifest.days(m, "post_pitches") == [DAY]
+    assert manifest.days(m, "post_games") == [DAY]
+    blob = store.get(object_key("post_pitches", DAY))
+    assert pq.read_table(io.BytesIO(blob)).schema.equals(PITCH_SCHEMA)
+    with pytest.raises(ValueError):          # nothing regular-season to scan
+        duck.dataset(store, "pitches", m=m)
+
+    # A regular-season ingest of the same date leaves the playoff files alone.
+    ingest.ingest_day(store, DAY, with_boxscore=False)
+    m = manifest.load(store)
+    assert manifest.days(m, "pitches") == [DAY]
+    assert manifest.entry(m, "post_pitches", DAY)["rows"] ==         manifest.entry(m, "pitches", DAY)["rows"]
+
+
+def test_postseason_range_resumes_on_its_own_manifest_days(store, stub_api):
+    ingest.ingest_day(store, DAY, with_boxscore=False)      # regular season held
+    t = ingest.ingest_range(store, DAY, DAY, with_boxscore=False,
+                            postseason=True)
+    assert (t["days"], t["skipped"]) == (1, 0)              # not skipped by it
+    t = ingest.ingest_range(store, DAY, DAY, with_boxscore=False,
+                            postseason=True)
+    assert (t["days"], t["skipped"]) == (0, 1)
 
 
 # ── Parquet round trip ──────────────────────────────────────────────────────
