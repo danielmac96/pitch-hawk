@@ -211,6 +211,7 @@ dashboard/
 ├── utils/duckdb_conn.py   # the DuckDB connection and query execution
 ├── utils/metrics.py       # derived metrics, baselines, the anomaly rule
 ├── utils/checks.py        # the checks and their thresholds
+├── utils/models.py        # Models page: live versions, scorecard, calibration
 ├── utils/palette.py       # validated colour tokens and chart chrome
 ├── .streamlit/config.toml # chrome colour (Streamlit's default red is reserved here)
 └── requirements.txt · .env.example
@@ -218,8 +219,19 @@ dashboard/
 
 Two pages. `app.py` answers "is the warehouse healthy?" from the manifest;
 `pages/2_Models.py` reads `model_params` and `model_runs` from Supabase and is
-the only page needing database credentials rather than R2 ones. It is where
-rejected training runs are visible — see [`../docs/MODELS.md`](../docs/MODELS.md).
+the only page needing database credentials rather than R2 ones (`SUPABASE_URL`, `SUPABASE_KEY`). It shows, top to bottom:
+
+| Section | Answers |
+|---|---|
+| **Production** | Active registry version per market against the version live scoring stamped (`predictions`, `player_game_projections`, `game_predictions`). ✅ match · ⚠️ drift · 🚫 row not read · — nothing scored. Flags v3 runs that were never staged. |
+| **Scorecard** | Latest run per market and pipeline: validation and 2026 test metric beside the naive baseline, and whether that pipeline is what production serves. |
+| **Live calibration** | Graded projections: mean predicted ÷ observed. |
+| **Runs** | Every recorded run, including rejected ones, with per-season folds against the baseline. |
+
+The judgements are pure functions in `utils/models.py`
+(`tests/dashboard/test_models.py`). Per-model write-ups are in
+[`../docs/models/`](../docs/models/README.md); registry mechanics in
+[`../docs/MODELS.md`](../docs/MODELS.md).
 
 `utils/r2.py` imports the repo's `warehouse` package rather than
 re-implementing credentials, the store or the manifest, so the dashboard cannot
