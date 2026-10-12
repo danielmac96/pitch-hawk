@@ -3,7 +3,7 @@
 -- batter_hrr has been projected and settled per batter-game since base_v1, but
 -- refresh_graded_reads() only copied batter_hit / batter_hr into graded_read,
 -- so the Data Feed and /api/graded could not see it. This is the definition
--- from 20261002000001 with batter_hrr added to the projection branch; nothing
+-- from 20261002120001 with batter_hrr added to the projection branch; nothing
 -- else changes.
 --
 -- ORDER. Apply after 20261008000001 (regrade_base_props) and after the
