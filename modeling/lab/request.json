@@ -1,4 +1,11 @@
 {
-  "note": "markets v3 run 2: log5-logit features instead of league logits; calibrators kept only where they help OOS; measured bullpen lefty share",
-  "steps": [["modeling", "markets", "--record"]]
+  "note": "backfill pilot, 2015-2016: re-ingest with the pre-pitch outs fix and pitch-physics columns, re-verify, ingest the postseason, then the readiness gate",
+  "steps": [
+    ["warehouse", "backfill", "--seasons", "2015", "2016", "--force"],
+    ["warehouse", "verify", "--range", "2015-03-01..2015-11-15", "--record"],
+    ["warehouse", "verify", "--range", "2016-03-01..2016-11-15", "--record"],
+    ["warehouse", "postseason", "--season", "2015"],
+    ["warehouse", "postseason", "--season", "2016"],
+    ["warehouse", "readiness", "--seasons", "2015", "2016"]
+  ]
 }
