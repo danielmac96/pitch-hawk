@@ -1,5 +1,9 @@
 # Modeling methods (v3) — how every prediction on the board is made
 
+> **Status 2026-10-12: v3 is validated but not activated.** No `v3_*` row is
+> in `model_params` and `model_ratings` is empty; production still serves the
+> pre-v3 versions. Current state per market: [`models/README.md`](models/README.md).
+
 This is the document to read before changing a model. It explains the v3
 architecture (2026-10), the maths of each step, where each number is computed,
 and how it is validated. The registry mechanics (insert, activate, roll back)

@@ -1,8 +1,9 @@
 # Models — insert, activate, roll back
 
 > **v3 (2026-10).** Player props, the pregame moneyline and the game total are
-> now served by one plate-appearance outcome model plus closed-form roll-ups
-> and per-market calibrators. The method is in
+> rebuilt on one plate-appearance outcome model plus closed-form roll-ups
+> and per-market calibrators. **Validated 2026-10-08, not yet staged or
+> activated** — what serves today is in [`models/README.md`](models/README.md). The method is in
 > [`MODELING-METHODS.md`](MODELING-METHODS.md); per-market validation results
 > are in [`models/`](models/). This file remains the registry reference: the v3
 > `params.type` shapes are at the end ([v3 params](#v3-params)). The
