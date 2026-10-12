@@ -147,3 +147,48 @@ def calibration_ratio(y: np.ndarray, p: np.ndarray, w: np.ndarray,
     if observed <= 0:
         return float("inf")
     return expected / observed
+
+
+# ── count distributions ─────────────────────────────────────────────────────
+#
+# For the v3 count markets (a starter's strikeouts, outs, hits, walks, earned
+# runs). Their P(over) is priced at the model's own median line, so it sits at
+# ~0.5 and its log loss at ln 2 whatever the skill. These score the whole
+# distribution instead, which is also what a published ladder of lines is.
+
+def _pad(pmfs, width: int) -> np.ndarray:  # noqa: ANN001
+    out = np.zeros((len(pmfs), width))
+    for i, p in enumerate(pmfs):
+        p = np.asarray(p, float)[:width]
+        out[i, :len(p)] = p
+    return out
+
+
+def count_pmf(counts, width: int) -> np.ndarray:  # noqa: ANN001
+    """Empirical pmf of `counts` on 0..width-1 -- the naive baseline: every
+    row gets the distribution the training seasons produced."""
+    c = np.clip(np.asarray(counts, int), 0, width - 1)
+    return np.bincount(c, minlength=width)[:width] / max(len(c), 1)
+
+
+def rps(pmfs, y) -> float:  # noqa: ANN001
+    """Ranked probability score: sum over thresholds k of (F(k) - 1[y <= k])^2.
+
+    The discrete CRPS, and exactly the sum of the Brier scores of every line
+    on the ladder -- "over 3.5", "over 4.5", ... -- so it scores each
+    published line at once. Lower is better; 0 is a point mass on the truth.
+    """
+    y = np.asarray(y, int)
+    width = max(max(len(p) for p in pmfs), int(y.max()) + 1)
+    cdf = np.cumsum(_pad(pmfs, width), axis=1)
+    step = (np.arange(width)[None, :] >= y[:, None]).astype(float)
+    return float(((cdf - step) ** 2).sum(axis=1).mean())
+
+
+def count_nll(pmfs, y, floor: float = 1e-6) -> float:  # noqa: ANN001
+    """Mean -log P(the count that happened). Floored: a pmf truncated below
+    an observed count would otherwise score infinity on one row."""
+    y = np.asarray(y, int)
+    width = max(max(len(p) for p in pmfs), int(y.max()) + 1)
+    p = _pad(pmfs, width)[np.arange(len(y)), y]
+    return float(-np.log(np.maximum(p, floor)).mean())

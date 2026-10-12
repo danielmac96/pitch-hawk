@@ -37,6 +37,7 @@ import pandas as pd
 
 from modeling import derive as D
 from modeling import games as G
+from modeling import metrics as M
 from modeling import pa_model as P
 from modeling import ratings as R
 
@@ -321,6 +322,16 @@ def starter_markets(S_: pd.DataFrame, final: dict) -> dict:
             m["uncalibrated_logloss"] = G.binary_metrics(p_te, y_te)["logloss"]
             m["mae_expected"] = round(float(np.mean(np.abs(ev - te[lab].to_numpy()))), 4)
             m["mae_train_mean"] = round(float(np.mean(np.abs(tr[lab].mean() - te[lab].to_numpy()))), 4)
+            # The whole distribution, i.e. every line on the published ladder
+            # at once -- the median-line log loss above cannot show skill.
+            # Baseline: the training seasons' marginal count distribution.
+            y_cnt = te[lab].to_numpy().astype(int)
+            width = max(max(len(p) for p in pm_te), int(y_cnt.max()) + 1)
+            marg = [M.count_pmf(tr[lab].to_numpy(), width)] * len(y_cnt)
+            m["rps"] = round(M.rps(pm_te, y_cnt), 5)
+            m["rps_baseline"] = round(M.rps(marg, y_cnt), 5)
+            m["count_nll"] = round(M.count_nll(pm_te, y_cnt), 5)
+            m["count_nll_baseline"] = round(M.count_nll(marg, y_cnt), 5)
             m["season"] = s
             folds.append(m)
             _log(f"{mkt} {s}: {m}")

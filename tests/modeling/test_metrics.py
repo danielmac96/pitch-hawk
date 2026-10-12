@@ -11,8 +11,39 @@ import math
 import numpy as np
 import pytest
 
-from modeling.metrics import (brier, calibration_bins, ece, logloss, rmse,
-                              sigma_coverage, sigma_coverage_cells)
+from modeling.metrics import (brier, calibration_bins, count_nll, count_pmf,
+                              ece, logloss, rmse, rps, sigma_coverage,
+                              sigma_coverage_cells)
+
+
+def test_rps_is_zero_for_a_point_mass_on_the_truth():
+    assert rps([[0, 0, 1.0], [1.0]], [2, 0]) == pytest.approx(0.0)
+
+
+def test_rps_is_the_sum_of_brier_scores_over_every_line():
+    pmf, y = [0.2, 0.5, 0.3], 1
+    # thresholds k=0,1,2: F = .2, .7, 1.0; step = 0, 1, 1
+    assert rps([pmf], [y]) == pytest.approx(0.2 ** 2 + 0.3 ** 2 + 0.0)
+    # the same thing as Brier on "over 0.5" and "over 1.5"
+    over = [(0.8, 1), (0.3, 0)]
+    assert rps([pmf], [y]) == pytest.approx(sum((p - o) ** 2 for p, o in over))
+
+
+def test_rps_penalises_distance_and_nll_does_not():
+    near, far = [0, 0, 1.0], [1.0, 0, 0]                 # truth is 3
+    assert rps([near], [3]) == pytest.approx(1.0)        # off by one line
+    assert rps([far], [3]) == pytest.approx(3.0)         # off by three
+    assert count_nll([near], [3]) == count_nll([far], [3])
+
+
+def test_count_metrics_handle_a_count_beyond_the_pmf():
+    assert count_nll([[0.5, 0.5]], [4]) == pytest.approx(-math.log(1e-6))
+    assert rps([[0.5, 0.5]], [4]) == pytest.approx(0.25 + 1 + 1 + 1)
+
+
+def test_count_pmf_is_the_empirical_distribution():
+    assert count_pmf([0, 1, 1, 9], 4).tolist() == [0.25, 0.5, 0.0, 0.25]
+    assert count_nll([count_pmf([1, 1, 2, 2], 4)] * 2, [1, 2]) ==         pytest.approx(math.log(2))
 
 
 def test_logloss_perfect_prediction_is_zero():

@@ -50,3 +50,13 @@ def test_workload_params_shape(result):
     assert set(wl["outs"]) >= {"coef", "intercept", "residual_pmf", "features"}
     assert abs(sum(wl["outs"]["residual_pmf"].values()) - 1) < 1e-3
     assert "1H" in wl["pa_pmf"] and len(wl["pa_pmf"]["1H"]) == 9
+
+
+def test_starter_folds_score_the_whole_count_distribution(result):
+    """The median-line log loss cannot show skill; RPS and exact-count NLL
+    can, and each carries the marginal-distribution baseline beside it."""
+    for m in M.STARTER_MARKETS:
+        f = result["report"][m]["folds"][-1]
+        for k in ("rps", "rps_baseline", "count_nll", "count_nll_baseline"):
+            assert f[k] > 0, (m, k, f)
+        assert "rps" in result["report"][m]["oos"], m

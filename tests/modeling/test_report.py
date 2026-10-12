@@ -170,6 +170,6 @@ def test_leaderboard_renders_serving_runs_and_live_record():
     assert "Scored with no registry row: `game_total` → `total_v1`." in md
     assert "Validated v3 runs not staged: `batter_hr`." in md
     assert "| batter_hr | markets_v3 |  | 2026-10-08 | logloss | 0.3536 | " \
-           "0.3601 | 0.3492 | 0.3550 | 0.9568 | yes | no |" in md
+           "0.3601 | 0.3492 | 0.3550 | 0.9568 |  |  | yes | no |" in md
     assert "| batter_hr | v2_20260924 | 10 | 0.1200 | 0.1000 | 1.2000 |" in md
     assert "| game_total | total_v1 | 2 | 0.5100 | 0.5000 |" in md
