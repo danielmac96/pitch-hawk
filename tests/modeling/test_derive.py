@@ -44,6 +44,20 @@ def test_batter_structural_expectations():
     assert 0 < s["hr"] < s["hit"] < 1
 
 
+def test_walk_share_thins_hit_batsmen_out_of_the_walks():
+    outs = np.zeros(D.MAX_OUTS + 1)
+    outs[18] = 1.0
+    full = D.starter_counts(P, outs)
+    thin = D.starter_counts(P, outs, walk_share=0.88)
+    e = lambda p: float(np.dot(np.arange(len(p)), p))     # noqa: E731
+    # Thinning moves mass, it never loses any (both sum short of 1 only by
+    # the n_max truncation of the baserunner count).
+    assert thin["bb"].sum() == pytest.approx(full["bb"].sum(), abs=1e-12)
+    assert e(thin["bb"]) == pytest.approx(0.88 * e(full["bb"]), rel=1e-6)
+    for k in ("k", "h", "bf"):                            # nothing else moves
+        np.testing.assert_allclose(thin[k], full[k])
+
+
 def test_starter_counts_monte_carlo():
     rng = np.random.default_rng(0)
     outs = np.zeros(D.MAX_OUTS + 1)

@@ -33,7 +33,7 @@ data comes from).
 | `batter_hr` | `v2_20260924` | v3 — beats baseline | predicts 0.127, observed 0.084 (n=395): **1.52× hot** |
 | `batter_tb15`, `batter_hrr` | `base_v1` (league × 30-day rates) | v3 — beats baseline | **0 of 291 graded** per market |
 | `pitcher_k`, `_hits`, `_outs`, `_er` | `base_v1` | v3 — beats baseline | **0 of 32 graded** per market |
-| `pitcher_bb` | `base_v1` | none — v3 does not beat the pitcher's own average | 0 of 32 graded |
+| `pitcher_bb` | `base_v1` | none yet — v3 lost to a league-mean constant; fix in P-002 | 0 of 32 graded |
 | `game_moneyline` pregame | `log5_v1` (formula, hardcoded 0.542 home edge) | v3 — beats baseline | 60.3% correct, log loss 0.655 (n=300) |
 | `game_moneyline` live | `mlb_winprob_v1` (MLB's own number) | none | — |
 | `game_total` pregame | `total_v1` (formula) | v3 — small edge | picks 46.5%, MAE 3.21 runs (n=284) |

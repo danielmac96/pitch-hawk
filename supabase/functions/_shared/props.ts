@@ -259,7 +259,7 @@ function negbinFailuresRow(o: number, pOut: number, nMax: number): Vec {
 }
 
 /** derive.starter_counts: K, BB, H and BF pmfs given an outs pmf. */
-export function starterCounts(pAvg: Vec, outsPmf: Vec, nMax = 30): Record<string, Vec> {
+export function starterCounts(pAvg: Vec, outsPmf: Vec, nMax = 30, walkShare = 1): Record<string, Vec> {
   const pk = pAvg[K], pout = pAvg[OUT], pO = pk + pout;
   const ph = pAvg[2] + pAvg[3] + pAvg[4] + pAvg[5], pbb = pAvg[BB];
   const k = new Array(nMax + 1).fill(0);
@@ -286,7 +286,18 @@ export function starterCounts(pAvg: Vec, outsPmf: Vec, nMax = 30): Record<string
       bb[j] += fMarg[f] * hb[f - j];
     }
   }
-  return { k, h, bb, bf, outs: outsPmf.slice() };
+  // The BB class is walks + hit-by-pitch; the market grades walks only
+  // (derive.starter_counts). Thin by the walk share of the class.
+  let walks = bb;
+  if (walkShare < 1) {
+    walks = new Array(nMax + 1).fill(0);
+    for (let n = 0; n <= nMax; n++) {
+      if (!(bb[n] > 0)) continue;
+      const t = binomRow(n, walkShare, nMax);
+      for (let j = 0; j <= n; j++) walks[j] += bb[n] * t[j];
+    }
+  }
+  return { k, h, bb: walks, bf, outs: outsPmf.slice() };
 }
 
 export function overProb(pmf: Vec, line: number): number {
@@ -457,7 +468,7 @@ export function starterMarkets(
   const ws = Math.max(w[0] + w[1] + w[2], 1e-9);
   const pAvg = new Array(NC).fill(0).map((_, c) =>
     (w[0] * byTto[0][c] + w[1] * byTto[1][c] + w[2] * byTto[2][c]) / ws);
-  const cnt = starterCounts(pAvg, x.outs_pmf);
+  const cnt = starterCounts(pAvg, x.outs_pmf, 30, b.pitcher_bb?.walk_share ?? 1);
   const eOuts = x.outs_pmf.reduce((a, v, i) => a + v * i, 0);
   const rpo = pAvg.reduce((a, v, c) => a + v * RUN_WEIGHTS[c], 0) / (pAvg[K] + pAvg[OUT]);
   const out: Record<string, StarterProp> = {};

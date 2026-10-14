@@ -1,12 +1,12 @@
 {
-  "note": "P-001: re-run the v3 pipeline unchanged on the re-ingested, fully verified warehouse (12 of 12 seasons ready). Records model_runs rows tagged P-001; stages and activates nothing. Also the first real numbers for the full-distribution scoring (P-003).",
+  "note": "P-002: pitcher_bb with hit-by-pitch thinned out of the walks pmf (the market grades baseOnBalls). Records runs tagged P-002; stages nothing.",
   "steps": [
     [
       "modeling",
       "markets",
       "--record",
       "--proposal",
-      "P-001"
+      "P-002"
     ]
   ]
 }

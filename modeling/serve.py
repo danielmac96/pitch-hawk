@@ -198,7 +198,8 @@ def starter_markets(bundle: dict, *, sp_r, sp_hand: str, lineup: list[tuple],  #
                   np.dot(bf_pmf, np.maximum(bf - 18, 0))])
     w = w / max(w.sum(), 1e-9)
     p_avg = sum(w[i] * by_tto[i] for i in range(3))
-    cnt = D.starter_counts(p_avg, outs_pmf)
+    cnt = D.starter_counts(p_avg, outs_pmf, walk_share=float(
+        (bundle.get("pitcher_bb") or {}).get("walk_share", 1.0)))
     e_outs = float(np.dot(np.arange(len(outs_pmf)), outs_pmf))
     rpo = float(p_avg @ np.asarray(RUN_WEIGHTS)) / float(p_avg[0] + p_avg[6])
     out = {}

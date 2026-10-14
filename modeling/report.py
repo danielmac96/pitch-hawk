@@ -42,7 +42,9 @@ INERT_TYPES = {"log5"}
 # priced at the model's own median, so its log loss sits at ln 2 whatever the
 # skill.
 _SCORE_KEYS: tuple[tuple[str, tuple[str, ...], str], ...] = (
-    ("mae_expected", ("mae_train_mean",), "pitcher's training-season mean"),
+    # mae_train_mean is ONE constant for every start (markets.starter_markets:
+    # tr[lab].mean()), not each pitcher's own average.
+    ("mae_expected", ("mae_train_mean",), "league mean of the training seasons"),
     ("logloss", ("slot_baseline_logloss",), "lineup-slot rate"),
     ("logloss", ("production_log5_logloss", "home_rate_baseline_logloss"),
      "home rate / production log5"),

@@ -168,7 +168,8 @@ def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
         tr_st = starts[(starts["season"] < cut)]
         wl = {"outs": G.fit_workload(tr_st, "p_outs"),
               "bf": G.fit_workload(tr_st, "p_bf"),
-              "pa_pmf": G.fit_pa_pmf(bat[bat["season"] < cut])}
+              "pa_pmf": G.fit_pa_pmf(bat[bat["season"] < cut]),
+              "walk_share": G.measure_walk_share(pa[pa["season"] < cut])}
         workload_by_season[s] = wl
 
         st = starts[starts["season"] == s].copy()
@@ -214,7 +215,7 @@ def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
                              "holdout": pa_holdout}}
     final = {"pa_outcome": final_pa}
     report.update(batter_markets(B, final))
-    report.update(starter_markets(S_, final))
+    report.update(starter_markets(S_, final, G.measure_walk_share(pa)))
     report.update(team_markets(team, final))
 
     wl_all = {"outs": G.fit_workload(starts, "p_outs"),
@@ -252,7 +253,7 @@ def starter_structural(st: pd.DataFrame, lineup: pd.DataFrame,
                       np.dot(bf_pmf, np.maximum(bf - 18, 0))])
         w = w / max(w.sum(), 1e-9)
         p_avg = (ps[idx].mean(axis=0) * w[:, None]).sum(axis=0)
-        cnt = D.starter_counts(p_avg, outs_pmf)
+        cnt = D.starter_counts(p_avg, outs_pmf, walk_share=wl["walk_share"])
         rpo = float(p_avg @ G.RUN_WEIGHTS) / float(p_avg[0] + p_avg[6])
         rows.append({
             "game_pk": r.game_pk, "player_id": r.player_id, "season": r.season,
@@ -290,7 +291,7 @@ def _er_pmf(m: dict, e_outs: float, rpo: float) -> np.ndarray:
     return D.negbin_pmf(float(np.exp(z)), m["alpha"], 30)
 
 
-def starter_markets(S_: pd.DataFrame, final: dict) -> dict:
+def starter_markets(S_: pd.DataFrame, final: dict, walk_share: float = 1.0) -> dict:
     report = {}
     S_ = S_[S_["bf"].fillna(0) > 0].reset_index(drop=True)
     for mkt in STARTER_MARKETS:
@@ -354,6 +355,8 @@ def starter_markets(S_: pd.DataFrame, final: dict) -> dict:
                       "cal": _keep_cal(report[mkt]["oos"], G.fit_calibrator(pv, yv))}
         if glm:
             final[mkt]["er_glm"] = glm
+        if mkt == "pitcher_bb":
+            final[mkt]["walk_share"] = walk_share
     return report
 
 

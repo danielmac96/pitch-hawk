@@ -65,7 +65,7 @@ function bundle(): Bundle {
     batter_tb15: { cal: { a: 0.02, b: 0.97 } },
     batter_hrr: { cal: { a: -0.3, b: 0.8, w: { e_onbase: 0.25, top_order: 0.1, log_team_value: 0.2 } } },
     pitcher_k: { cal: { a: 0.01, b: 0.95 } },
-    pitcher_bb: { cal: { a: -0.02, b: 0.9 } },
+    pitcher_bb: { cal: { a: -0.02, b: 0.9 }, walk_share: 0.88 },
     pitcher_hits: { cal: { a: 0.0, b: 0.97 } },
     pitcher_outs: { cal: { a: 0.03, b: 0.92 } },
     pitcher_er: { cal: { a: -0.04, b: 0.9 }, er_glm: { intercept: -1.1, coef: [0.95, 0.85], alpha: 0.18 } },
