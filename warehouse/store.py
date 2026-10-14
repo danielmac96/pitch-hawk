@@ -71,7 +71,12 @@ class R2Store:
             aws_secret_access_key=cfg.secret_access_key,
             # R2 ignores region but boto3 requires one.
             region_name="auto",
-            config=Config(retries={"max_attempts": 5, "mode": "standard"}),
+            # Explicit timeouts: the nightly's `status` step sat for the whole
+            # 45-minute job on a call that never returned (2026-09-24 onward,
+            # intermittently), which skipped export and publish. A stalled
+            # socket must surface as an error the retry policy can see.
+            config=Config(retries={"max_attempts": 5, "mode": "standard"},
+                          connect_timeout=10, read_timeout=60),
         )
         if probe:
             self._probe()

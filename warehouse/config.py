@@ -600,8 +600,26 @@ EXPORT_DATASETS = ("predictions", "picks", "game_predictions",
 # possible and simply does not exist yet. Nothing gates on their verification.
 DERIVED_DATASETS = ("game_weather", "player_box")
 
+# Postseason games (wild card, division, league and World Series), stored
+# under their own names with the regular-season schemas.
+#
+# A separate family, not more days in DATASETS, so that nothing reads October
+# by accident: `duck.register` defaults to DATASETS, and most readers of
+# `pitches` / `at_bats` (the v2 cell spines, the display aggregates, the
+# dashboard's rows-per-game baselines) never join `games` to filter on
+# game_type. Every model is fitted on the regular season; a reader that wants
+# the postseason -- to grade what we served in October -- names it.
+#
+# Re-fetchable from the MLB API like DATASETS, but `verify` does not cover
+# them yet and nothing gates on their verification.
+POSTSEASON_GAME_TYPES = "F,D,L,W"
+POSTSEASON_PREFIX = "post_"
+POSTSEASON_DATASETS = tuple(
+    POSTSEASON_PREFIX + d for d in DATASETS + ("player_box",))
+
 # Every day-partitioned dataset, whichever direction it came from.
-DAY_PARTITIONED = DATASETS + EXPORT_DATASETS + DERIVED_DATASETS
+DAY_PARTITIONED = (DATASETS + EXPORT_DATASETS + DERIVED_DATASETS
+                   + POSTSEASON_DATASETS)
 
 # Overwritten in full each run.
 SNAPSHOTS = ("players", "venues", "contact_quality")
@@ -623,6 +641,11 @@ KEY_COLUMNS: dict[str, tuple[str, ...]] = {
     "game_predictions": ("game_pk", "market", "phase"),
     "player_game_projections": ("game_pk", "player_id", "market"),
 }
+
+
+for _d in POSTSEASON_DATASETS:
+    SCHEMAS[_d] = SCHEMAS[_d[len(POSTSEASON_PREFIX):]]
+    KEY_COLUMNS[_d] = KEY_COLUMNS[_d[len(POSTSEASON_PREFIX):]]
 
 
 @dataclass(frozen=True)

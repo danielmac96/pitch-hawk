@@ -271,6 +271,37 @@ def batch_structural(dists: np.ndarray, pa_pmf: np.ndarray) -> dict:
     }
 
 
+# Caps per count: the top bucket means "this many or more".
+COUNT_CAP = {"hits": 6, "hr": 4, "tb": 12}
+
+
+def batch_count_pmf(dists: np.ndarray, pa_pmf: np.ndarray, value_of,  # noqa: ANN001
+                    cap: int) -> np.ndarray:
+    """Vectorised serve.batter_count_pmf over rows: (n, cap + 1).
+
+    P(count = k) for a per-PA count (hits, home runs, total bases) summed
+    over the batter's plate appearances -- the distribution every line on a
+    published ladder is read from.
+    """
+    n = len(dists)
+    state = np.zeros((n, cap + 1))
+    state[:, 0] = 1.0
+    out = state * pa_pmf[:, [0]]
+    for i in range(1, pa_pmf.shape[1]):
+        d = dists[:, i - 1]
+        nxt = np.zeros_like(state)
+        for c in range(7):
+            v = int(value_of[c])
+            if v == 0:
+                nxt += state * d[:, [c]]
+                continue
+            nxt[:, v:] += state[:, :cap + 1 - v] * d[:, [c]]
+            nxt[:, cap] += state[:, cap + 1 - v:].sum(axis=1) * d[:, c]
+        state = nxt
+        out = out + pa_pmf[:, [i]] * state
+    return out
+
+
 # ── calibrators ─────────────────────────────────────────────────────────────
 
 def fit_calibrator(p: np.ndarray, y: np.ndarray,

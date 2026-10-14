@@ -37,8 +37,10 @@ import pandas as pd
 
 from modeling import derive as D
 from modeling import games as G
+from modeling import metrics as M
 from modeling import pa_model as P
 from modeling import ratings as R
+from modeling import serve
 
 NC = R.NC
 SEASONS = tuple(range(P.FIRST_TRAIN_SEASON, P.HOLDOUT + 1))
@@ -128,7 +130,8 @@ def season_params(s: int, holdout_params: dict) -> dict:
     return P.FOLD_PARAMS[max(s, min(P.FOLD_PARAMS))]
 
 
-def run(store, *, record: bool = False, C: float = 1.0) -> dict:  # noqa: ANN001
+def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
+        proposal: str | None = None) -> dict:
     t0 = time.time()
     pa = P.load_pa(store)
     pa, configs = P.attach_ratings(pa, tune=True)
@@ -190,6 +193,10 @@ def run(store, *, record: bool = False, C: float = 1.0) -> dict:  # noqa: ANN001
         sv = G.batch_structural(dists, pa_pmf)
         for k, v in sv.items():
             b[f"s_{k}"] = v
+        # Full count distributions, for scoring every ladder line (P-003).
+        for name, cap in G.COUNT_CAP.items():
+            b[f"c_{name}"] = list(G.batch_count_pmf(
+                dists, pa_pmf, serve.COUNT_OF[name], cap))
         bat_parts.append(b.drop(columns=[c for c in b.columns
                                          if c[:3] in ("rb_", "rs_", "pk_")]))
 
@@ -220,7 +227,7 @@ def run(store, *, record: bool = False, C: float = 1.0) -> dict:  # noqa: ANN001
     print(json.dumps({m: {k: v for k, v in r.items() if k != "folds"}
                       for m, r in report.items()}, indent=1, default=str))
     if record:
-        _record(report, final)
+        _record(report, final, proposal)
     return {"report": report, "final": final}
 
 
@@ -320,6 +327,16 @@ def starter_markets(S_: pd.DataFrame, final: dict) -> dict:
             m["uncalibrated_logloss"] = G.binary_metrics(p_te, y_te)["logloss"]
             m["mae_expected"] = round(float(np.mean(np.abs(ev - te[lab].to_numpy()))), 4)
             m["mae_train_mean"] = round(float(np.mean(np.abs(tr[lab].mean() - te[lab].to_numpy()))), 4)
+            # The whole distribution, i.e. every line on the published ladder
+            # at once -- the median-line log loss above cannot show skill.
+            # Baseline: the training seasons' marginal count distribution.
+            y_cnt = te[lab].to_numpy().astype(int)
+            width = max(max(len(p) for p in pm_te), int(y_cnt.max()) + 1)
+            marg = [M.count_pmf(tr[lab].to_numpy(), width)] * len(y_cnt)
+            m["rps"] = round(M.rps(pm_te, y_cnt), 5)
+            m["rps_baseline"] = round(M.rps(marg, y_cnt), 5)
+            m["count_nll"] = round(M.count_nll(pm_te, y_cnt), 5)
+            m["count_nll_baseline"] = round(M.count_nll(marg, y_cnt), 5)
             m["season"] = s
             folds.append(m)
             _log(f"{mkt} {s}: {m}")
@@ -348,6 +365,12 @@ _BATTER = {
     "batter_tb15": ("s_tb2", lambda b: b["tb"] >= 2),
     "batter_hrr": ("s_hit", lambda b: (b["h"] + b["r"] + b["rbi"]) >= 1),
 }
+
+
+# market -> (count pmf column, boxscore count). H+R+RBI has no structural
+# count distribution: its probability is P(hit) through a calibrator.
+_BATTER_COUNT = {"batter_hit": ("c_hits", "h"), "batter_hr": ("c_hr", "hr"),
+                 "batter_tb15": ("c_tb", "tb")}
 
 
 def _extra(mkt: str, b: pd.DataFrame) -> dict | None:
@@ -383,6 +406,26 @@ def batter_markets(B: pd.DataFrame, final: dict) -> dict:
             rate = pd.Series(y[tr]).groupby(B.loc[tr, "slot"].to_numpy()).mean()
             base = B.loc[te, "slot"].map(rate).fillna(y[tr].mean()).to_numpy()
             m["slot_baseline_logloss"] = G.binary_metrics(base, y[te])["logloss"]
+            if mkt in _BATTER_COUNT:
+                # Every line on the ladder at once. Uncalibrated: the
+                # calibrator is fitted at one line and has no claim on the
+                # others. Baseline: the training seasons' count distribution
+                # for the lineup slot.
+                pcol, ycol = _BATTER_COUNT[mkt]
+                cap = G.COUNT_CAP[pcol[2:]]
+                y_cnt = np.minimum(B.loc[te, ycol].to_numpy().astype(int), cap)
+                pm = np.stack(B.loc[te, pcol].to_numpy())
+                by_slot = {sl: M.count_pmf(np.minimum(g, cap), cap + 1)
+                           for sl, g in B.loc[tr, ycol].astype(int).groupby(
+                               B.loc[tr, "slot"])}
+                allp = M.count_pmf(np.minimum(
+                    B.loc[tr, ycol].to_numpy().astype(int), cap), cap + 1)
+                marg = np.stack([by_slot.get(sl, allp)
+                                 for sl in B.loc[te, "slot"]])
+                m["rps"] = round(M.rps(pm, y_cnt), 5)
+                m["rps_baseline"] = round(M.rps(marg, y_cnt), 5)
+                m["count_nll"] = round(M.count_nll(pm, y_cnt), 5)
+                m["count_nll_baseline"] = round(M.count_nll(marg, y_cnt), 5)
             m["season"] = s
             folds.append(m)
             _log(f"{mkt} {s}: {m}")
@@ -574,9 +617,10 @@ def _agg(folds: list[dict]) -> dict:
     return out
 
 
-def _record(report: dict, final: dict) -> None:
+def _record(report: dict, final: dict, proposal: str | None = None) -> None:
     from modeling import runs as runs_mod
 
+    config_extra = {"proposal": proposal} if proposal else {}
     for mkt, params in final.items():
         r = report.get(mkt, {})
         run = {
@@ -585,7 +629,8 @@ def _record(report: dict, final: dict) -> None:
             "git_sha": runs_mod.git_sha(),
             "data_through": f"{P.HOLDOUT}-12-31",
             "train_seasons": list(SEASONS),
-            "config": {"family": params.get("type"), "pipeline": "markets_v3"},
+            "config": {"family": params.get("type"), "pipeline": "markets_v3",
+                       **config_extra},
             "folds": r.get("folds", []), "oos_metrics": r.get("oos", {}),
             "holdout_metrics": (r.get("oos") or {}).get("holdout_2026")
             or r.get("holdout"),

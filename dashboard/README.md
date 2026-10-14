@@ -131,6 +131,11 @@ is the count *after* the plate appearance, so pitches mid-at-bat carry the
 inning's final out count — 514 of 2,351 rows on 2026-08-03 show `outs = 3`,
 which cannot happen before a pitch.
 
+**Fixed in the flattener 2026-10-12** (`outs` is now carried forward and
+lagged like the count). Days ingested before that still hold the old value
+until their season is re-ingested by `warehouse-backfill.yml`; per-season
+status is in [`../docs/models/LAB.md`](../docs/models/LAB.md#data-readiness).
+
 This is the same leak class `warehouse/mlb.py` deliberately avoids for
 `men_on_base` (and the reason its comment says the API's post-play state "leaks
 the at-bat's own outcome"), but `balls` and `strikes` are lagged there while

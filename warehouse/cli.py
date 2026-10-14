@@ -466,6 +466,66 @@ def cmd_player_box(args) -> int:
     return EXIT_OK
 
 
+def cmd_readiness(args) -> int:
+    """Per-season completeness: verified days, column fill, outs in range.
+
+    Exits non-zero when any season is not ready, so a backfill workflow can
+    end on it. Read-only.
+    """
+    from warehouse import readiness
+
+    rep = readiness.build(_store(args), seasons=args.seasons)
+    print(readiness.to_markdown(rep))
+    bad = [v for v in rep["verdict"] if not v["ready"]]
+    print(f"\n{len(rep['verdict']) - len(bad)} of {len(rep['verdict'])} "
+          f"seasons ready")
+    return EXIT_FAILED if bad else EXIT_OK
+
+
+def cmd_postseason(args) -> int:
+    """Playoff games into the post_* datasets, kept apart from the season.
+
+    `ingest` and `backfill` fetch gameType=R only, so October lived in the
+    35-day Postgres hot window and nowhere else. This writes it to R2 under
+    its own dataset names (see POSTSEASON_DATASETS) so no fit or aggregate
+    reads it unless it asks. Resumable: days already held are skipped unless
+    `--force`.
+    """
+    from warehouse.ingest import ingest_range
+
+    store = _store(args)
+    if args.season:
+        # Wild card starts late September; the World Series can reach
+        # early November.
+        start, end = f"{args.season}-09-25", f"{args.season}-11-10"
+        end = min(end, _yesterday())
+    else:
+        start = args.start or _yesterday()
+        end = args.end or start
+    if start > end:
+        print(f"postseason: nothing to do ({start} is after {end})")
+        return EXIT_OK
+
+    def on_day(day, res, err):
+        if err:
+            print(f"  {day}  FAILED {err}", flush=True)
+        elif res["written"]:
+            print(f"  {day}  {res['games']} games  {res['pitches']} pitches",
+                  flush=True)
+
+    t = ingest_range(store, start, end, workers=args.workers,
+                     skip_existing=not args.force, on_day=on_day,
+                     postseason=True)
+    print(f"postseason {start}..{end}: {t['days']} days, {t['games']} games, "
+          f"{t['pitches']} pitches, {t['bytes']/1e6:.1f} MB "
+          f"({t['skipped']} already held)")
+    if t["failed"]:
+        print(f"  {len(t['failed'])} day(s) failed and were not written",
+              file=sys.stderr)
+        return EXIT_FAILED
+    return EXIT_OK
+
+
 def cmd_publish(args) -> int:
     """Build the display aggregates in DuckDB and swap them into Supabase."""
     from warehouse import publish as pub
@@ -510,6 +570,8 @@ def cmd_backfill(args) -> int:
         argv += ["--workers", str(args.workers)]
     if args.no_boxscore:
         argv += ["--no-boxscore"]
+    if args.force:
+        argv += ["--force"]
     old, sys.argv = sys.argv, ["warehouse_backfill.py"] + argv
     try:
         return bf.main()
@@ -623,10 +685,29 @@ def build_parser() -> argparse.ArgumentParser:
     pb.add_argument("--workers", type=int, default=6)
     pb.set_defaults(fn=cmd_player_box)
 
+    rd = sub.add_parser("readiness",
+                        help="per-season completeness report (read-only)")
+    rd.add_argument("--seasons", nargs="*", type=int, default=None)
+    rd.set_defaults(fn=cmd_readiness)
+
+    po = sub.add_parser("postseason",
+                        help="ingest playoff games into the post_* datasets")
+    po.add_argument("--season", type=int,
+                    help="whole postseason of this year (Sep 25 .. Nov 10)")
+    po.add_argument("--from", dest="start", help="YYYY-MM-DD (default: yesterday)")
+    po.add_argument("--to", dest="end", help="YYYY-MM-DD (default: --from)")
+    po.add_argument("--force", action="store_true",
+                    help="re-ingest days the manifest already holds")
+    po.add_argument("--workers", type=int, default=6)
+    po.set_defaults(fn=cmd_postseason)
+
     b = sub.add_parser("backfill", help="ingest whole seasons (resumable)")
     b.add_argument("--seasons", nargs="*", type=int, default=None)
     b.add_argument("--workers", type=int, default=6)
     b.add_argument("--no-boxscore", action="store_true")
+    b.add_argument("--force", action="store_true",
+                   help="re-ingest days already held (fills new columns; "
+                        "clears their verification)")
     b.set_defaults(fn=cmd_backfill)
 
     return ap

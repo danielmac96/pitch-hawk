@@ -334,6 +334,13 @@ previous formula, so rollback is `python -m modeling rollback <market>`.
 | `batter_hit` / `batter_hr` / `batter_tb15` / `batter_hrr` | `batter_game` | `event`, `cal` {a, b, w?} |
 | `pitcher_k` / `_bb` / `_hits` / `_outs` / `_er` | `starter_count` | `stat`, `cal`; `pitcher_er` also `er_glm` |
 
+**Staging is gated.** `stage-v3` applies the promotion rule
+(`modeling/report.py::verdict`: beat the best baseline on validation and on
+2026, 2026 calibration within 1 ± 0.10, or ± 0.15 for a rare event) and
+refuses a run that fails it; there is no override. Proposals, results and
+decisions are tracked in [`models/LAB.md`](models/LAB.md), whose tables
+`python -m modeling report` regenerates.
+
 **Activation order matters.** `pa_outcome` first; then run
 `python -m modeling publish-ratings` once so `model_ratings` exists; then
 `workload`, `team_runs`, and the market rows. The nightly warehouse job

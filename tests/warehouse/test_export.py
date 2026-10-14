@@ -24,7 +24,7 @@ import pytest
 from warehouse import export, manifest
 from warehouse.config import (
     DATASETS, DAY_PARTITIONED, DERIVED_DATASETS, EXPORT_DATASETS, KEY_COLUMNS,
-    SCHEMAS, object_key,
+    POSTSEASON_DATASETS, SCHEMAS, object_key,
 )
 from warehouse.store import LocalStore
 
@@ -265,17 +265,19 @@ def test_export_datasets_are_never_verifiable(tmp_path):
 def test_day_partitioned_families_stay_disjoint():
     """verify.py and the prune gate key off DATASETS, so leaks matter.
 
-    Three day-partitioned families, each with a different upstream:
-      DATASETS          MLB Stats API  -- verify re-fetches and re-derives it
-      EXPORT_DATASETS   our own output -- no upstream, never verified
-      DERIVED_DATASETS  third party    -- verifiable in principle, no verifier
+    Four day-partitioned families, each with a different upstream:
+      DATASETS             MLB Stats API  -- verify re-fetches and re-derives it
+      EXPORT_DATASETS      our own output -- no upstream, never verified
+      DERIVED_DATASETS     third party    -- verifiable in principle, no verifier
+      POSTSEASON_DATASETS  MLB Stats API, playoff games -- no verifier yet
 
     An export or a weather day leaking into DATASETS would have verify trying
     to re-fetch it from the MLB API, which has never heard of it.
     """
     fams = {"DATASETS": set(DATASETS),
             "EXPORT_DATASETS": set(EXPORT_DATASETS),
-            "DERIVED_DATASETS": set(DERIVED_DATASETS)}
+            "DERIVED_DATASETS": set(DERIVED_DATASETS),
+            "POSTSEASON_DATASETS": set(POSTSEASON_DATASETS)}
     names = sorted(fams)
     for i, a in enumerate(names):
         for b in names[i + 1:]:
@@ -285,7 +287,8 @@ def test_day_partitioned_families_stay_disjoint():
     # no object_key() and is unreadable by duck.uris().
     assert set(DAY_PARTITIONED) == set().union(*fams.values())
 
-    for ds in set(EXPORT_DATASETS) | set(DERIVED_DATASETS):
+    for ds in (set(EXPORT_DATASETS) | set(DERIVED_DATASETS)
+               | set(POSTSEASON_DATASETS)):
         assert ds in SCHEMAS
         assert ds in KEY_COLUMNS
 
