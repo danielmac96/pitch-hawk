@@ -1,136 +1,43 @@
 {
-  "note": "backfill 2017-2024 after the 2015-2016 pilot passed (2 of 2 seasons ready): re-ingest, re-verify, postseason, readiness. 2025-2026 follow in a separate run so the only previously verified seasons are rewritten last.",
+  "note": "backfill 2025-2026, last: 2015-2024 are all ready (10 of 10). These are the two seasons that carried verified days before; re-ingest clears and re-earns them. Ends on readiness for all twelve seasons.",
   "steps": [
     [
       "warehouse",
       "backfill",
       "--seasons",
-      "2017",
-      "2018",
-      "2019",
-      "2020",
-      "2021",
-      "2022",
-      "2023",
-      "2024",
+      "2025",
+      "2026",
       "--force"
     ],
     [
       "warehouse",
       "verify",
       "--range",
-      "2017-03-01..2017-11-15",
+      "2025-03-01..2025-11-15",
       "--record"
     ],
     [
       "warehouse",
       "verify",
       "--range",
-      "2018-03-01..2018-11-15",
-      "--record"
-    ],
-    [
-      "warehouse",
-      "verify",
-      "--range",
-      "2019-03-01..2019-11-15",
-      "--record"
-    ],
-    [
-      "warehouse",
-      "verify",
-      "--range",
-      "2020-03-01..2020-11-15",
-      "--record"
-    ],
-    [
-      "warehouse",
-      "verify",
-      "--range",
-      "2021-03-01..2021-11-15",
-      "--record"
-    ],
-    [
-      "warehouse",
-      "verify",
-      "--range",
-      "2022-03-01..2022-11-15",
-      "--record"
-    ],
-    [
-      "warehouse",
-      "verify",
-      "--range",
-      "2023-03-01..2023-11-15",
-      "--record"
-    ],
-    [
-      "warehouse",
-      "verify",
-      "--range",
-      "2024-03-01..2024-11-15",
+      "2026-03-01..2026-10-12",
       "--record"
     ],
     [
       "warehouse",
       "postseason",
       "--season",
-      "2017"
+      "2025"
     ],
     [
       "warehouse",
       "postseason",
       "--season",
-      "2018"
+      "2026"
     ],
     [
       "warehouse",
-      "postseason",
-      "--season",
-      "2019"
-    ],
-    [
-      "warehouse",
-      "postseason",
-      "--season",
-      "2020"
-    ],
-    [
-      "warehouse",
-      "postseason",
-      "--season",
-      "2021"
-    ],
-    [
-      "warehouse",
-      "postseason",
-      "--season",
-      "2022"
-    ],
-    [
-      "warehouse",
-      "postseason",
-      "--season",
-      "2023"
-    ],
-    [
-      "warehouse",
-      "postseason",
-      "--season",
-      "2024"
-    ],
-    [
-      "warehouse",
-      "readiness",
-      "--seasons",
-      "2017",
-      "2018",
-      "2019",
-      "2020",
-      "2021",
-      "2022",
-      "2023",
-      "2024"
+      "readiness"
     ]
   ]
 }
