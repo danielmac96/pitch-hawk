@@ -1,43 +1,12 @@
 {
-  "note": "backfill 2025-2026, last: 2015-2024 are all ready (10 of 10). These are the two seasons that carried verified days before; re-ingest clears and re-earns them. Ends on readiness for all twelve seasons.",
+  "note": "P-001: re-run the v3 pipeline unchanged on the re-ingested, fully verified warehouse (12 of 12 seasons ready). Records model_runs rows tagged P-001; stages and activates nothing. Also the first real numbers for the full-distribution scoring (P-003).",
   "steps": [
     [
-      "warehouse",
-      "backfill",
-      "--seasons",
-      "2025",
-      "2026",
-      "--force"
-    ],
-    [
-      "warehouse",
-      "verify",
-      "--range",
-      "2025-03-01..2025-11-15",
-      "--record"
-    ],
-    [
-      "warehouse",
-      "verify",
-      "--range",
-      "2026-03-01..2026-10-12",
-      "--record"
-    ],
-    [
-      "warehouse",
-      "postseason",
-      "--season",
-      "2025"
-    ],
-    [
-      "warehouse",
-      "postseason",
-      "--season",
-      "2026"
-    ],
-    [
-      "warehouse",
-      "readiness"
+      "modeling",
+      "markets",
+      "--record",
+      "--proposal",
+      "P-001"
     ]
   ]
 }
