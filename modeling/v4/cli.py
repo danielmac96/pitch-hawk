@@ -46,9 +46,9 @@ def cmd_frames(args) -> int:
     store = _store()
     if args.grain == "player":
         from modeling.v4 import frames as FR
-        out = FR.build_player_frames(store)
-        for grain, df in out.items():
-            S.put_frame(store, grain, df)
+        cfg = S.load_index(store).get("rating_configs") if args.reuse_ratings else None
+        out = FR.build_player_frames(store, rating_configs=cfg)
+        write_player_frames(store, out)
         return 0
     from modeling.v4 import micro
     seasons = _seasons(args.seasons) or list(range(2015, 2027))
@@ -56,6 +56,20 @@ def cmd_frames(args) -> int:
                              grains=tuple(args.only.split(",")) if args.only
                              else ("pitch", "pa_state"))
     return 0
+
+
+def write_player_frames(store, out: dict) -> None:  # noqa: ANN001
+    from modeling.v4 import storage as S
+    for grain, df in out.items():
+        if grain.startswith("_"):
+            continue
+        if "pending" in df:  # today's slate is served, never stored as history
+            df = df[~df["pending"].astype(bool)]
+        S.put_frame(store, grain, df)
+    if out.get("_rating_configs"):
+        idx = S.load_index(store)
+        idx["rating_configs"] = out["_rating_configs"]
+        S.save_index(store, idx)
 
 
 def cmd_train(args) -> int:
@@ -101,27 +115,33 @@ def cmd_train(args) -> int:
     return 1 if failed else 0
 
 
-def cmd_score(args) -> int:
-    """Append production predictions for frame rows newer than the backfill."""
+def score_new(store, markets, *, publish: bool, frames: dict | None = None) -> dict:  # noqa: ANN001
+    """Append production predictions for completed rows newer than each
+    market's backfill: regular season and postseason, every grain. Reads the
+    frames from R2 unless they are passed in memory (`v4 serve`)."""
     from modeling.v4 import catalog as C
     from modeling.v4 import ladder as LD
     from modeling.v4 import learners as L
     from modeling.v4 import record as REC
     from modeling.v4 import storage as S
 
-    store = _store()
     idx = S.load_index(store)
-    for md in C.resolve(args.markets):
+    done = {}
+    for md in C.resolve(markets):
         meta = idx["backfill"].get(md.name)
         model, ameta = S.get_artifact(store, md.name)
         if not meta or model is None:
             print(f"[v4] {md.name}: no backfill/artifact yet; train first", flush=True)
             continue
         through = pd.Timestamp(meta.get("through") or "1900-01-01")
-        info = S.frame_info(store, md.grain) or {}
-        seasons = [s for s in info.get("seasons", []) if s >= through.year]
-        cols = [c for c in LD.market_columns(md) if c in set(info.get("columns") or [])]
-        fr = S.get_frame(store, md.grain, seasons=seasons, columns=cols)
+        if frames is not None and md.grain in frames:
+            fr = frames[md.grain]
+            fr = fr[fr["season"] >= through.year]
+        else:
+            info = S.frame_info(store, md.grain) or {}
+            seasons = [s for s in info.get("seasons", []) if s >= through.year]
+            cols = [c for c in LD.market_columns(md) if c in set(info.get("columns") or [])]
+            fr = S.get_frame(store, md.grain, seasons=seasons, columns=cols)
         if fr.empty or "game_date" not in fr:
             continue
         new = fr[pd.to_datetime(fr["game_date"]) > through]
@@ -129,22 +149,58 @@ def cmd_score(args) -> int:
         if new.empty:
             print(f"[v4] {md.name}: current through {through.date()}", flush=True)
             continue
-        pred = model.predict(new)
+        pred = np.asarray(model.predict(new))
         y = L.y_of(new, md)
-        out = new[[k for k in md.keys if k in new] + ["season", "game_date", "day"]].copy()
+        keep = [k for k in md.keys if k in new] + ["season", "game_date", "day"]
+        out = new[keep].copy()
         out["y"] = y
-        out["pred"] = REC._headline(md, np.asarray(pred)).astype(np.float32)
-        out["loss"] = REC.row_loss(md.kind, np.asarray(pred), y).astype(np.float32)
-        out["source"] = "production"
+        out["pred"] = REC._headline(md, pred).astype(np.float32)
+        out["loss"] = REC.row_loss(md.kind, pred, y).astype(np.float32)
+        post = new["is_post"].fillna(0).astype(bool).to_numpy() if "is_post" in new \
+            else np.zeros(len(new), bool)
+        out["source"] = np.where(post, "production_postseason", "production")
         out["iteration"] = ameta.get("iteration")
         out["run_id"] = meta["run_id"]
         out["version"] = meta["version"]
         S.put_backfill(store, md.name, out, {**meta, "through": str(out["game_date"].max())},
-                        append=True)
+                       append=True)
         daily = REC.daily_rollup(md, out)
-        n = REC.publish_daily(daily) if args.publish else 0
+        n = REC.publish_daily(daily) if publish else 0
+        done[md.name] = len(out)
         print(f"[v4] {md.name}: scored {len(out):,} new rows through "
               f"{out['game_date'].max()}, {n} daily rows published", flush=True)
+    return done
+
+
+def cmd_score(args) -> int:
+    score_new(_store(), args.markets, publish=args.publish)
+    return 0
+
+
+def cmd_serve(args) -> int:
+    """One serve pass: frames with today's slate, backfill catch-up, publish.
+
+    Rating configs from the last full build are reused (no tuning), which is
+    what makes this cheap enough to run several times a day as lineups post.
+    """
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    from modeling.v4 import frames as FR
+    from modeling.v4 import publish as PB
+    from modeling.v4 import storage as S
+
+    store = _store()
+    date = args.date or datetime.now(ZoneInfo("America/New_York")).date().isoformat()
+    cfg = S.load_index(store).get("rating_configs")
+    if cfg is None:
+        print("[v4] no saved rating configs; this pass will tune (slow)", flush=True)
+    out = FR.build_player_frames(store, date=date, rating_configs=cfg)
+    if args.write_frames:
+        write_player_frames(store, out)
+    score_new(store, ["player", "live"], publish=not args.dry_run, frames=out)
+    summary = PB.publish(store, out, out["_src"], date, out["_slate"], dry_run=args.dry_run)
+    print("[v4] PUBLISH " + json.dumps(summary, default=str, indent=1), flush=True)
     return 0
 
 
@@ -162,6 +218,8 @@ def build_parser() -> argparse.ArgumentParser:
     f.add_argument("--grain", choices=("player", "micro"), default="player")
     f.add_argument("--seasons", help="micro only, e.g. 2015-2026")
     f.add_argument("--only", help="micro only: pitch,pa_state")
+    f.add_argument("--reuse-ratings", action="store_true",
+                   help="player only: reuse the saved rating configs (no tuning)")
     t = sub.add_parser("train")
     t.add_argument("markets", nargs="+")
     t.add_argument("--record", action="store_true")
@@ -172,12 +230,16 @@ def build_parser() -> argparse.ArgumentParser:
     s = sub.add_parser("score")
     s.add_argument("markets", nargs="*", default=["player", "live", "pitch", "pa"])
     s.add_argument("--publish", action="store_true")
+    v = sub.add_parser("serve")
+    v.add_argument("--date", help="slate date (default today, America/New_York)")
+    v.add_argument("--write-frames", action="store_true")
+    v.add_argument("--dry-run", action="store_true")
     sub.add_parser("status")
     return p
 
 
 _COMMANDS = {"frames": cmd_frames, "train": cmd_train, "score": cmd_score,
-             "status": cmd_status}
+             "serve": cmd_serve, "status": cmd_status}
 
 
 def main(argv: list[str]) -> int:

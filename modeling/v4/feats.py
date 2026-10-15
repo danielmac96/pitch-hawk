@@ -31,7 +31,10 @@ FB = "p.pitch_type in ('FF','FT','SI','FA')"
 BR = "p.pitch_type in ('SL','CU','KC','SV','ST','CS','SC')"
 OS = "p.pitch_type in ('CH','FS','FO','KN','EP')"
 SWUNG = "(p.description in ('swinging_strike','foul') or p.result_category = 'in_play')"
-REG = "coalesce(g.game_type, 'R') = 'R'"
+# Regular season and postseason (F, D, L, W): spring training and exhibitions
+# are the only games no v4 history or frame reads. The views registered by
+# duck.register_with_post carry `is_post`; fits filter on it.
+REG = "coalesce(g.game_type, 'R') in ('R','F','D','L','W')"
 
 PITCHER_DAY_SQL = f"""
 select p.pitcher_id as pid, p.game_date, any_value(g.season) as season,
@@ -110,6 +113,17 @@ from b p
 group by 1, 2
 """
 
+PA_DAY_SQL = f"""
+select a.{{who}}_id as pid, a.game_date, any_value(g.season) as season,
+  count(*) as pa,
+  count(*) filter (where a.result = 'strikeout') as k,
+  count(*) filter (where a.result = 'walk') as bb,
+  count(*) filter (where a.result = 'hit') as h,
+  coalesce(sum(a.pitch_count), 0) as pitches
+from at_bats a join games g using (game_pk) where {REG} and a.{{who}}_id is not null
+group by 1, 2
+"""
+
 UMP_DAY_SQL = f"""
 select g.hp_umpire_id as uid, p.game_date, any_value(g.season) as season,
   count(*) filter (where p.description in ('called_strike','ball')) as taken,
@@ -135,7 +149,7 @@ from pitches group by 1, 2
 
 GAMES_SQL = f"""
 select game_pk, game_date, season, home_team_id, away_team_id, home_score, away_score,
-       venue_id, hp_umpire_id, start_ts
+       venue_id, hp_umpire_id, start_ts, is_post, game_type
 from games g where {REG}
 """
 
@@ -150,11 +164,13 @@ def load_sources(store, *, con=None) -> dict[str, pd.DataFrame]:  # noqa: ANN001
 
     if con is None:
         con = duck.connect(store)
-        duck.register(con, store, names=("pitches", "games"))
+        duck.register_with_post(con, store, ("pitches", "at_bats", "games"))
     out = {}
     for name, sql in (("pitcher_day", PITCHER_DAY_SQL), ("batter_day", BATTER_DAY_SQL),
                       ("ump_day", UMP_DAY_SQL), ("games", GAMES_SQL),
-                      ("pa_start", PA_START_SQL)):
+                      ("pa_start", PA_START_SQL),
+                      ("pitcher_pa_day", PA_DAY_SQL.format(who="pitcher")),
+                      ("batter_pa_day", PA_DAY_SQL.format(who="batter"))):
         t0 = time.time()
         df = con.execute(sql).df()
         if "game_date" in df:

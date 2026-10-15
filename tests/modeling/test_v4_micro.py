@@ -46,3 +46,25 @@ def test_sources_and_micro_frames_build(store, stub_api):  # noqa: F811
     assert not pas.duplicated(["game_pk", "at_bat_index", "balls", "strikes"]).any()
     # Pregame features on the only day in the warehouse have no history.
     assert np.allclose(pitch["p_n"].fillna(0), 0)
+
+
+def test_postseason_joins_the_frames_flagged(store, stub_api):  # noqa: F811
+    """Postseason pitches join the frame, flagged; the regular season is unchanged."""
+    ingest.ingest_day(store, DAY, postseason=True)
+    ingest.ingest_day(store, DAY)  # and a regular-season copy of the same games
+    micro.build_micro_frames(store, [2026], grains=("pitch",))
+    pitch = S.get_frame(store, "pitch")
+    assert set(pitch["is_post"].unique()) == {0, 1}
+    assert (pitch["is_post"] == 1).sum() == (pitch["is_post"] == 0).sum()
+
+
+def test_register_with_post_unions_flagged(store, stub_api):  # noqa: F811
+    from warehouse import duck
+    ingest.ingest_day(store, DAY, postseason=True)
+    ingest.ingest_day(store, DAY)
+    con = duck.connect(store)
+    duck.register_with_post(con, store, ("at_bats", "games"))
+    n_reg, n_post = con.execute(
+        "select count(*) filter (where not is_post), count(*) filter (where is_post) "
+        "from at_bats").fetchone()
+    assert n_reg == n_post > 0

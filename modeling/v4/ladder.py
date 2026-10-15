@@ -66,6 +66,10 @@ class Candidate:
     seconds: float = 0.0
     curve_test: list = field(default_factory=list)
     curve_val: list = field(default_factory=list)
+    # Postseason: scored by the same per-season model, never selected on.
+    post_preds: dict = field(default_factory=dict)
+    post_folds: list = field(default_factory=list)
+    post: dict = field(default_factory=dict)
 
     @property
     def primary(self) -> float:
@@ -88,6 +92,14 @@ class Ladder:
                  test_seasons=TEST_SEASONS, max_train_rows: int | None = None):
         f = frame[(frame["season"] >= FIRST_TRAIN) & frame[md.target].notna()]
         self.md = md
+        # Postseason rows are scored by each season's model like any other
+        # row of that season, but kept apart: never trained on, never part
+        # of the metric a candidate is chosen on. Their own metrics are
+        # recorded beside the regular-season ones.
+        post = f["is_post"].fillna(0).astype(bool) if "is_post" in f else \
+            pd.Series(False, index=f.index)
+        self.post_frame = f[post].reset_index(drop=True)
+        f = f[~post]
         self.frame = f.reset_index(drop=True)
         self.seasons = [s for s in test_seasons if (self.frame["season"] == s).any()]
         self.max_rows = max_train_rows or md.max_train_rows
@@ -109,6 +121,9 @@ class Ladder:
         self.dead = dead
         self.y = L.y_of(self.frame, md)
         self.season = self.frame["season"].to_numpy()
+        self.post_y = L.y_of(self.post_frame, md) if len(self.post_frame) else np.zeros(0)
+        self.post_season = self.post_frame["season"].to_numpy() if len(self.post_frame) \
+            else np.zeros(0, int)
         self.results: dict[str, Candidate] = {}
         self._tune_cache: dict = {}
 
@@ -133,6 +148,14 @@ class Ladder:
             m["train_rows"] = int(len(tr))
             c.folds.append(m)
             c.preds[s] = np.asarray(p, np.float32)
+            pm = self.post_season == s
+            if pm.any():
+                pp = learner.predict(self.post_frame[pm])
+                c.post_preds[s] = np.asarray(pp, np.float32)
+                pf = E.score(md.kind, pp, self.post_y[pm], classes=md.classes, line=md.line)
+                pf["season"] = int(s)
+                pf["primary"] = pf[E.PRIMARY[md.kind]]
+                c.post_folds.append(pf)
             inf = learner.info()
             c.family = inf.get("family", c.family)
             c.fold_info[s] = {k: inf[k] for k in ("hyperparams", "n_iter", "nb_alpha",
@@ -155,6 +178,16 @@ class Ladder:
             vp = np.concatenate([c.preds[s] for s in self.seasons if s in val])
             vy = np.concatenate([self.y[self.season == s] for s in self.seasons if s in val])
             c.curve_val = E.curve(md.kind, vp, vy, line=md.line) if vm.any() else []
+        if c.post_preds:
+            ps = sorted(c.post_preds)
+            pm = np.isin(self.post_season, ps)
+            pp = np.concatenate([c.post_preds[s] for s in ps])
+            py = np.concatenate([self.post_y[self.post_season == s] for s in ps])
+            c.post = E.score(md.kind, pp, py, classes=md.classes, line=md.line)
+            c.post["primary"] = c.post[E.PRIMARY[md.kind]]
+            c.post["seasons"] = [int(s) for s in ps]
+            c.post["curve"] = E.curve(md.kind, pp, py, line=md.line)
+            del pm
         c.seconds = round(time.time() - t0, 1)
         self.results[iteration] = c
         return c
@@ -284,7 +317,7 @@ def market_columns(md: MarketDef) -> list[str]:
         inc = ([f"{md.incumbent.cols[0]}{k}" for k in range(md.cap + 1)]
                if md.incumbent.style == "pmf" else list(md.incumbent.cols))
     base = [md.baseline_group] if md.baseline_group else []
-    return list(dict.fromkeys(["season", "day", "game_date", md.target, *md.keys,
+    return list(dict.fromkeys(["season", "day", "game_date", "is_post", md.target, *md.keys,
                                *md.features, *md.stack, *inc, *base]))
 
 

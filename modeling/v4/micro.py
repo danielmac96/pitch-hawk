@@ -47,7 +47,8 @@ select p.game_pk, p.at_bat_index, p.pitch_number, p.pitcher_id, p.batter_id,
       rows between unbounded preceding and 1 preceding) as game_fb_velo,
   case p.result_category when 'strike_foul' then 0 when 'ball' then 1
        when 'in_play' then 2 end as y_pitch,
-  p.start_speed as speed
+  p.start_speed as speed,
+  cast(g.is_post as int) as is_post
 from pitches p join games g using (game_pk)
 where {F.REG} and g.season = ? and p.result_category is not null
   and p.pitcher_id is not null and p.batter_id is not null
@@ -80,26 +81,13 @@ select px.game_pk, px.at_bat_index, px.balls, px.strikes, px.outs, px.inning,
   px.balls * 10 + px.strikes as count_state,
   case a.result when 'strikeout' then 0 when 'walk' then 1 when 'hit' then 2
        when 'out' then 3 end as y_ab,
-  a.pitch_count - (px.pitch_number - 1) as remaining
+  a.pitch_count - (px.pitch_number - 1) as remaining,
+  cast(g.is_post as int) as is_post
 from px
 join at_bats a using (game_pk, at_bat_index)
 join games g using (game_pk)
 where px.rn = 1 and a.result is not null and a.pitch_count >= px.pitch_number
 """
-
-PITCHER_PA_DAY_SQL = f"""
-select a.pitcher_id as pid, a.game_date, any_value(g.season) as season,
-  count(*) as pa,
-  count(*) filter (where a.result = 'strikeout') as k,
-  count(*) filter (where a.result = 'walk') as bb,
-  count(*) filter (where a.result = 'hit') as h,
-  coalesce(sum(a.pitch_count), 0) as pitches
-from at_bats a join games g using (game_pk) where {F.REG} and a.pitcher_id is not null
-group by 1, 2
-"""
-BATTER_PA_DAY_SQL = PITCHER_PA_DAY_SQL.replace("a.pitcher_id as pid", "a.batter_id as pid") \
-    .replace("a.pitcher_id is not null", "a.batter_id is not null")
-
 
 def _pa_rates(frame: pd.DataFrame, day_tab: pd.DataFrame, key: str, prefix: str,
               window: int) -> pd.DataFrame:
@@ -175,7 +163,7 @@ def pa_state_season(con, season: int, src: dict, pa_v3: pd.DataFrame | None) -> 
                     F.umpire(df, src["ump_day"]).drop(columns=["ump_n"])], axis=1)
     df["day_of_season"] = F.day_of_season(df)
     if pa_v3 is not None and len(pa_v3):
-        df = df.merge(pa_v3.drop(columns=["season"], errors="ignore"),
+        df = df.merge(pa_v3.drop(columns=["season", "is_post"], errors="ignore"),
                       on=["game_pk", "at_bat_index"], how="left")
     return df
 
@@ -184,13 +172,8 @@ def build_micro_frames(store, seasons, *, grains=("pitch", "pa_state")) -> None:
     from warehouse import duck
 
     con = duck.connect(store)
-    duck.register(con, store, names=("pitches", "at_bats", "games"))
+    duck.register_with_post(con, store, ("pitches", "at_bats", "games"))
     src = F.load_sources(store, con=con)
-    for name, sql in (("pitcher_pa_day", PITCHER_PA_DAY_SQL),
-                      ("batter_pa_day", BATTER_PA_DAY_SQL)):
-        df = con.execute(sql).df()
-        df["day"] = R.day_index(df["game_date"])
-        src[name] = df
     pa_v3 = None
     if "pa_state" in grains and S.frame_info(store, "pa_v3"):
         pa_v3 = S.get_frame(store, "pa_v3")

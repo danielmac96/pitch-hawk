@@ -74,6 +74,11 @@ def _with_refs(c: LD.Candidate, base: LD.Candidate | None,
     oos = {**c.oos,
            "baseline_primary": base.oos.get("primary") if base else None,
            "incumbent_primary": inc.oos.get("primary") if inc else None}
+    if c.post:
+        oos["postseason"] = {
+            **{k: v for k, v in c.post.items() if k != "curve"},
+            "baseline_primary": (base.post or {}).get("primary") if base else None,
+            "incumbent_primary": (inc.post or {}).get("primary") if inc else None}
     hold = None
     if c.holdout:
         hold = {**c.holdout,
@@ -143,6 +148,8 @@ def runs_for(lad: LD.Ladder, result: dict, *, git_sha: str | None,
             },
             "folds": folds, "oos_metrics": oos, "holdout_metrics": hold,
             "calibration": {"test_2026": c.curve_test, "validation": c.curve_val,
+                            "postseason": (c.post or {}).get("curve", []),
+                            "postseason_by_season": c.post_folds,
                             "importance": imp, "importance_kind": imp_kind},
             "params": {"info": {k: v for k, v in c.info.items() if k != "features"},
                        "fold_info": {str(k): v for k, v in c.fold_info.items()},
@@ -221,9 +228,48 @@ def backfill_frame(lad: LD.Ladder, result: dict, *, run_id: str, version: str) -
         out[f"{label}_pred"] = _headline(md, rp).astype(np.float32)
         out[f"{label}_loss"] = row_loss(md.kind, rp, y).astype(np.float32)
     out["source"] = np.where(out["season"] == LD.HOLDOUT, "test_2026", "walk_forward")
+    post = _post_backfill(lad, result, keep)
+    if post is not None:
+        out = pd.concat([out, post], ignore_index=True)
     out["iteration"] = result["chosen"]
     out["run_id"] = run_id
     out["version"] = version
+    return out
+
+
+def _post_backfill(lad: LD.Ladder, result: dict, keep: list[str]) -> pd.DataFrame | None:
+    """The postseason rows, each predicted by its season's model."""
+    md, R = lad.md, result["results"]
+    c = R[result["chosen"]]
+    ps = sorted(c.post_preds)
+    if not ps:
+        return None
+    order = np.concatenate([np.flatnonzero(lad.post_season == s) for s in ps])
+    fr = lad.post_frame.iloc[order]
+    out = fr[[k for k in keep if k in fr]].reset_index(drop=True).copy()
+    y = lad.post_y[order]
+    pred = np.concatenate([c.post_preds[s] for s in ps])
+    out["y"] = y
+    out["pred"] = _headline(md, pred).astype(np.float32)
+    out["loss"] = row_loss(md.kind, pred, y).astype(np.float32)
+    if md.kind == "multiclass":
+        for k, cls in enumerate(md.classes):
+            out[f"p_{cls}"] = pred[:, k]
+    elif md.kind == "count":
+        for k in range(pred.shape[1]):
+            out[f"pmf_{k}"] = pred[:, k]
+        if md.line is not None:
+            out["p_over"] = E._over(pred, md.line).astype(np.float32)
+    elif md.kind == "gaussian":
+        out["sigma"] = pred[:, 1]
+    for label, it in (("incumbent", "i1_incumbent"), ("baseline", "i0_baseline")):
+        r = R.get(it)
+        if r is None or not r.post_preds:
+            continue
+        rp = np.concatenate([r.post_preds[s] for s in ps])
+        out[f"{label}_pred"] = _headline(md, rp).astype(np.float32)
+        out[f"{label}_loss"] = row_loss(md.kind, rp, y).astype(np.float32)
+    out["source"] = "postseason"
     return out
 
 

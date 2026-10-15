@@ -120,3 +120,31 @@ def recent_seasons(store: ObjectStore, n: int = 3, *, m: dict | None = None) -> 
     season-scoped profiles are defined as windows, not as all of history."""
     avail = seasons_available(store, m=m)
     return avail[-n:] if avail else []
+
+
+def register_with_post(con, store: ObjectStore, names, seasons=None, *,
+                       m: dict | None = None) -> dict:
+    """Like `register`, but each view also holds the postseason (`post_<name>`)
+    rows, with a boolean `is_post` column telling them apart.
+
+    A separate function, not a flag on `register`, for the reason the post_
+    datasets are separate at all (config.POSTSEASON_DATASETS): nothing should
+    read October by accident. A dataset with no postseason days yet reads as
+    regular season only.
+    """
+    from warehouse.config import POSTSEASON_PREFIX
+    if m is None:
+        m = manifest.load(store)
+    scanned = {}
+    for name in names:
+        reg = dataset(store, name, seasons, m=m)
+        post_name = POSTSEASON_PREFIX + name
+        post_days = days(store, post_name, seasons, m=m) \
+            if post_name in DAY_PARTITIONED else []
+        sql = f"select *, false as is_post from {reg}"
+        if post_days:
+            sql += (f" union all by name select *, true as is_post from "
+                    f"{dataset(store, post_name, seasons, m=m)}")
+        con.execute(f"create or replace view {name} as {sql}")
+        scanned[name] = len(days(store, name, seasons, m=m)) + len(post_days)
+    return scanned

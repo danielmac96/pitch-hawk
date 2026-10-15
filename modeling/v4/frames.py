@@ -79,7 +79,8 @@ def _context(fr: pd.DataFrame, box_games: pd.DataFrame, games: pd.DataFrame | No
 
 def start_frame(Fr: dict, src: dict | None) -> pd.DataFrame:
     S = Fr["starts"]
-    S = S[S["bf"].fillna(0) > 0].reset_index(drop=True).copy()
+    pend = S["pending"].astype(bool) if "pending" in S else False
+    S = S[(S["bf"].fillna(0) > 0) | pend].reset_index(drop=True).copy()
     T, box, B, pa = Fr["tables"], Fr["box"], Fr["batter"], Fr["pa"]
     for stat in ("k", "bb", "h", "outs"):
         cap = C.get({"k": "pitcher_k", "bb": "pitcher_bb", "h": "pitcher_hits",
@@ -93,7 +94,7 @@ def start_frame(Fr: dict, src: dict | None) -> pd.DataFrame:
     S["v3_e_er"] = np.nan
     for s in sorted(S["season"].unique()):
         cut = max(int(s), MK.TEST_SEASONS[0])
-        tr = S[S["season"] < cut]
+        tr = S[(S["season"] < cut) & _fit_rows(S)]
         if len(tr) < 50:
             continue
         glm = MK._er_glm(tr)
@@ -143,13 +144,16 @@ def start_frame(Fr: dict, src: dict | None) -> pd.DataFrame:
 
 def batter_frame(Fr: dict, src: dict | None, start: pd.DataFrame) -> pd.DataFrame:
     B = Fr["batter"]
-    B = B[B["pa"].fillna(0) > 0].reset_index(drop=True).copy()
+    pend = B["pending"].astype(bool) if "pending" in B else False
+    B = B[(B["pa"].fillna(0) > 0) | pend].reset_index(drop=True).copy()
     T, box, pa = Fr["tables"], Fr["box"], Fr["pa"]
     B = B.drop(columns=[c for c in B.columns if c.startswith(("c_", "L_"))])
-    B["y_hit"] = (B["h"] >= 1).astype(int)
-    B["y_hr"] = (B["hr"] >= 1).astype(int)
-    B["y_tb2"] = (B["tb"] >= 2).astype(int)
-    B["y_hrr"] = ((B["h"] + B["r"] + B["rbi"]) >= 1).astype(int)
+    played = B["pa"].notna()
+    # A pending row has no outcome yet: NULL, never 0 (0 would read as a miss).
+    for col, val in (("y_hit", B["h"] >= 1), ("y_hr", B["hr"] >= 1),
+                     ("y_tb2", B["tb"] >= 2),
+                     ("y_hrr", (B["h"] + B["r"] + B["rbi"]) >= 1)):
+        B[col] = val.astype(float).where(played)
     B["team_value"] = B.groupby(["game_pk", "team_id"])["s_e_value"].transform("sum")
     B["log_team_value"] = np.log(np.maximum(B["team_value"], 1e-3))
     B["top_order"] = (B["slot"] <= 5).astype(float)
@@ -189,12 +193,48 @@ def batter_frame(Fr: dict, src: dict | None, start: pd.DataFrame) -> pd.DataFram
 
 # ── games ───────────────────────────────────────────────────────────────────
 
-def game_frame(Fr: dict, src: dict | None, start: pd.DataFrame) -> pd.DataFrame:
-    team, box, T = Fr["team"], Fr["box"], Fr["tables"]
+def _fit_rows(df: pd.DataFrame) -> pd.Series:
+    """Rows a fit may see: regular season, already played."""
+    ok = pd.Series(True, index=df.index)
+    if "is_post" in df:
+        ok &= ~df["is_post"].fillna(False).astype(bool)
+    if "pending" in df:
+        ok &= ~df["pending"].fillna(False).astype(bool)
+    return ok
+
+
+def team_table(B: pd.DataFrame, box: pd.DataFrame) -> pd.DataFrame:
+    """markets.team_frame, but over every batter-game row -- postseason and
+    pending included -- so those games get a v3 run mean too."""
+    keys = ["game_pk", "team_id", "is_home", "season", "day"]
+    agg = {"value": ("s_e_value", "sum"), "n": ("slot", "count")}
+    for c in ("is_post", "pending"):
+        if c in B:
+            agg[c] = (c, "max")
+    t = B.groupby(keys, as_index=False).agg(**agg)
+    t = t[t["n"] == 9]
+    g = box.drop_duplicates("game_pk")[[
+        "game_pk", "home_score", "away_score", "temp_f", "wind_mph",
+        "wind_direction", "weather_condition", "home_team_id", "away_team_id"]]
+    t = t.merge(g, on="game_pk", how="left")
+    t["runs"] = np.where(t["is_home"], t["home_score"], t["away_score"])
+    closed = t["weather_condition"].map(G.roof_closed)
+    t["temp_c"] = [G.temp_c(a, c) for a, c in zip(t["temp_f"], closed)]
+    t["wind_out"] = [G.wind_out(m, d, c) for m, d, c in
+                     zip(t["wind_mph"], t["wind_direction"], closed)]
+    return t.reset_index(drop=True)
+
+
+def game_frame(Fr: dict, src: dict | None, start: pd.DataFrame,
+               batter: pd.DataFrame) -> pd.DataFrame:
+    box, T = Fr["box"], Fr["tables"]
+    team = team_table(batter, box)
+    flags = team.groupby("game_pk")[[c for c in ("is_post", "pending") if c in team]].max()
     rows = []
     for s in sorted(team["season"].unique()):
         cut = max(int(s), MK.TEST_SEASONS[0])
-        tr, te = team[team["season"] < cut], team[team["season"] == s]
+        tr = team[(team["season"] < cut) & _fit_rows(team) & team["runs"].notna()]
+        te = team[team["season"] == s]
         if len(tr) < 100 or not len(te):
             continue
         m = MK._team_glm(tr)
@@ -204,6 +244,7 @@ def game_frame(Fr: dict, src: dict | None, start: pd.DataFrame) -> pd.DataFrame:
             return np.array([D.home_win_prob(D.negbin_pmf(a, m["alpha"], 30),
                                              D.negbin_pmf(b, m["alpha"], 30), m["extra_home"])
                              for a, b in zip(g["mu_home"], g["mu_away"])])
+        g_tr = g_tr.dropna(subset=["runs_home", "runs_away"])
         cal = G.fit_calibrator(win_p(g_tr), (g_tr["runs_home"] > g_tr["runs_away"])
                                .astype(int).to_numpy())
         g_te = g_te.assign(v3_p_home=G.apply_calibrator(cal, win_p(g_te)),
@@ -217,8 +258,11 @@ def game_frame(Fr: dict, src: dict | None, start: pd.DataFrame) -> pd.DataFrame:
         rows.append(g_te)
     g = pd.concat(rows, ignore_index=True).rename(
         columns={"mu_home": "v3_mu_home", "mu_away": "v3_mu_away"})
-    g["y_home_win"] = (g["runs_home"] > g["runs_away"]).astype(int)
-    g["total_runs"] = (g["runs_home"] + g["runs_away"]).astype(int)
+    for c in flags.columns:
+        g[c] = flags[c].reindex(g["game_pk"]).fillna(False).to_numpy()
+    played = g["runs_home"].notna() & g["runs_away"].notna()
+    g["y_home_win"] = (g["runs_home"] > g["runs_away"]).astype(float).where(played)
+    g["total_runs"] = (g["runs_home"] + g["runs_away"]).where(played)
     tv = team.pivot_table(index="game_pk", columns="is_home", values="value")
     g["h_value"] = tv[True].reindex(g["game_pk"]).to_numpy()
     g["a_value"] = tv[False].reindex(g["game_pk"]).to_numpy()
@@ -254,8 +298,9 @@ TEAM_PA_PER_OUT = 38.2 / 27
 
 
 def _pa_with_state(pa: pd.DataFrame, src: dict | None) -> pd.DataFrame:
-    p = pa[["game_pk", "at_bat_index", "inning", "top_inning", "batter_id", "pitcher_id",
-            "pit_started", "y", "season", "day"]].copy()
+    cols = ["game_pk", "at_bat_index", "inning", "top_inning", "batter_id", "pitcher_id",
+            "pit_started", "y", "season", "day"]
+    p = pa[cols + (["is_post"] if "is_post" in pa else [])].copy()
     if src and "pa_start" in src:
         p = p.merge(src["pa_start"], on=["game_pk", "at_bat_index"], how="left")
     else:  # synthetic league: no pitches, reconstruct a coarse state
@@ -270,7 +315,8 @@ def rog_frame(Fr: dict, src: dict | None, batter: pd.DataFrame) -> pd.DataFrame:
     p["hit"] = np.isin(p["y"], [2, 3, 4, 5]).astype(int)
     p["hr"] = (p["y"] == 5).astype(int)
     p = p.rename(columns={"batter_id": "player_id"})
-    keep = ["game_pk", "player_id", "is_home", "slot", "e_pa", "s_hit", "s_hr", "rb_2",
+    p = p.drop(columns=["is_post"], errors="ignore")
+    keep = ["game_pk", "player_id", "is_post", "is_home", "slot", "e_pa", "s_hit", "s_hr", "rb_2",
             "rb_5", "bf_h_g50", "bf_hr_g50", "day_of_season", "game_date"]
     p = p.merge(batter[[c for c in keep if c in batter]], on=["game_pk", "player_id"],
                 how="inner")
@@ -301,7 +347,8 @@ def live_total_frame(Fr: dict, src: dict | None, game: pd.DataFrame) -> pd.DataF
     p = _pa_with_state(Fr["pa"], src)
     first = p.groupby(["game_pk", "inning", "top_inning"], as_index=False).first()
     first = first[first["inning"] <= 9]
-    gcols = ["game_pk", "total_runs", "v3_mu_home", "v3_mu_away", "v3_alpha", "temp_c",
+    first = first.drop(columns=["is_post"], errors="ignore")
+    gcols = ["game_pk", "is_post", "total_runs", "v3_mu_home", "v3_mu_away", "v3_alpha", "temp_c",
              "wind_out", "park_runs", "game_date"]
     st = first.merge(game[[c for c in gcols if c in game]], on="game_pk", how="inner")
     top = st["top_inning"].astype(bool)
@@ -339,11 +386,30 @@ def live_total_frame(Fr: dict, src: dict | None, game: pd.DataFrame) -> pd.DataF
 
 # ── orchestration ───────────────────────────────────────────────────────────
 
-def build_player_frames(store, *, src: dict | None = None, run=None) -> dict:  # noqa: ANN001
-    """Every player / game / live frame. `run` and `src` are injectable so
-    the synthetic-league test can skip R2."""
+def build_player_frames(store, *, src: dict | None = None, run=None,  # noqa: ANN001
+                        date: str | None = None, slate: list | None = None,
+                        rating_configs: dict | None = None) -> dict:
+    """Every player / game / live frame, postseason included.
+
+    date: also carry pending rows for that day's slate (outcomes NULL), so
+    the same frames serve the backfill and today's predictions.
+    rating_configs: reuse tuned rating configs (skips the slow tuning pass).
+    `run`, `src` and `slate` are injectable so tests can skip R2 and MLB.
+    """
+    from modeling import games as G
+    from modeling.v4 import slate as SL
+
     t0 = time.time()
-    res = run if run is not None else MK.run(store, record=False, keep_frames=True)
+    pend = None
+    if date is not None:
+        slate = slate if slate is not None else SL.fetch_slate(date)
+        hist = G.load_box(store, include_post=True) if run is None else run["frames"]["box"]
+        pend = SL.pending_box(slate, hist)
+        _log(f"slate {date}: {len(slate)} scoreable games, "
+             f"{0 if pend is None else len(pend):,} pending box rows")
+    res = run if run is not None else MK.run(
+        store, record=False, keep_frames=True, include_post=True,
+        pending_box=pend, rating_configs=rating_configs)
     Fr = res["frames"]
     _log(f"v3 frames ready in {time.time() - t0:.0f}s")
     if src is None and store is not None:
@@ -352,11 +418,12 @@ def build_player_frames(store, *, src: dict | None = None, run=None) -> dict:  #
     _log(f"start frame: {len(start):,} rows, {len(start.columns)} cols")
     batter = batter_frame(Fr, src, start)
     _log(f"batter_game frame: {len(batter):,} rows, {len(batter.columns)} cols")
-    game = game_frame(Fr, src, start)
+    game = game_frame(Fr, src, start, batter)
     _log(f"game frame: {len(game):,} rows")
     rog = rog_frame(Fr, src, batter)
     _log(f"rog frame: {len(rog):,} rows")
     live = live_total_frame(Fr, src, game)
     _log(f"live_total frame: {len(live):,} rows")
     return {"batter_game": batter, "start": start, "game": game, "rog": rog,
-            "live_total": live, "pa_v3": Fr["pa_v3"]}
+            "live_total": live, "pa_v3": Fr["pa_v3"], "_src": src, "_slate": slate or [],
+            "_rating_configs": res["final"]["pa_outcome"].get("ratings")}

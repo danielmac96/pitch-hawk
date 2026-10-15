@@ -55,6 +55,9 @@ def _frame(kind: str, n_per: int = 1500, seed: int = 0) -> pd.DataFrame:
         else:
             df["y"] = 90 + 2 * z + rng.normal(0, 1 + 0.5 * (x2 > 0), n_per)
             df["v3"] = 90 + 1.5 * x1
+        df["is_post"] = 0
+        # The last 10% of each season's rows play as its postseason.
+        df.loc[df.index[-n_per // 10:], "is_post"] = 1
         rows.append(df)
     return pd.concat(rows, ignore_index=True)
 
@@ -124,9 +127,13 @@ def test_backfill_losses_average_to_the_fold_metric(ran, tmp_path):
     bf = REC.backfill_frame(lad, res, run_id="r1", version="v4_test")
     c = res["results"][res["chosen"]]
     for f in c.folds:
-        got = float(bf.loc[bf["season"] == f["season"], "loss"].mean())
+        got = float(bf.loc[(bf["season"] == f["season"])
+                           & (bf["source"] != "postseason"), "loss"].mean())
         assert got == pytest.approx(f["primary"], rel=1e-3, abs=1e-4), (kind, f["season"])
-    assert set(bf["source"]) == {"walk_forward", "test_2026"}
+    assert set(bf["source"]) == {"walk_forward", "test_2026", "postseason"}
+    post = bf[bf["source"] == "postseason"]
+    assert len(post) == len(lad.post_frame[lad.post_frame["season"].isin(lad.seasons)])
+    assert post["loss"].mean() == pytest.approx(c.post["primary"], rel=1e-3, abs=1e-4)
     daily = REC.daily_rollup(md, bf)
     assert daily["n"].sum() == len(bf)
     if md.incumbent:
@@ -190,3 +197,15 @@ def test_catalogue_covers_every_served_market():
             assert m.cap > 0 and m.line is not None
         if m.kind == "multiclass":
             assert len(m.classes) >= 3
+
+
+def test_postseason_is_scored_never_trained(ran):
+    kind, md, lad, res = ran
+    assert len(lad.post_frame) and not lad.frame["is_post"].any()
+    for it, c in res["results"].items():
+        assert c.post["seasons"] == [2018, 2019, 2020, 2026], it
+        assert [f["season"] for f in c.post_folds] == [2018, 2019, 2020, 2026]
+    rows = REC.runs_for(lad, res, git_sha=None)
+    ch = next(r for r in rows if r["config"]["chosen"])
+    assert ch["oos_metrics"]["postseason"]["primary"] is not None
+    assert ch["calibration"]["postseason_by_season"]

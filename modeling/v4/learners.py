@@ -68,16 +68,25 @@ def y_of(df: pd.DataFrame, md: MarketDef) -> np.ndarray:
 
 
 def nb_pmf(mu: np.ndarray, alpha: float, cap: int) -> np.ndarray:
-    """(n, cap+1) negative binomial pmf, var = mu + alpha mu^2; last = tail."""
-    from scipy import stats
+    """(n, cap+1) negative binomial pmf, var = mu + alpha mu^2; last = tail.
 
-    mu = np.clip(np.asarray(mu, float), 1e-4, None)
-    k = np.arange(cap)
-    if alpha <= 1e-9:
-        body = stats.poisson.pmf(k[None, :], mu[:, None])
+    The same recurrence as derive.negbin_pmf and props.ts::negbinPmf,
+    vectorised, so the TypeScript scorer inherits their 1e-9 parity.
+    """
+    mu = np.maximum(np.asarray(mu, float), 1e-6)
+    n = len(mu)
+    body = np.zeros((n, cap))
+    if alpha < 1e-6:
+        lg = np.array([math.lgamma(k + 1) for k in range(cap)])
+        k = np.arange(cap)
+        body = np.exp(-mu[:, None] + k[None, :] * np.log(mu)[:, None] - lg[None, :])
     else:
         r = 1.0 / alpha
-        body = stats.nbinom.pmf(k[None, :], r, (r / (r + mu))[:, None])
+        p = r / (r + mu)
+        v = p ** r
+        for k in range(cap):
+            body[:, k] = v
+            v = v * ((k + r) / (k + 1) * (1 - p))
     tail = np.clip(1 - body.sum(axis=1, keepdims=True), 0, 1)
     return np.concatenate([body, tail], axis=1)
 
@@ -236,6 +245,7 @@ class GLM(Learner):
     iteration, family = "i2_glm", "glm"
 
     def _prep_fit(self, X):
+        X = np.asarray(X, np.float64)  # float32 statistics would not round-trip
         self.med = np.nanmedian(X, axis=0) if len(X) else np.zeros(X.shape[1])
         self.med = np.where(np.isfinite(self.med), self.med, 0.0)
         Xf = np.where(np.isnan(X), self.med, X)
@@ -244,6 +254,7 @@ class GLM(Learner):
         return (Xf - self.mu_) / self.sd_
 
     def _prep(self, X):
+        X = np.asarray(X, np.float64)
         return (np.where(np.isnan(X), self.med, X) - self.mu_) / self.sd_
 
     def fit(self, tr):

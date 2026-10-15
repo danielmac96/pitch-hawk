@@ -117,7 +117,10 @@ PA_FEATS = (
     "p_velo", "p_n",
     "b_k_rate", "b_bb_rate", "b_h_rate", "b_pitches_pa", "b_swing", "b_whiff",
     "b_chase", "b_n", "ump_called_strike", "day_of_season",
-) + tuple(f"pa3_{c}" for c in range(7))
+)
+# Not in PA_FEATS: the v3 per-PA probabilities (pa3_*). They exist in the
+# frames, but the live scorer cannot compute them, and a feature present in
+# training and missing at serving time is a model scored off-distribution.
 
 
 MARKETS: dict[str, MarketDef] = {}
@@ -194,7 +197,7 @@ _add(MarketDef(
     outcome="plate appearance ends in strikeout, walk, hit, or other out (from this count)",
     classes=("strikeout", "walk", "hit", "out"),
     keys=("game_pk", "at_bat_index", "balls", "strikes"), features=PA_FEATS,
-    stack=tuple(f"pa3_{c}" for c in range(7)), baseline_group="count_state",
+    baseline_group="count_state",
     served_as="v2_20260809", max_train_rows=1_200_000, tune_rows=300_000))
 _add(MarketDef(
     name="ab_pitches_ou", grain="pa_state", kind="count", target="remaining",
