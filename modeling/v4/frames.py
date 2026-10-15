@@ -59,6 +59,7 @@ def _context(fr: pd.DataFrame, box_games: pd.DataFrame, games: pd.DataFrame | No
         "venue_id": g["venue_id"].to_numpy(),
     }, index=g.index)
     if games is not None and "start_ts" in games:
+        games = games.drop_duplicates("game_pk", keep="last")
         gctx["night"] = pd.Series(F.night_game(games["start_ts"]),
                                   index=games["game_pk"]).reindex(gctx.index).to_numpy()
         gctx["hp_umpire_id"] = games.set_index("game_pk")["hp_umpire_id"] \
@@ -323,8 +324,8 @@ def rog_frame(Fr: dict, src: dict | None, batter: pd.DataFrame) -> pd.DataFrame:
     p = p.sort_values(["game_pk", "player_id", "at_bat_index"]).reset_index(drop=True)
     g = p.groupby(["game_pk", "player_id"], sort=False)
     p["pa_k"] = g.cumcount() + 1
-    for c in ("hit", "hr"):
-        p[f"{c}_so_far"] = g[c].cumsum() - p[c]
+    for c, name in (("hit", "hits_so_far"), ("hr", "hr_so_far")):
+        p[name] = g[c].cumsum() - p[c]
         rev = p.iloc[::-1].groupby(["game_pk", "player_id"], sort=False)[c].cumsum().iloc[::-1]
         p[f"y_{c}_rest"] = (rev > 0).astype(int)
     p["pa_so_far"] = p["pa_k"] - 1

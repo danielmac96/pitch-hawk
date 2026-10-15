@@ -1,25 +1,37 @@
 name: v4 refresh
 
-# Keeps every v4 market's backfill current (docs/models/V4-PLAN.md, phase 5).
+# Keeps v4 on the site and its record current (docs/models/V4-PLAN.md).
 #
-# After the nightly warehouse ingest has written yesterday's games, this
-# rebuilds the v4 frames (player/game/live, and the current season's pitch
-# and count-state frames), then scores every row newer than each market's
-# backfill with that market's FROZEN production fit -- no refitting -- and
-# republishes the daily rollup the dashboard's Model Lab v4 page plots.
+# Morning pass (after warehouse.yml's 04:00 ET ingest; the shared
+# concurrency group means the two never overlap):
+#   1. `v4 serve --write-frames`: rebuild the player / game / live frames
+#      (saved rating configs, no tuning) with today's slate as pending rows,
+#      append yesterday's completed games -- regular season and postseason --
+#      to every market's backfill, publish today's predictions for the v4
+#      markets that are ACTIVE in model_params, and write the pregame
+#      snapshot the in-game scorers read.
+#   2. rebuild this season's pitch / count-state frames and score their new
+#      rows the same way.
 #
-# Records nothing in model_runs and changes nothing production serves.
-# Refitting is a deliberate lab run (`python -m modeling v4 train ...`).
+# Afternoon passes re-run `v4 serve` as lineups post (frames not rewritten):
+# a batter scored on a projected lineup is re-scored on the posted one; game
+# rows stay frozen once written, like every pregame call.
 #
-# Frames only hold regular-season games (every v4 model is fitted on them),
-# so from October to March this is a cheap no-op apart from the rebuild.
+# Never refits and never changes which version is active: publishing only
+# happens for markets a human activated (`python -m modeling v4 activate`),
+# and `rollback_model` takes a market off v4 without touching this job.
 
 on:
   schedule:
-    # 06:15 America/New_York in EDT; after warehouse.yml's 04:00 run, which
-    # shares the concurrency group below so the two never overlap.
-    - cron: "15 10 * * *"
+    - cron: "15 10 * * *"   # 06:15 ET (EDT): full pass
+    - cron: "30 19 * * *"   # 15:30 ET: lineups for most evening games
+    - cron: "15 22 * * *"   # 18:15 ET: late lineups, West Coast
   workflow_dispatch:
+    inputs:
+      full:
+        description: "Run the full morning pass (rebuild frames)"
+        type: boolean
+        default: true
 
 concurrency:
   group: warehouse-nightly
@@ -49,22 +61,30 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements-modeling.txt -r requirements.txt
-      - name: Skip outside the season
-        id: season
+      - name: Which pass
+        id: pass
         run: |
-          m=$(TZ=America/New_York date +%m)
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$m" -ge 3 ] && [ "$m" -le 10 ]; }; then
-            echo "run=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "run=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::Off-season: no regular-season games to score."
+          m=$(TZ=America/New_York date +%-m)
+          season=false
+          if [ "$m" -ge 3 ] && [ "$m" -le 11 ]; then season=true; fi
+          full=false
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            season=true; full="${{ inputs.full }}"
+          elif [ "${{ github.event.schedule }}" = "15 10 * * *" ]; then
+            full=true
           fi
-      - name: Rebuild player / game / live frames
-        if: steps.season.outputs.run == 'true'
-        run: python -m modeling v4 frames --grain player
+          echo "season=$season" >> "$GITHUB_OUTPUT"
+          echo "full=$full" >> "$GITHUB_OUTPUT"
+          echo "::notice::season=$season full=$full"
+      - name: Serve (rebuild and store frames)
+        if: steps.pass.outputs.season == 'true' && steps.pass.outputs.full == 'true'
+        run: python -m modeling v4 serve --write-frames
       - name: Rebuild this season's pitch and count-state frames
-        if: steps.season.outputs.run == 'true'
+        if: steps.pass.outputs.season == 'true' && steps.pass.outputs.full == 'true'
         run: python -m modeling v4 frames --grain micro --seasons "$(TZ=America/New_York date +%Y)"
-      - name: Score new rows with the frozen production fits
-        if: steps.season.outputs.run == 'true'
-        run: python -m modeling v4 score --publish
+      - name: Score new in-game rows
+        if: steps.pass.outputs.season == 'true' && steps.pass.outputs.full == 'true'
+        run: python -m modeling v4 score pitch pa --publish
+      - name: Serve (lineup refresh)
+        if: steps.pass.outputs.season == 'true' && steps.pass.outputs.full != 'true'
+        run: python -m modeling v4 serve

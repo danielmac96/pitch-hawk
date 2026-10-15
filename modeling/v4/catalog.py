@@ -76,7 +76,7 @@ OPP_LINEUP = ("opp_k_rate", "opp_bb_rate", "opp_h_rate", "opp_iso", "opp_value",
               "opp_lhb_share")
 WORKLOAD = ("own_mean", "team_leash", "pitches_mean", "rest", "first_start",
             "quality", "mu_outs", "mu_bf", "last_pitches", "season_ip")
-UMP = ("ump_k_rate", "ump_bb_rate", "ump_n")
+UMP = ("ump_called_strike", "ump_out_zone_strike", "ump_n")
 PEN = ("pen_ip_3d", "pen_rating_k", "pen_rating_out")
 
 BATTER =(("slot", "e_pa", "same_hand", "sp_left", "bat_left", "switch",
@@ -122,6 +122,18 @@ PA_FEATS = (
 # frames, but the live scorer cannot compute them, and a feature present in
 # training and missing at serving time is a model scored off-distribution.
 
+
+# Columns carried into each market's backfill so accuracy can be sliced by
+# situation on the dashboard without re-reading the frames.
+SEGMENTS = {
+    "batter_game": ("slot", "is_home", "same_hand", "is_post"),
+    "start": ("is_home", "p_left", "is_post"),
+    "game": ("is_post",),
+    "pitch": ("balls", "strikes", "inning", "pitch_of_pa", "is_post"),
+    "pa_state": ("balls", "strikes", "inning", "is_post"),
+    "rog": ("pa_k", "inning", "slot", "is_post"),
+    "live_total": ("inning", "top_inning", "is_post"),
+}
 
 MARKETS: dict[str, MarketDef] = {}
 

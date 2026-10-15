@@ -630,7 +630,9 @@ async function slatePayloads(date: string): Promise<any[]> {
           }
           return out;
         });
-        liveModels.rest_of_game_version = v3Rog ? "v3_pa_outcome"
+        liveModels.rest_of_game_version = (v4Live.snap && (v4l.versions["batter_hit_rog"] || v4l.versions["batter_hr_rog"]))
+          ? (v4l.versions["batter_hit_rog"] ?? v4l.versions["batter_hr_rog"])
+          : v3Rog ? "v3_pa_outcome"
           : liveVersions["batter_hit_rog"] ?? liveVersions["batter_hr_rog"];
       }
     }

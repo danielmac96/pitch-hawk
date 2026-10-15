@@ -22,6 +22,7 @@
 //                            { "from": "YYYY-MM-DD", "to": "YYYY-MM-DD" }
 // Requires x-cron-secret.
 
+import { legacyModels } from "../_shared/v4.ts";
 import { json, logRun, requireCronSecret, svc } from "../_shared/db.ts";
 import { pendingAtBats, posKey } from "../_shared/livepitch.ts";
 import { latestOdds, ouJoin } from "../_shared/market.ts";
@@ -69,7 +70,9 @@ Deno.serve(async (req) => {
     return json({ error: "pass { date } or { from, to } as YYYY-MM-DD" }, 400);
   }
 
-  const models = await loadActiveModels();
+  // v4 rows carry no params the v2 scorers understand: backfill with the
+  // version each one superseded (_shared/v4.ts::legacyModels).
+  const models = legacyModels(await loadActiveModels());
   const errors: string[] = [];
   const detail: Record<string, unknown> = { from, to };
   let gamesTouched = 0, positionsWritten = 0, rowsWritten = 0;

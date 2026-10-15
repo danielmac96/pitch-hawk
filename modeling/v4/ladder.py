@@ -316,9 +316,11 @@ def market_columns(md: MarketDef) -> list[str]:
     if md.incumbent:
         inc = ([f"{md.incumbent.cols[0]}{k}" for k in range(md.cap + 1)]
                if md.incumbent.style == "pmf" else list(md.incumbent.cols))
+    from modeling.v4.catalog import SEGMENTS
     base = [md.baseline_group] if md.baseline_group else []
     return list(dict.fromkeys(["season", "day", "game_date", "is_post", md.target, *md.keys,
-                               *md.features, *md.stack, *inc, *base]))
+                               *md.features, *md.stack, *inc, *base,
+                               *SEGMENTS.get(md.grain, ())]))
 
 
 def run_market(md: MarketDef, frame: pd.DataFrame, **kw) -> tuple[Ladder, dict]:

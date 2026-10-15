@@ -194,3 +194,91 @@ def season_summary(daily: pd.DataFrame) -> pd.DataFrame:
         "baseline loss": g["wb"].sum() / n,
         "mean predicted": g["wp"].sum() / n, "observed": g["wo"].sum() / n,
     }).reset_index()
+
+
+# ── deeper analysis (dashboard tabs) ────────────────────────────────────────
+
+def segment_table(bf: pd.DataFrame, col: str, *, bins: int | None = None) -> pd.DataFrame:
+    """Accuracy by one situation column: the v4 loss beside the incumbent's
+    and the baseline's on the SAME rows, and how far each is from calibrated."""
+    if bf.empty or col not in bf:
+        return pd.DataFrame()
+    key = bf[col]
+    if bins and key.nunique() > bins:
+        key = pd.qcut(key, bins, duplicates="drop").astype(str)
+    g = bf.assign(_k=key).groupby("_k", observed=True)
+    out = pd.DataFrame({"rows": g.size(), "v4 loss": g["loss"].mean(),
+                        "mean predicted": g["pred"].mean(), "observed": g["y"].mean()})
+    for c, lab in (("incumbent_loss", "incumbent loss"), ("baseline_loss", "baseline loss")):
+        if c in bf:
+            out[lab] = g[c].mean()
+    ref = out.get("incumbent loss", out.get("baseline loss"))
+    if ref is not None:
+        out["lift vs ref %"] = 100 * (ref - out["v4 loss"]) / ref
+    return out.reset_index().rename(columns={"_k": col})
+
+
+def by_month(bf: pd.DataFrame) -> pd.DataFrame:
+    if bf.empty or "game_date" not in bf:
+        return pd.DataFrame()
+    return segment_table(bf.assign(month=pd.to_datetime(bf["game_date"]).dt.month), "month")
+
+
+def calibration_deciles(bf: pd.DataFrame) -> pd.DataFrame:
+    """Predicted vs observed by decile of the prediction (binary: P(y=1);
+    count: expected count; Gaussian: mean)."""
+    if bf.empty or bf["pred"].nunique() < 10:
+        return pd.DataFrame()
+    d = pd.qcut(bf["pred"].rank(method="first"), 10, labels=False) + 1
+    g = bf.assign(decile=d).groupby("decile")
+    return pd.DataFrame({"rows": g.size(), "mean predicted": g["pred"].mean(),
+                         "observed": g["y"].mean(), "loss": g["loss"].mean()}).reset_index()
+
+
+def postseason(row: pd.Series) -> tuple[dict, pd.DataFrame]:
+    """The postseason block of a run: pooled metrics and the per-season folds."""
+    post = (row.get("oos_metrics") or {}).get("postseason") or {}
+    folds = pd.DataFrame((row.get("calibration") or {}).get("postseason_by_season") or [])
+    return post, folds
+
+
+def live_record(rows: list[dict], market: str) -> pd.DataFrame:
+    """Graded live rows by model version (player_game_projections or
+    game_predictions): what production served, how it did."""
+    import numpy as np
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df = df[(df["market"] == market) & df["result"].isin(["hit", "miss", "win", "loss"])].copy()
+    if df.empty:
+        return df
+    # Projections grade P(yes) as hit/miss; game rows grade the recommended
+    # side as win/loss at its `confidence`. Pushes and voids carry no signal.
+    df["y"] = df["result"].isin(["hit", "win"]).astype(float)
+    pcol = "probability" if "probability" in df and df["probability"].notna().any() else "confidence"
+    df["p"] = pd.to_numeric(df[pcol], errors="coerce").clip(1e-6, 1 - 1e-6)
+    df = df.dropna(subset=["p"])
+    df["ll"] = -(df["y"] * np.log(df["p"]) + (1 - df["y"]) * np.log(1 - df["p"]))
+    g = df.groupby("model_version")
+    return pd.DataFrame({"graded": g.size(), "mean predicted": g["p"].mean(),
+                         "observed": g["y"].mean(), "log loss": g["ll"].mean(),
+                         "brier": g.apply(lambda x: float(((x["p"] - x["y"]) ** 2).mean())),
+                         "first": g["official_date"].min() if "official_date" in df else None,
+                         "last": g["official_date"].max() if "official_date" in df else None,
+                         }).reset_index().sort_values("last", ascending=False)
+
+
+def reproduce(row: pd.Series) -> str:
+    cfg = row.get("config") or {}
+    return "\n".join([
+        f"# {row['market']} — {cfg.get('iteration')} ({cfg.get('family')}), git {row.get('git_sha')}",
+        "git checkout " + str(row.get("git_sha") or "<sha>"),
+        "# frames (lab runner; needs R2 credentials)",
+        "python -m modeling v4 frames --grain " + ("micro" if cfg.get("grain") in ("pitch", "pa_state") else "player"),
+        f"python -m modeling v4 train {row['market']} --iterations {cfg.get('iteration')}",
+        "# the full ladder, recorded:",
+        f"python -m modeling v4 train {row['market']} --record --publish",
+        "# put it on the site (refuses a held run):",
+        f"python -m modeling v4 activate {row['market']}",
+        f"# undo: select rollback_model('{row['market']}');",
+    ])

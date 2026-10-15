@@ -151,7 +151,9 @@ def score_new(store, markets, *, publish: bool, frames: dict | None = None) -> d
             continue
         pred = np.asarray(model.predict(new))
         y = L.y_of(new, md)
+        from modeling.v4.catalog import SEGMENTS
         keep = [k for k in md.keys if k in new] + ["season", "game_date", "day"]
+        keep += [k for k in SEGMENTS.get(md.grain, ()) if k in new and k not in keep]
         out = new[keep].copy()
         out["y"] = y
         out["pred"] = REC._headline(md, pred).astype(np.float32)
@@ -204,6 +206,13 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_activate(args) -> int:
+    from modeling.v4 import activate as A
+    out = A.activate(_store(), args.markets, dry_run=args.dry_run)
+    print("[v4] ACTIVATE " + json.dumps(out, default=str, indent=1), flush=True)
+    return 0 if all(not str(v).startswith(("refused", "no ")) for v in out.values()) else 1
+
+
 def cmd_status(args) -> int:
     from modeling.v4 import storage as S
     idx = S.load_index(_store())
@@ -234,12 +243,15 @@ def build_parser() -> argparse.ArgumentParser:
     v.add_argument("--date", help="slate date (default today, America/New_York)")
     v.add_argument("--write-frames", action="store_true")
     v.add_argument("--dry-run", action="store_true")
+    a = sub.add_parser("activate")
+    a.add_argument("markets", nargs="+")
+    a.add_argument("--dry-run", action="store_true")
     sub.add_parser("status")
     return p
 
 
 _COMMANDS = {"frames": cmd_frames, "train": cmd_train, "score": cmd_score,
-             "serve": cmd_serve, "status": cmd_status}
+             "serve": cmd_serve, "activate": cmd_activate, "status": cmd_status}
 
 
 def main(argv: list[str]) -> int:

@@ -175,6 +175,14 @@ def load_sources(store, *, con=None) -> dict[str, pd.DataFrame]:  # noqa: ANN001
         df = con.execute(sql).df()
         if "game_date" in df:
             df["day"] = R.day_index(df["game_date"])
+        if name == "games":
+            # A game re-ingested on a later day (suspended, re-dated) appears
+            # once per day file; keep its latest row so team records and
+            # per-game joins count it once.
+            n0 = len(df)
+            df = df.sort_values("game_date").drop_duplicates("game_pk", keep="last")
+            if len(df) < n0:
+                print(f"[v4] games: dropped {n0 - len(df):,} duplicate game_pk rows", flush=True)
         out[name] = df
         print(f"[v4] source {name}: {len(df):,} rows in {time.time() - t0:.0f}s", flush=True)
     return out

@@ -202,8 +202,10 @@ def backfill_frame(lad: LD.Ladder, result: dict, *, run_id: str, version: str) -
     # in that same order.
     order = np.concatenate([np.flatnonzero(lad.season == s) for s in seasons])
     fr = lad.frame.iloc[order]
+    from modeling.v4.catalog import SEGMENTS
     keep = [k for k in md.keys if k in fr] + [k for k in ("season", "game_date", "day")
                                               if k in fr and k not in md.keys]
+    keep += [k for k in SEGMENTS.get(md.grain, ()) if k in fr and k not in keep]
     out = fr[keep].reset_index(drop=True).copy()
     y = lad.y[order]
     out["y"] = y

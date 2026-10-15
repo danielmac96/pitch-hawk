@@ -59,6 +59,42 @@ def load_daily(market: str) -> pd.DataFrame:
     return df
 
 
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_active() -> pd.DataFrame:
+    rows = (get_client().table("model_params").select("market,version,params->>type,"
+                                                      "params->>serving,activated_at")
+            .eq("is_active", True).execute().data or [])
+    return pd.DataFrame(rows)
+
+
+@st.cache_data(ttl=CACHE_TTL, show_spinner=False)
+def load_live(market: str) -> list[dict]:
+    db = get_client()
+    md_ = C.MARKETS.get(market)
+    if md_ is None or md_.grain not in ("batter_game", "start", "game"):
+        return []
+    if md_.grain == "game":
+        return fetch_all(lambda: db.table("game_predictions")
+                         .select("market,model_version,confidence,result,official_date")
+                         .eq("phase", "pregame").eq("market", market)
+                         .in_("result", ["win", "loss"]).order("game_pk"), cap=20_000)
+    return fetch_all(lambda: db.table("player_game_projections")
+                     .select("market,model_version,probability,result,official_date")
+                     .eq("market", market).in_("result", ["hit", "miss"])
+                     .order("game_pk").order("player_id"), cap=50_000)
+
+
+@st.cache_data(ttl=3600, show_spinner="Reading the row-level backfill from R2…")
+def load_backfill(market: str) -> pd.DataFrame:
+    try:
+        from utils.r2 import open_store
+        from modeling.v4 import storage as S
+        return S.get_backfill(open_store(), market)
+    except Exception as exc:  # noqa: BLE001 -- R2 creds are optional for this page
+        st.session_state["_bf_error"] = str(exc)[:300]
+        return pd.DataFrame()
+
+
 p = palette.active()
 COLORS = {"v4 model": p.series[0], "incumbent": p.series[1], "baseline": p.expected}
 runs = load_runs()
@@ -71,6 +107,12 @@ if runs.empty:
 # ── overview ────────────────────────────────────────────────────────────────
 st.header("Every market")
 ov = V.overview(runs)
+act = load_active()
+if not act.empty:
+    on = act.set_index("market")
+    ov.insert(5, "on the site", ov["market"].map(
+        lambda m: (f"v4 ({on.loc[m, 'serving']})" if m in on.index and on.loc[m, "type"] == "v4"
+                   else f"{on.loc[m, 'version']}" if m in on.index else "—")))
 missing = sorted(set(C.MARKETS) - set(ov["market"]))
 n_ok = int((ov["status"] == "stageable").sum())
 c1, c2, c3 = st.columns(3)
@@ -103,9 +145,10 @@ chosen_id = lad.loc[lad["chosen"] == "★", "run_id"]
 row = mruns[mruns["run_id"] == chosen_id.iloc[0]].iloc[0] if len(chosen_id) else mruns.iloc[0]
 cfg = row["config"]
 
-tab_card, tab_ladder, tab_val, tab_cal, tab_imp, tab_track = st.tabs(
+(tab_card, tab_ladder, tab_val, tab_cal, tab_imp, tab_post, tab_seg, tab_track,
+ tab_live, tab_repro) = st.tabs(
     ["Model card", "Iterations", "Validation & test", "Calibration", "Features",
-     "Backfill tracking"])
+     "Postseason", "Segments", "Backfill tracking", "Live on site", "Reproduce"])
 
 with tab_card:
     a, b = st.columns([3, 2])
@@ -255,3 +298,88 @@ with tab_track:
                         width="stretch", config=palette.plotly_config())
         st.subheader("By season")
         st.dataframe(V.season_summary(daily), width="stretch", hide_index=True)
+
+with tab_post:
+    post, pf = V.postseason(row)
+    if not post:
+        st.info("No postseason rows were scored in this run (runs before the "
+                "postseason change, or a grain with no October games).")
+    else:
+        st.caption("Postseason games are never trained on. Each is predicted by the "
+                   "model for its season -- the same model that scored that regular "
+                   "season -- and reported here apart from the regular-season numbers "
+                   "the model was chosen on. Samples are small: read the trend, not a fold.")
+        c1, c2, c3 = st.columns(3)
+        c1.metric(f"postseason {cfg.get('primary_metric')}", f"{post.get('primary', float('nan')):.4f}")
+        if post.get("incumbent_primary") is not None:
+            c2.metric("incumbent", f"{post['incumbent_primary']:.4f}",
+                      delta=f"{post['incumbent_primary'] - post['primary']:+.4f} v4 better",
+                      delta_color="normal")
+        if post.get("baseline_primary") is not None:
+            c3.metric("baseline", f"{post['baseline_primary']:.4f}")
+        st.dataframe(pd.Series(post).to_frame("postseason (pooled)"), width="stretch")
+        if not pf.empty:
+            st.subheader("By postseason")
+            st.dataframe(pf, width="stretch", hide_index=True)
+
+with tab_seg:
+    bf = load_backfill(market)
+    if bf.empty:
+        st.info("Row-level backfill unavailable here: it lives in R2 "
+                "(`model_v4/backfill/<market>/`) and needs the R2 credentials in "
+                "`.env`. " + st.session_state.get("_bf_error", ""))
+    else:
+        st.caption(f"{len(bf):,} out-of-sample rows. Every slice compares v4 with the "
+                   "incumbent and the baseline on the same rows (lower loss is better).")
+        src = st.multiselect("Rows", sorted(bf["source"].unique()),
+                             default=[x for x in bf["source"].unique() if x != "postseason"])
+        sub = bf[bf["source"].isin(src)]
+        st.subheader("Calibration by decile of the prediction")
+        dec = V.calibration_deciles(sub)
+        if not dec.empty:
+            fig = go.Figure()
+            fig.add_scatter(x=dec["mean predicted"], y=dec["observed"], mode="lines+markers",
+                            name="deciles", line={"color": p.series[0]})
+            lo, hi = float(dec[["mean predicted", "observed"]].min().min()), \
+                float(dec[["mean predicted", "observed"]].max().max())
+            fig.add_scatter(x=[lo, hi], y=[lo, hi], mode="lines", name="perfect",
+                            line={"color": p.expected, "width": 1})
+            st.plotly_chart(palette.style(fig, p, height=320, legend=True),
+                            width="stretch", config=palette.plotly_config())
+            st.dataframe(dec, width="stretch", hide_index=True)
+        dims = [c for c in ("season", "source", "slot", "is_home", "same_hand", "p_left",
+                            "balls", "strikes", "inning", "pitch_of_pa", "pa_k", "top_inning")
+                if c in sub]
+        dim = st.selectbox("Slice by", dims + ["month"])
+        tab = V.by_month(sub) if dim == "month" else V.segment_table(sub, dim)
+        st.dataframe(tab, width="stretch", hide_index=True)
+        st.download_button("Download these rows (CSV)", sub.to_csv(index=False),
+                           file_name=f"{market}_v4_backfill.csv")
+
+with tab_live:
+    act_row = act[act["market"] == market] if not act.empty else act
+    if not act_row.empty and act_row.iloc[0]["type"] == "v4":
+        st.success(f"v4 is live for {market}: `{act_row.iloc[0]['version']}` "
+                   f"({act_row.iloc[0]['serving']}), active since "
+                   f"{str(act_row.iloc[0]['activated_at'])[:16]}.")
+    elif not act_row.empty:
+        st.warning(f"Production serves `{act_row.iloc[0]['version']}` for {market}; "
+                   "v4 is a shadow model here until it is activated.")
+    rec = V.live_record(load_live(market), market)
+    if rec.empty:
+        st.info("No graded live rows for this market. In-game markets (pitch, PA, "
+                "rest of game, live total) are graded in `predictions` / not stored; "
+                "their live record is the backfill tracking tab, sources `production*`.")
+    else:
+        st.caption("Graded rows as production served them, by model version. Game markets "
+                   "grade the recommended side at its confidence.")
+        st.dataframe(rec, width="stretch", hide_index=True)
+
+with tab_repro:
+    st.caption("Exactly how this model was produced and how to put it on, or take it "
+               "off, the site. Frames and training read R2, so they run on the lab "
+               "runner (`modeling/lab/request.json`, `.github/workflows/model-lab.yml`).")
+    st.code(V.reproduce(row), language="bash")
+    st.json({"run_id": row["run_id"], "version": row.get("version"), "status": row["status"],
+             "spec_hash": row.get("spec_hash"), "artifact": (row.get("params") or {}).get("artifact"),
+             "data_through": row.get("data_through"), "train_seasons": row.get("train_seasons")})
