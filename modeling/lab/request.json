@@ -1,7 +1,21 @@
 {
-  "note": "P-009 (v4), job A, second attempt: the first died in the frame build on duplicate game_pk rows in `games` (fixed; tests/modeling/test_v4_frames.py now runs every source path). Builds the player/game/live frames, regular season AND postseason (flagged, never trained on), saves the rating configs for the daily serve passes, then runs the full ladder for the five starter markets and the two pregame game markets. Records every rung in model_runs, writes backfills and artifacts to R2 and the daily rollup to v4_backfill_daily. Activates nothing.",
+  "note": "P-009 (v4), job A, third attempt. Attempt 2 built the start (51,294) and batter_game (496,574) frames, then died in the game frame: some team-games carry two rows flagged as the starter (openers, resumed games). Starts are now one per team-game (most batters faced), batter-games one per player-game, the wart is in tests/modeling/test_v4_frames.py, and every frame plus the tuned rating configs is written to R2 the moment it exists. Then the starter and game ladders. Records runs and backfills; activates nothing.",
   "steps": [
-    ["modeling", "v4", "frames", "--grain", "player"],
-    ["modeling", "v4", "train", "starter", "game", "--record", "--publish"]
+    [
+      "modeling",
+      "v4",
+      "frames",
+      "--grain",
+      "player"
+    ],
+    [
+      "modeling",
+      "v4",
+      "train",
+      "starter",
+      "game",
+      "--record",
+      "--publish"
+    ]
   ]
 }

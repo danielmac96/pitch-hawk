@@ -138,6 +138,16 @@ def start_frame(Fr: dict, src: dict | None) -> pd.DataFrame:
     S["pen_rating_out"] = pen[:, 0] + pen[:, 6]
     S["pen_ip_3d"] = F.bullpen_usage(S, box, "team_id").to_numpy()
     S["game_date"] = pd.Timestamp("2015-01-01") + pd.to_timedelta(S["day"], "D")
+    # Two rows flagged as a team's starter in one game (an opener, a game
+    # suspended and resumed): keep the one who faced the most batters, so a
+    # start is one row and every join on (game, team) stays one-to-one.
+    S = S.copy()
+    S["_bf"] = S["bf"].fillna(-1)
+    n0 = len(S)
+    S = (S.sort_values("_bf").drop_duplicates(["game_pk", "team_id"], keep="last")
+         .drop(columns="_bf").sort_values(["day", "game_pk"]).reset_index(drop=True))
+    if len(S) < n0:
+        _log(f"start frame: dropped {n0 - len(S):,} second starters")
     return S
 
 
@@ -189,6 +199,10 @@ def batter_frame(Fr: dict, src: dict | None, start: pd.DataFrame) -> pd.DataFram
     B["pen_rating_k"] = B["rpen_0"]
     B["pen_rating_out"] = B["rpen_0"] + B["rpen_6"]
     B["pen_ip_3d"] = F.bullpen_usage(B, box, "opp_team").to_numpy()
+    n0 = len(B)
+    B = B.drop_duplicates(["game_pk", "player_id"], keep="first").reset_index(drop=True)
+    if len(B) < n0:
+        _log(f"batter_game frame: dropped {n0 - len(B):,} duplicate batter-games")
     return B
 
 
@@ -389,8 +403,11 @@ def live_total_frame(Fr: dict, src: dict | None, game: pd.DataFrame) -> pd.DataF
 
 def build_player_frames(store, *, src: dict | None = None, run=None,  # noqa: ANN001
                         date: str | None = None, slate: list | None = None,
-                        rating_configs: dict | None = None) -> dict:
+                        rating_configs: dict | None = None, on_frame=None) -> dict:  # noqa: ANN001
     """Every player / game / live frame, postseason included.
+
+    on_frame(name, df): called as each frame (and the tuned rating configs,
+    name "_rating_configs") is built -- how the lab writes them to R2 at once.
 
     date: also carry pending rows for that day's slate (outcomes NULL), so
     the same frames serve the backfill and today's predictions.
@@ -415,16 +432,42 @@ def build_player_frames(store, *, src: dict | None = None, run=None,  # noqa: AN
     _log(f"v3 frames ready in {time.time() - t0:.0f}s")
     if src is None and store is not None:
         src = F.load_sources(store)
-    start = start_frame(Fr, src)
-    _log(f"start frame: {len(start):,} rows, {len(start.columns)} cols")
-    batter = batter_frame(Fr, src, start)
-    _log(f"batter_game frame: {len(batter):,} rows, {len(batter.columns)} cols")
-    game = game_frame(Fr, src, start, batter)
-    _log(f"game frame: {len(game):,} rows")
-    rog = rog_frame(Fr, src, batter)
-    _log(f"rog frame: {len(rog):,} rows")
-    live = live_total_frame(Fr, src, game)
-    _log(f"live_total frame: {len(live):,} rows")
-    return {"batter_game": batter, "start": start, "game": game, "rog": rog,
-            "live_total": live, "pa_v3": Fr["pa_v3"], "_src": src, "_slate": slate or [],
-            "_rating_configs": res["final"]["pa_outcome"].get("ratings")}
+    cfg = res["final"]["pa_outcome"].get("ratings")
+    if on_frame is not None and cfg:
+        on_frame("_rating_configs", cfg)
+    out: dict = {"pa_v3": Fr["pa_v3"], "_src": src, "_slate": slate or [],
+                 "_rating_configs": cfg}
+    if on_frame is not None:
+        on_frame("pa_v3", Fr["pa_v3"])
+    failed = []
+
+    def step(name, fn):  # noqa: ANN001
+        # Each frame is written the moment it exists, and a builder that
+        # fails does not take the others with it: the v3 run behind them all
+        # costs two hours, and losing it to the last builder is how the first
+        # two lab attempts ended.
+        try:
+            df = fn()
+        except Exception as exc:  # noqa: BLE001
+            import traceback
+            traceback.print_exc()
+            failed.append(f"{name}: {exc}")
+            return None
+        out[name] = df
+        _log(f"{name} frame: {len(df):,} rows, {len(df.columns)} cols")
+        if on_frame is not None:
+            on_frame(name, df)
+        return df
+
+    start = step("start", lambda: start_frame(Fr, src))
+    batter = step("batter_game", lambda: batter_frame(Fr, src, start)) if start is not None else None
+    game = step("game", lambda: game_frame(Fr, src, start, batter)) \
+        if batter is not None else None
+    if batter is not None:
+        step("rog", lambda: rog_frame(Fr, src, batter))
+    if game is not None:
+        step("live_total", lambda: live_total_frame(Fr, src, game))
+    if failed:
+        raise RuntimeError("frame builders failed (the others were written): "
+                           + "; ".join(failed))
+    return out

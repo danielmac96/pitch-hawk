@@ -9,6 +9,7 @@ warts included (tests/modeling/synthetic_sources.py).
 
 from __future__ import annotations
 
+import pandas as pd
 import pytest
 
 from modeling import games as G
@@ -24,6 +25,13 @@ from .synthetic_sources import sources
 @pytest.fixture(scope="module")
 def frames():
     pa, box = league(seasons=(2016, 2017, 2018, 2019), days=24)
+    # The real warehouse's wart: a second row flagged as the starter for the
+    # same team and game (an opener; a suspended game resumed).
+    st = box[box["p_started"].fillna(False).astype(bool)].head(6).copy()
+    st["player_id"] = st["player_id"] + 90_000
+    st["p_bf"] = 3
+    st["p_outs"] = 2
+    box = pd.concat([box, st], ignore_index=True)
     mp = pytest.MonkeyPatch()
     mp.setattr(P, "load_pa", lambda store, **k: pa.copy())
     mp.setattr(G, "load_box", lambda store, **k: box.copy())
@@ -49,3 +57,10 @@ def test_every_declared_feature_is_built(frames, grain):
 def test_games_are_one_row_each(frames):
     g = frames["game"]
     assert not g["game_pk"].duplicated().any()
+
+
+def test_one_start_per_team_game_and_one_row_per_batter_game(frames):
+    s, b = frames["start"], frames["batter_game"]
+    assert not s.duplicated(["game_pk", "team_id"]).any()
+    assert not b.duplicated(["game_pk", "player_id"]).any()
+    assert not (s["player_id"] >= 90_000).any()  # the 3-batter "opener" lost

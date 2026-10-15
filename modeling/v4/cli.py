@@ -47,8 +47,8 @@ def cmd_frames(args) -> int:
     if args.grain == "player":
         from modeling.v4 import frames as FR
         cfg = S.load_index(store).get("rating_configs") if args.reuse_ratings else None
-        out = FR.build_player_frames(store, rating_configs=cfg)
-        write_player_frames(store, out)
+        FR.build_player_frames(store, rating_configs=cfg,
+                               on_frame=lambda n, df: write_one(store, n, df))
         return 0
     from modeling.v4 import micro
     seasons = _seasons(args.seasons) or list(range(2015, 2027))
@@ -56,6 +56,20 @@ def cmd_frames(args) -> int:
                              grains=tuple(args.only.split(",")) if args.only
                              else ("pitch", "pa_state"))
     return 0
+
+
+def write_one(store, name: str, df) -> None:  # noqa: ANN001
+    from modeling.v4 import storage as S
+    if name == "_rating_configs":
+        idx = S.load_index(store)
+        idx["rating_configs"] = df
+        S.save_index(store, idx)
+        return
+    if name.startswith("_"):
+        return
+    if "pending" in df:  # today's slate is served, never stored as history
+        df = df[~df["pending"].astype(bool)]
+    S.put_frame(store, name, df)
 
 
 def write_player_frames(store, out: dict) -> None:  # noqa: ANN001
