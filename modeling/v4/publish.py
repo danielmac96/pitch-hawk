@@ -286,4 +286,8 @@ def publish(store, frames: dict, src: dict | None, date: str, slate: list[dict],
         for i in range(0, len(serve), 500):
             db.table(SERVE_TABLE).upsert(REC.clean(serve[i:i + 500]),
                                          on_conflict="kind,key,as_of").execute()
+        # The snapshot is a serving cache, not history: a week covers any
+        # game the live scorers can still be asked about.
+        cutoff = (pd.Timestamp(date) - pd.Timedelta(days=7)).date().isoformat()
+        db.table(SERVE_TABLE).delete().lt("as_of", cutoff).execute()
     return summary

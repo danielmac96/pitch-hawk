@@ -225,8 +225,10 @@ with tab_val:
         st.caption("Shaded: 2020 (60 games, reported, excluded from the aggregate) "
                    "and 2026 (the test season).")
     st.subheader("Aggregates")
-    agg = pd.DataFrame({"validation (2018–25)": pd.Series(row["oos_metrics"]),
-                        "test 2026": pd.Series(row["holdout_metrics"] or {})})
+    scalar = lambda d: {k: v for k, v in (d or {}).items()  # noqa: E731
+                        if isinstance(v, (int, float)) and not isinstance(v, bool)}
+    agg = pd.DataFrame({"validation (2018–25)": pd.Series(scalar(row["oos_metrics"]), dtype=float),
+                        "test 2026": pd.Series(scalar(row["holdout_metrics"]), dtype=float)})
     st.dataframe(agg[agg.index.map(lambda k: not str(k).startswith("_"))],
                  width="stretch")
     st.subheader("Every fold")
@@ -317,7 +319,9 @@ with tab_post:
                       delta_color="normal")
         if post.get("baseline_primary") is not None:
             c3.metric("baseline", f"{post['baseline_primary']:.4f}")
-        st.dataframe(pd.Series(post).to_frame("postseason (pooled)"), width="stretch")
+        st.dataframe(pd.Series({k: v for k, v in post.items()
+                                if isinstance(v, (int, float)) and not isinstance(v, bool)},
+                               dtype=float).to_frame("postseason (pooled)"), width="stretch")
         if not pf.empty:
             st.subheader("By postseason")
             st.dataframe(pf, width="stretch", hide_index=True)
