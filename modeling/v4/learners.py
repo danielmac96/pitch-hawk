@@ -376,8 +376,19 @@ class GBMCountMC(GBM):
     a Poisson) and small supports (pitches left in a plate appearance)."""
     iteration, family = "i3m_gbm_multiclass", "hgb_count_multiclass"
 
+    MIN_CLASS = 10
+
     def fit(self, tr):
         X, y = X_of(tr, self.feats), y_of(tr, self.md)
+        # A value seen a handful of times cannot be learned and breaks the
+        # stratified early-stopping split: fold it into the nearest common
+        # value. It keeps the probability floor at predict time.
+        cnt = np.bincount(y, minlength=self.md.cap + 1)
+        common = np.flatnonzero(cnt >= self.MIN_CLASS)
+        if len(common) and len(common) < len(np.flatnonzero(cnt)):
+            near = common[np.abs(np.arange(len(cnt))[:, None] - common[None, :]).argmin(1)]
+            y = near[y]
+            self._info["merged_values"] = int((cnt > 0).sum() - len(common))
         self.m = self._est("count_mc").fit(X, y)
         self._info["n_iter"] = int(self.m.n_iter_)
         return self
@@ -453,6 +464,7 @@ class Calibrated(Learner):
             pb, yb = inner.predict(b), y_of(b, md)
             self.cal = self._fit_cal(pb, yb)
         self.m = self.make_base().fit(tr)
+        self.make_base = None  # a closure: unpicklable, and not needed to predict
         self.family = f"{self.m.family}+cal"
         self._info = {"base": self.m.info(), "calibrator": self.cal}
         return self

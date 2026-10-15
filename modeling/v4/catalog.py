@@ -83,6 +83,7 @@ BATTER =(("slot", "e_pa", "same_hand", "sp_left", "bat_left", "switch",
            "team_value", "lineup_obp_behind")
           + RATING7 + tuple(f"rpen_{c}" for c in range(7))
           + CONTEXT_GAME + BAT_FORM + BAT_CONTACT
+          + ("bd_swing", "bd_whiff", "bd_chase", "bd_ball_rate", "bd_inplay_rate")
           + ("opp_sp_velo", "opp_sp_whiff", "opp_sp_k_s15", "opp_sp_bb_s15",
              "opp_sp_hr_s15", "opp_sp_mu_bf", "h2h_pa", "h2h_ops")
           + PEN + UMP)
@@ -142,7 +143,7 @@ for _name, _tgt, _desc, _stack, _inc, _cap, _line in (
     _add(MarketDef(
         name=_name, grain="batter_game", kind="binary", target=_tgt, outcome=_desc,
         keys=BATTER_KEYS, features=BATTER, stack=_stack, baseline_group="slot",
-        incumbent=_inc, served_as="v2_20260924" if _name in ("batter_hit", "batter_hr") else "base_v1"))
+        incumbent=_inc, max_train_rows=600_000, tune_rows=200_000, served_as="v2_20260924" if _name in ("batter_hit", "batter_hr") else "base_v1"))
 
 # ── starters, pregame (count distributions) ─────────────────────────────────
 for _name, _tgt, _desc, _cap, _line, _stack in (
@@ -216,7 +217,7 @@ for _name, _tgt, _desc, _stack in (
                   "hits_so_far", "hr_so_far", "pa_so_far", "rem_pa_base",
                   "e_pa", "s_hit", "s_hr", "rb_2", "rb_5", "bf_h_g50", "bf_hr_g50",
                   "sp_still_in", "sp_pitches", "day_of_season"),
-        stack=_stack, baseline_group="pa_k",
+        stack=_stack, baseline_group="pa_k", max_train_rows=700_000, tune_rows=200_000,
         incumbent=Incumbent("prob", (_stack[0],), "v3 per-PA rate over base_v1 remaining PAs"),
         served_as="base_v1"))
 _add(MarketDef(
@@ -225,7 +226,7 @@ _add(MarketDef(
     keys=("game_pk", "inning", "top_inning"),
     features=("inning", "top_inning", "runs_now", "home_runs_now", "away_runs_now",
               "outs_left_home", "outs_left_away", "v3_mu_home", "v3_mu_away",
-              "h_sp_in", "a_sp_in", "h_sp_pitches", "a_sp_pitches", "temp_c",
+              "h_sp_in", "a_sp_in", "temp_c",
               "wind_out", "park_runs"),
     stack=("live_v3_mu_rest",), cap=30, line=8.5,
     incumbent=Incumbent("pmf", ("live_v3pmf_",), "v3 means scaled by outs left (NB)"),

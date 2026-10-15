@@ -169,6 +169,10 @@ def scorecard(runs: pd.DataFrame, params: pd.DataFrame, *,
     df = runs.copy()
     df["pipeline"] = df["config"].apply(pipeline_of)
     df["proposal"] = df["config"].apply(proposal_of)
+    # v4 writes one run per ladder rung; only the chosen rung speaks for the
+    # pipeline here (the rest are on the dashboard's v4 page).
+    df = df[(df["pipeline"] != "v4")
+            | df["config"].apply(lambda c: bool((c or {}).get("chosen")))]
     keys = ["market", "pipeline"] + (["proposal"] if by_proposal else [])
     df = df.sort_values("created_at", ascending=False).drop_duplicates(keys)
     active = ({} if params.empty else

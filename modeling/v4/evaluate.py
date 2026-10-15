@@ -61,16 +61,25 @@ def reliability(y: np.ndarray, p: np.ndarray, bins: int = 10) -> list[dict]:
     return out
 
 
+def _ece(y: np.ndarray, p: np.ndarray, bins: int = 10) -> float:
+    """Expected calibration error over uniform-width bins."""
+    idx = np.minimum((p * bins).astype(int), bins - 1)
+    n = np.bincount(idx, minlength=bins)
+    sp = np.bincount(idx, weights=p, minlength=bins)
+    sy = np.bincount(idx, weights=y, minlength=bins)
+    m = n > 0
+    return _r(np.sum(np.abs(sp[m] - sy[m])) / max(len(y), 1), 5)
+
+
 def binary(p: np.ndarray, y: np.ndarray) -> dict:
     p = np.clip(np.asarray(p, float), EPS, 1 - EPS)
     y = np.asarray(y, float)
-    w = np.ones(len(y))
     return {
         "n": int(len(y)),
         "logloss": _r(-np.mean(y * np.log(p) + (1 - y) * np.log(1 - p))),
         "brier": _r(np.mean((p - y) ** 2)),
         "calibration": _r(p.mean() / max(y.mean(), 1e-9), 4),
-        "ece": _r(M.ece(y, p, w), 5),
+        "ece": _ece(y, p),
         "auc": _auc(y, p),
         "accuracy": _r(np.mean((p >= 0.5) == (y == 1)), 4),
         "base_rate": _r(y.mean(), 4),

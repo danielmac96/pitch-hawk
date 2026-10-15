@@ -1,12 +1,7 @@
 {
-  "note": "P-001: re-run the v3 pipeline unchanged on the re-ingested, fully verified warehouse (12 of 12 seasons ready). Records model_runs rows tagged P-001; stages and activates nothing. Also the first real numbers for the full-distribution scoring (P-003).",
+  "note": "P-009 (v4, one model per market), job A: build the player/game/live frames (v3 pipeline with keep_frames + strictly-prior-day feature groups) and write them to R2; then run the full candidate ladder for the five starter markets and the two pregame game markets. Records every rung in model_runs (pipeline v4), writes the chosen model's backfill and artifact to R2 and the daily rollup to v4_backfill_daily. Changes nothing production serves.",
   "steps": [
-    [
-      "modeling",
-      "markets",
-      "--record",
-      "--proposal",
-      "P-001"
-    ]
+    ["modeling", "v4", "frames", "--grain", "player"],
+    ["modeling", "v4", "train", "starter", "game", "--record", "--publish"]
   ]
 }

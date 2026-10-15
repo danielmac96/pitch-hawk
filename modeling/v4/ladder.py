@@ -97,6 +97,16 @@ class Ladder:
         if dropped:
             _log(f"{md.name}: {len(dropped)} declared features not in the frame: "
                  f"{dropped[:12]}{' ...' if len(dropped) > 12 else ''}")
+        # A column with no information (all missing, or one value) cannot
+        # be split on and breaks the histogram binning; it is recorded as
+        # dropped rather than silently kept.
+        dead = [c for c in self.feats + self.stack
+                if self.frame[c].nunique(dropna=True) < 2]
+        if dead:
+            _log(f"{md.name}: dropping uninformative columns {dead}")
+            self.feats = [c for c in self.feats if c not in dead]
+            self.stack = [c for c in self.stack if c not in dead]
+        self.dead = dead
         self.y = L.y_of(self.frame, md)
         self.season = self.frame["season"].to_numpy()
         self.results: dict[str, Candidate] = {}
@@ -106,10 +116,12 @@ class Ladder:
     def walk(self, iteration: str, make, *, subsample: bool = True) -> Candidate:
         md, c = self.md, Candidate(iteration)
         t0 = time.time()
+        rng = np.random.default_rng(L.SEED)
         for s in self.seasons:
-            tr = self.frame[(self.season < s)]
-            if subsample:
-                tr = _subsample(tr, self.max_rows)
+            idx = np.flatnonzero(self.season < s)
+            if subsample and len(idx) > self.max_rows:
+                idx = np.sort(rng.choice(idx, self.max_rows, replace=False))
+            tr = self.frame.iloc[idx]
             te_mask = self.season == s
             te = self.frame[te_mask]
             learner = make(s)
@@ -262,6 +274,18 @@ class _CachingTuned(L.Tuned):
         super().fit(tr)
         self.cache[self.key] = dict(self.chosen)
         return self
+
+
+def market_columns(md: MarketDef) -> list[str]:
+    """Every column the ladder can read for this market: a frame loaded with
+    only these is enough, which is what keeps the pitch grain in memory."""
+    inc = []
+    if md.incumbent:
+        inc = ([f"{md.incumbent.cols[0]}{k}" for k in range(md.cap + 1)]
+               if md.incumbent.style == "pmf" else list(md.incumbent.cols))
+    base = [md.baseline_group] if md.baseline_group else []
+    return list(dict.fromkeys(["season", "day", "game_date", md.target, *md.keys,
+                               *md.features, *md.stack, *inc, *base]))
 
 
 def run_market(md: MarketDef, frame: pd.DataFrame, **kw) -> tuple[Ladder, dict]:
