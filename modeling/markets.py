@@ -131,7 +131,10 @@ def season_params(s: int, holdout_params: dict) -> dict:
 
 
 def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
-        proposal: str | None = None) -> dict:
+        proposal: str | None = None, keep_frames: bool = False) -> dict:
+    """keep_frames: also return the out-of-sample frames (batter-games with
+    their ratings and structural columns, starts, team-games, per-PA v3
+    probabilities) for the v4 per-market models (modeling/v4/frames.py)."""
     t0 = time.time()
     pa = P.load_pa(store)
     pa, configs = P.attach_ratings(pa, tune=True)
@@ -149,6 +152,16 @@ def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
     final_pa["ratings"] = {k: (v.to_json() if hasattr(v, "to_json") else v)
                            for k, v in configs.items()}
     _log(f"PA model done in {time.time()-t0:.0f}s; holdout {pa_holdout}")
+    pa_v3 = None
+    if keep_frames:
+        # Each PA scored by the PA model that never saw its season.
+        p3 = np.zeros((len(pa), NC), np.float32)
+        for s in np.unique(season):
+            m = season == s
+            p3[m] = P.predict(season_params(int(s), holdout_params), X[m])
+        pa_v3 = pa[["game_pk", "at_bat_index", "season"]].copy()
+        for c in range(NC):
+            pa_v3[f"pa3_{c}"] = p3[:, c]
     bat_side, pit_hand = G.hands_from_pa(pa)
     G.PEN_LEFT_SHARE = G.measure_pen_left_share(pa)
     _log(f"bullpen left-handed PA share: {G.PEN_LEFT_SHARE}")
@@ -197,8 +210,8 @@ def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
         for name, cap in G.COUNT_CAP.items():
             b[f"c_{name}"] = list(G.batch_count_pmf(
                 dists, pa_pmf, serve.COUNT_OF[name], cap))
-        bat_parts.append(b.drop(columns=[c for c in b.columns
-                                         if c[:3] in ("rb_", "rs_", "pk_")]))
+        bat_parts.append(b if keep_frames else b.drop(
+            columns=[c for c in b.columns if c[:3] in ("rb_", "rs_", "pk_")]))
 
         # Starters: the opposing lineup at tto 1..3 from the batter rows.
         lineup = b[["game_pk", "opp_sp"]].copy()
@@ -228,7 +241,12 @@ def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
                       for m, r in report.items()}, indent=1, default=str))
     if record:
         _record(report, final, proposal)
-    return {"report": report, "final": final}
+    out = {"report": report, "final": final}
+    if keep_frames:
+        out["frames"] = {"batter": B, "starts": S_, "team": team, "box": box,
+                         "pa": pa, "pa_v3": pa_v3, "tables": T,
+                         "workload_by_season": workload_by_season}
+    return out
 
 
 # ── starters ────────────────────────────────────────────────────────────────
@@ -262,6 +280,11 @@ def starter_structural(st: pd.DataFrame, lineup: pd.DataFrame,
             "pmf_outs": cnt["outs"],
             "e_outs": float(np.dot(np.arange(len(outs_pmf)), outs_pmf)),
             "rpo": rpo,
+            # Pregame context the v4 starter models read (modeling/v4).
+            "team_id": r.team_id, "is_home": r.is_home,
+            **{c: getattr(r, c, np.nan) for c in (
+                "own_mean", "team_leash", "pitches_mean", "rest", "first_start",
+                "quality", "mu_outs", "mu_bf")},
         })
     return pd.DataFrame(rows)
 
