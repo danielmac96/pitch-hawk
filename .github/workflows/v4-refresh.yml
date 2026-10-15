@@ -1,0 +1,70 @@
+name: v4 refresh
+
+# Keeps every v4 market's backfill current (docs/models/V4-PLAN.md, phase 5).
+#
+# After the nightly warehouse ingest has written yesterday's games, this
+# rebuilds the v4 frames (player/game/live, and the current season's pitch
+# and count-state frames), then scores every row newer than each market's
+# backfill with that market's FROZEN production fit -- no refitting -- and
+# republishes the daily rollup the dashboard's Model Lab v4 page plots.
+#
+# Records nothing in model_runs and changes nothing production serves.
+# Refitting is a deliberate lab run (`python -m modeling v4 train ...`).
+#
+# Frames only hold regular-season games (every v4 model is fitted on them),
+# so from October to March this is a cheap no-op apart from the rebuild.
+
+on:
+  schedule:
+    # 06:15 America/New_York in EDT; after warehouse.yml's 04:00 run, which
+    # shares the concurrency group below so the two never overlap.
+    - cron: "15 10 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: warehouse-nightly
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - name: Install deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-modeling.txt -r requirements.txt
+      - name: Skip outside the season
+        id: season
+        run: |
+          m=$(TZ=America/New_York date +%m)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || { [ "$m" -ge 3 ] && [ "$m" -le 10 ]; }; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Off-season: no regular-season games to score."
+          fi
+      - name: Rebuild player / game / live frames
+        if: steps.season.outputs.run == 'true'
+        run: python -m modeling v4 frames --grain player
+      - name: Rebuild this season's pitch and count-state frames
+        if: steps.season.outputs.run == 'true'
+        run: python -m modeling v4 frames --grain micro --seasons "$(TZ=America/New_York date +%Y)"
+      - name: Score new rows with the frozen production fits
+        if: steps.season.outputs.run == 'true'
+        run: python -m modeling v4 score --publish

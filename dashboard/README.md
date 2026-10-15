@@ -211,6 +211,7 @@ startup so this reports as a connection failure instead.
 dashboard/
 ├── app.py                 # warehouse QA page: layout, caching, rendering
 ├── pages/2_Models.py      # the model registry and every recorded training run
+├── pages/3_Model_Lab_v4.py  # v4: one model per market, its ladder and backfill
 ├── data/queries.py        # every SQL statement, one place
 ├── utils/r2.py            # store, manifest and credentials (wraps warehouse/)
 ├── utils/duckdb_conn.py   # the DuckDB connection and query execution
@@ -222,7 +223,7 @@ dashboard/
 └── requirements.txt · .env.example
 ```
 
-Two pages. `app.py` answers "is the warehouse healthy?" from the manifest;
+Three pages. `app.py` answers "is the warehouse healthy?" from the manifest;
 `pages/2_Models.py` reads `model_params` and `model_runs` from Supabase and is
 the only page needing database credentials rather than R2 ones (`SUPABASE_URL`, `SUPABASE_KEY`). It shows, top to bottom:
 
@@ -232,6 +233,17 @@ the only page needing database credentials rather than R2 ones (`SUPABASE_URL`, 
 | **Scorecard** | Latest run per market and pipeline: validation and 2026 test metric beside the naive baseline, and whether that pipeline is what production serves. |
 | **Live calibration** | Graded projections: mean predicted ÷ observed. |
 | **Runs** | Every recorded run, including rejected ones, with per-season folds against the baseline. |
+
+`pages/3_Model_Lab_v4.py` (Supabase credentials, read-only) covers the v4
+pipeline (`docs/models/V4-PLAN.md`): an overview of every market's chosen v4
+model against its incumbent and baseline, then per market a **model card**
+(outcome, grain, features, training setup, gate verdict), the **iteration
+ladder** (every candidate tried, chosen or not, and the history of earlier
+ladder runs), **validation & test** by season, **calibration** curves,
+**feature importance**, and **backfill tracking**: the rolling daily metric
+for v4, the incumbent and the baseline on the same rows, from 2018 to the
+latest scored game (`v4_backfill_daily`). Judgements live in
+`modeling/v4/report.py`, tested in `tests/modeling/test_v4_report.py`.
 
 The judgements are pure functions in `utils/models.py`
 (`tests/dashboard/test_models.py`). Per-model write-ups are in

@@ -130,6 +130,10 @@ python -m modeling train pitch_result     # sweep + holdout + record a run
 python -m modeling train pitch_result --promote   # + gate + activate
 python -m modeling status                 # registry vs what live scoring stamps
 python -m modeling rollback pitch_result  # undo, atomically
+
+python -m modeling v4 frames --grain player         # v4 frames -> R2 (lab runner)
+python -m modeling v4 train player --record --publish   # ladder, backfill, rollup
+python -m modeling v4 score --publish               # keep current (v4-refresh.yml)
 ```
 
 **CI records, humans promote.** The training workflow is `workflow_dispatch`
@@ -213,6 +217,7 @@ pip install -r dashboard/requirements.txt && streamlit run dashboard/app.py
 | [`docs/MODELS.md`](docs/MODELS.md) | the model registry: gate, promotion, rollback, `params` shapes |
 | [`docs/MODELING-METHODS.md`](docs/MODELING-METHODS.md) | v3: how every player and game prediction is made, validated and served |
 | [`docs/models/`](docs/models/) | model cards: per-market results vs baselines, out-of-sample and 2026 holdout |
+| [`docs/models/V4-PLAN.md`](docs/models/V4-PLAN.md) | v4: one model per market, its ladder, gate, backfill and refresh |
 | [`docs/DATA-PIPELINE.md`](docs/DATA-PIPELINE.md) | how the two ingest paths differ, the warehouse schema, the manifest, invariants |
 | [`docs/DATA-OPERATIONS.md`](docs/DATA-OPERATIONS.md) | every scheduled job, why each is shaped the way it is, and the runbooks |
 | [`docs/DEPLOY.md`](docs/DEPLOY.md) | provisioning and deploying the whole pipeline |
