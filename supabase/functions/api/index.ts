@@ -16,6 +16,8 @@ import * as aggs from "../_shared/aggregates.ts";
 import { DEFAULT_LIMIT, MAX_LIMIT, pitchFeed } from "../_shared/pitchfeed.ts";
 import { gradingHealth } from "../_shared/settlequeue.ts";
 import { liveTotal, remainingOuts, remainingPa, restOfGame } from "../_shared/basemodels.ts";
+import { loadV4Specs, pmfMean, pmfOver, scoreSpec, type V4Spec } from "../_shared/v4.ts";
+import { liveTotalFeatures, loadSnapshot, rogFeatures } from "../_shared/v4live.ts";
 import { convolve, negbinPmf, overProb } from "../_shared/props.ts";
 
 // Active model versions for the live base-model markets, cached per instance:
@@ -30,6 +32,24 @@ async function liveModelVersions(): Promise<Record<string, string>> {
   for (const r of data ?? []) versions[r.market] = r.version;
   liveModelsCache = { expires: Date.now() + 300_000, versions };
   return versions;
+}
+
+// v4 live markets (rest of game, live total), scored here from exported
+// models when their active row is a v4 "trees" row. Specs are cached in
+// _shared/v4.ts per version; the row lookup shares the 5-minute cache above.
+let liveV4Cache: { expires: number; specs: Record<string, V4Spec>; versions: Record<string, string> } =
+  { expires: 0, specs: {}, versions: {} };
+async function liveV4(): Promise<typeof liveV4Cache> {
+  if (liveV4Cache.expires > Date.now()) return liveV4Cache;
+  const { data } = await svc().from("model_params").select("market,version,params")
+    .eq("is_active", true).in("market", LIVE_BASE_MARKETS);
+  const rows: Record<string, any> = {};
+  for (const r of data ?? []) rows[r.market] = { ...(r.params ?? {}), version: r.version };
+  const specs = await loadV4Specs(rows);
+  const versions: Record<string, string> = {};
+  for (const m of Object.keys(specs)) versions[m] = String(rows[m].version);
+  liveV4Cache = { expires: Date.now() + 300_000, specs, versions };
+  return liveV4Cache;
 }
 
 const MARKET_LABELS: Record<string, string> = {
@@ -393,6 +413,30 @@ async function slatePayloads(date: string): Promise<any[]> {
 
   const livePkSet = new Set(livePks);
 
+  // v4 live markets: specs, the pregame snapshot and each live game's plate
+  // appearances so far, fetched once here because the per-game map is sync.
+  const v4l = livePks.length ? await liveV4() : { specs: {}, versions: {}, expires: 0 };
+  const v4Live: {
+    snap: Awaited<ReturnType<typeof loadSnapshot>> | null; abs: any[];
+    lastPitcher: Map<string, number>;
+  } = { snap: null, abs: [], lastPitcher: new Map() };
+  if (Object.keys(v4l.specs).length) {
+    const bgKeys = (projRows ?? []).map((r: any) => `${r.game_pk}:${r.player_id}`);
+    const [snap, { data: abs }, { data: pit }] = await Promise.all([
+      loadSnapshot(db, date, { games: livePks, batterGames: [...new Set(bgKeys)] }),
+      db.from("at_bats").select("game_pk,at_bat_index,batter_id,pitcher_id,result_detail,pitch_count")
+        .in("game_pk", livePks).order("at_bat_index"),
+      db.from("pitches").select("game_pk,at_bat_index,pitcher_id,top_inning")
+        .in("game_pk", livePks).order("at_bat_index"),
+    ]);
+    v4Live.snap = snap;
+    v4Live.abs = abs ?? [];
+    // Who last pitched each half: top halves are the HOME team's pitchers.
+    for (const r of pit ?? []) {
+      if (r.pitcher_id != null) v4Live.lastPitcher.set(`${r.game_pk}:${r.top_inning ? "home" : "away"}`, r.pitcher_id);
+    }
+  }
+
   const payloads = slate.map((g: any) => {
     const ls: any = stateBy.get(g.game_pk) ?? {};
     const isLive = livePkSet.has(g.game_pk);
@@ -489,7 +533,27 @@ async function slatePayloads(date: string): Promise<any[]> {
       liveModels = {};
       const preTotal = gpPre.get(g.game_pk)?.get("game_total");
       const v3Mu = preTotal?.probs?.mu_home != null && preTotal?.probs?.mu_away != null;
-      if (v3Mu && preTotal?.line != null) {
+      const v4Total = v4l.specs["game_total_live"];
+      const gSnap = v4Live.snap?.game.get(g.game_pk);
+      if (v4Total && gSnap && preTotal?.line != null) {
+        // A side's starter is in while he was the last to pitch for it.
+        const spIn = (sp: number | null, home: boolean) => {
+          const last = v4Live.lastPitcher.get(`${g.game_pk}:${home ? "home" : "away"}`);
+          return sp == null || last == null || last === sp;
+        };
+        const pmf = scoreSpec(v4Total, liveTotalFeatures(gSnap, {
+          inning: sit.inning, top: sit.top, outs: sit.outs,
+          home: Number(ls.home_score ?? 0), away: Number(ls.away_score ?? 0),
+          homeSpIn: spIn(preTotal.home_pitcher_id ?? null, true),
+          awaySpIn: spIn(preTotal.away_pitcher_id ?? null, false),
+        })) as number[];
+        const line = Number(preTotal.line);
+        liveModels.total = {
+          projected: Math.round(pmfMean(pmf) * 1e4) / 1e4, line,
+          p_over: Math.round(pmfOver(pmf, line) * 1e4) / 1e4,
+          model_version: v4l.versions["game_total_live"],
+        };
+      } else if (v3Mu && preTotal?.line != null) {
         // v3: the pregame team-run means, scaled to the outs each side has
         // left, as negative binomials -- the same family the pregame total
         // was priced from, so the live number starts where the pregame one
@@ -532,13 +596,43 @@ async function slatePayloads(date: string): Promise<any[]> {
             ...sit, side, slot: b.slot,
             currentSlot: b.is_home === battingHome ? currentSlot : null,
           });
-          return {
+          const out: any = {
             player_id: b.player_id, side, slot: b.slot, remaining_pa: rem,
             hit: (liveVersions["batter_hit_rog"] || v3Rog) && b.batter_hit != null ? restOfGame(b.batter_hit, rem) : null,
             hr: (liveVersions["batter_hr_rog"] || v3Rog) && b.batter_hr != null ? restOfGame(b.batter_hr, rem) : null,
           };
+          const bg = v4Live.snap?.batterGame.get(`${g.game_pk}:${b.player_id}`);
+          if (bg && (v4l.specs["batter_hit_rog"] || v4l.specs["batter_hr_rog"])) {
+            const mine = v4Live.abs.filter((a: any) => a.game_pk === g.game_pk && a.batter_id === b.player_id);
+            const HIT = /^(single|double|triple|home_run)$/;
+            const homeBats = !sit.top;
+            const f = rogFeatures(bg, {
+              inning: sit.inning, outs: b.is_home === homeBats ? sit.outs : 0,
+              scoreDiff: b.is_home ? Number(ls.home_score ?? 0) - Number(ls.away_score ?? 0)
+                : Number(ls.away_score ?? 0) - Number(ls.home_score ?? 0),
+              paSoFar: mine.length,
+              hitsSoFar: mine.filter((a: any) => HIT.test(String(a.result_detail ?? ""))).length,
+              hrSoFar: mine.filter((a: any) => a.result_detail === "home_run").length,
+              // The opposing starter: away pitchers work the bottom halves.
+              spStillIn: (() => {
+                const pre: any = gpPre.get(g.game_pk)?.values().next().value ?? null;
+                const sp = b.is_home ? pre?.away_pitcher_id : pre?.home_pitcher_id;
+                const last = v4Live.lastPitcher.get(`${g.game_pk}:${b.is_home ? "away" : "home"}`);
+                return sp == null || last == null || last === sp;
+              })(),
+              spPitches: null,
+            });
+            for (const [mk, key] of [["batter_hit_rog", "hit"], ["batter_hr_rog", "hr"]] as const) {
+              const sp = v4l.specs[mk];
+              if (sp) out[key] = Math.round((scoreSpec(sp, f) as number) * 1e4) / 1e4;
+            }
+            out.model_version = v4l.versions["batter_hit_rog"] ?? v4l.versions["batter_hr_rog"];
+          }
+          return out;
         });
-        liveModels.rest_of_game_version = v3Rog ? "v3_pa_outcome"
+        liveModels.rest_of_game_version = (v4Live.snap && (v4l.versions["batter_hit_rog"] || v4l.versions["batter_hr_rog"]))
+          ? (v4l.versions["batter_hit_rog"] ?? v4l.versions["batter_hr_rog"])
+          : v3Rog ? "v3_pa_outcome"
           : liveVersions["batter_hit_rog"] ?? liveVersions["batter_hr_rog"];
       }
     }

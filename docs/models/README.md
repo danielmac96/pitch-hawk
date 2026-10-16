@@ -15,6 +15,12 @@ training → validation → test → live → how we got here → next steps.
 Model development — proposals, experiment results, decisions, and the state
 of the training data — is tracked in **[LAB.md](LAB.md)**.
 
+**v4 (P-009, in progress):** one dedicated model per market, each with its own
+iteration ladder and a backfill of out-of-sample predictions from 2018 kept
+current daily — plan in [V4-PLAN.md](V4-PLAN.md), results in [v4.md](v4.md),
+live on the dashboard's **Model Lab · v4** page. v4 is a shadow pipeline: it
+serves nothing until a human stages it.
+
 Read in this order: this page → [`../MODELING-METHODS.md`](../MODELING-METHODS.md)
 (the maths) → the cards → [`../MODELS.md`](../MODELS.md) (registry: stage,
 activate, roll back) → [`../DATA-PIPELINE.md`](../DATA-PIPELINE.md) (where the

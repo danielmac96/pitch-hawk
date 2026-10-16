@@ -1,12 +1,21 @@
 {
-  "note": "P-001: re-run the v3 pipeline unchanged on the re-ingested, fully verified warehouse (12 of 12 seasons ready). Records model_runs rows tagged P-001; stages and activates nothing. Also the first real numbers for the full-distribution scoring (P-003).",
+  "note": "P-009 (v4), job A, third attempt. Attempt 2 built the start (51,294) and batter_game (496,574) frames, then died in the game frame: some team-games carry two rows flagged as the starter (openers, resumed games). Starts are now one per team-game (most batters faced), batter-games one per player-game, the wart is in tests/modeling/test_v4_frames.py, and every frame plus the tuned rating configs is written to R2 the moment it exists. Then the starter and game ladders. Records runs and backfills; activates nothing.",
   "steps": [
     [
       "modeling",
-      "markets",
+      "v4",
+      "frames",
+      "--grain",
+      "player"
+    ],
+    [
+      "modeling",
+      "v4",
+      "train",
+      "starter",
+      "game",
       "--record",
-      "--proposal",
-      "P-001"
+      "--publish"
     ]
   ]
 }

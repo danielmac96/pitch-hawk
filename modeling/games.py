@@ -106,12 +106,19 @@ where coalesce(g.game_type, 'R') = 'R'
 """
 
 
-def load_box(store) -> pd.DataFrame:  # noqa: ANN001
+def load_box(store, *, include_post: bool = False) -> pd.DataFrame:  # noqa: ANN001
     from warehouse import duck
 
     con = duck.connect(store)
-    duck.register(con, store, names=("games", "player_box"))
-    df = con.execute(BOX_SQL).df()
+    if include_post:
+        duck.register_with_post(con, store, ("games", "player_box"))
+        sql = (BOX_SQL.replace("coalesce(g.game_type, 'R') = 'R'",
+                               f"coalesce(g.game_type, 'R') in {P.POST_TYPES}")
+               .replace("select b.*,", "select b.* exclude (is_post), b.is_post,"))
+    else:
+        duck.register(con, store, names=("games", "player_box"))
+        sql = BOX_SQL
+    df = con.execute(sql).df()
     df["day"] = R.day_index(df["game_date"])
     return df
 
@@ -161,7 +168,10 @@ def workload_frame(box: pd.DataFrame, pit_rating: pd.DataFrame,
     starts = starts.merge(leash[["team_id", "day", "team_outs_mean"]],
                           on=["team_id", "day"], how="left")
     # Days since this pitcher's previous appearance of any kind.
-    apps = box[box["p_bf"].notna()][["player_id", "day"]].drop_duplicates()
+    # A start not yet played (a pending row for today's slate) is an
+    # appearance too: its rest is days since the last one.
+    started = box["p_started"].fillna(False).astype(bool)
+    apps = box[box["p_bf"].notna() | started][["player_id", "day"]].drop_duplicates()
     apps = apps.sort_values(["player_id", "day"])
     apps["prev"] = apps.groupby("player_id")["day"].shift(1)
     starts = starts.merge(apps, on=["player_id", "day"], how="left")

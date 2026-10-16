@@ -96,15 +96,28 @@ where a.batter_id is not null and a.pitcher_id is not null
 """
 
 
-def load_pa(store, seasons=None) -> pd.DataFrame:  # noqa: ANN001
-    """Every regular-season plate appearance with its class label and keys."""
+POST_TYPES = "('R','F','D','L','W')"
+
+
+def load_pa(store, seasons=None, *, include_post: bool = False) -> pd.DataFrame:  # noqa: ANN001
+    """Every regular-season plate appearance with its class label and keys.
+
+    include_post adds the postseason (flagged `is_post`); fits filter it out.
+    """
     from warehouse import duck
 
     con = duck.connect(store)
-    duck.register(con, store, names=("at_bats", "games", "player_box"),
-                  seasons=seasons)
+    names = ("at_bats", "games", "player_box")
     t0 = time.time()
-    df = con.execute(PA_SQL).df()
+    if include_post:
+        duck.register_with_post(con, store, names, seasons=seasons)
+        sql = (PA_SQL.replace("coalesce(g.game_type, 'R') = 'R'",
+                              f"coalesce(g.game_type, 'R') in {POST_TYPES}")
+               .replace("g.season, g.venue_id", "a.is_post, g.season, g.venue_id"))
+    else:
+        duck.register(con, store, names=names, seasons=seasons)
+        sql = PA_SQL
+    df = con.execute(sql).df()
     df["y"] = R.classify(df["result_detail"])
     df = df[df["y"].notna()].copy()
     df["y"] = df["y"].astype(int)
@@ -206,7 +219,10 @@ def attach_ratings(pa: pd.DataFrame, *, tune: bool = True,
     # The tables themselves, keyed (id, day), for the game-level datasets
     # (modeling/games.py) that need a rating on days with no PA row to hang
     # it on -- a bullpen, a park, a starter's opponents.
-    pen_cfg = configs.get("pen") or R.RatingConfig(
+    pen_cfg = configs.get("pen")
+    if isinstance(pen_cfg, dict):  # restored from a saved run's params
+        pen_cfg = R.RatingConfig.from_json(pen_cfg)
+    pen_cfg = pen_cfg or R.RatingConfig(
         tau=configs["pitcher"].tau, k=tuple(4 * v for v in configs["pitcher"].k))
     configs["pen"] = pen_cfg
     TABLES.clear()

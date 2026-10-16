@@ -38,6 +38,15 @@ import {
   dayIndex, type GameOut, lastLineups, loadRatings, scoreGame, totalOver, v3Bundle,
 } from "../_shared/v3.ts";
 import { probToAmerican } from "../_shared/vocab.ts";
+import { isV4, legacyModels } from "../_shared/v4.ts";
+
+// Keys the v4 publisher (modeling/v4/publish.py) already wrote for this slate:
+// "game:player:market" for projections, "game:market" for game rows. Every
+// writer here skips them, so v4 is never overwritten; a key v4 did not cover
+// (a late lineup change, a failed publish) still gets the previous model.
+let v4Covered = new Set<string>();
+const notV4Covered = (r: any) =>
+  !v4Covered.has(r.player_id != null ? `${r.game_pk}:${r.player_id}:${r.market}` : `${r.game_pk}:${r.market}`);
 
 // A game that has started, finished, or been called is not something we can make
 // a pregame call on.
@@ -209,12 +218,13 @@ async function projectBatters(
     }
   }
 
-  if (out.length) {
+  const keep = out.filter(notV4Covered);
+  if (keep.length) {
     const { error } = await db.from("player_game_projections")
-      .upsert(out, { onConflict: "game_pk,player_id,market" });
+      .upsert(keep, { onConflict: "game_pk,player_id,market" });
     if (error) throw new Error(`player_game_projections: ${error.message}`);
   }
-  summary.rows = out.length;
+  summary.rows = keep.length;
   return summary;
 }
 
@@ -286,12 +296,13 @@ async function projectStarters(
       }
     }
   }
-  if (out.length) {
+  const keep = out.filter(notV4Covered);
+  if (keep.length) {
     const { error } = await db.from("player_game_projections")
-      .upsert(out, { onConflict: "game_pk,player_id,market" });
+      .upsert(keep, { onConflict: "game_pk,player_id,market" });
     if (error) throw new Error(`starter props: ${error.message}`);
   }
-  summary.rows = out.length;
+  summary.rows = keep.length;
   return summary;
 }
 
@@ -361,12 +372,13 @@ async function writeV3Projections(
     }
   }
   if (ids.size) await ensurePlayers([...ids]);
-  if (out.length) {
+  const keep = out.filter(notV4Covered);
+  if (keep.length) {
     const { error } = await db.from("player_game_projections")
-      .upsert(out, { onConflict: "game_pk,player_id,market" });
+      .upsert(keep, { onConflict: "game_pk,player_id,market" });
     if (error) throw new Error(`v3 projections: ${error.message}`);
   }
-  return { games: [...v3.keys()].length, rows: out.length };
+  return { games: [...v3.keys()].length, rows: keep.length };
 }
 
 /** A ladder as stored: 4dp, the same precision as `probability`. */
@@ -423,7 +435,7 @@ Deno.serve(async (req) => {
     const season = slate[0]?.season ?? Number(date.slice(0, 4));
     const noRows = { data: [] as any[] };
     const [
-      { data: rollRows }, { data: profRows }, { data: rateRows }, { data: parkRows }, models,
+      { data: rollRows }, { data: profRows }, { data: rateRows }, { data: parkRows }, models0,
     ] = await Promise.all([
       pitcherIds.length
         ? db.from("pitcher_rolling_stats").select("*").in("pitcher_id", pitcherIds)
@@ -437,6 +449,28 @@ Deno.serve(async (req) => {
       db.rpc("park_factors", { p_from_season: season - 3 }),
       loadActiveModels(),
     ]);
+    const activeModels = models0;
+
+    // v4 markets: their rows come from the v4 publisher; the writers below get
+    // the params each v4 row superseded (its `fallback`), never v4 params.
+    const v4Markets = Object.keys(activeModels).filter((m) => isV4(activeModels[m]));
+    const models = legacyModels(activeModels);
+    detail.v4_markets = v4Markets;
+    if (v4Markets.length) {
+      const [{ data: pv }, { data: gv }] = await Promise.all([
+        db.from("player_game_projections").select("game_pk,player_id,market")
+          .eq("official_date", date).like("model_version", "v4%"),
+        db.from("game_predictions").select("game_pk,market")
+          .eq("phase", "pregame").in("game_pk", gamePks).like("model_version", "v4%"),
+      ]);
+      v4Covered = new Set([
+        ...(pv ?? []).map((r: any) => `${r.game_pk}:${r.player_id}:${r.market}`),
+        ...(gv ?? []).map((r: any) => `${r.game_pk}:${r.market}`),
+      ]);
+      detail.v4_covered = v4Covered.size;
+    } else {
+      v4Covered = new Set();
+    }
 
     const rollBy = new Map((rollRows ?? []).map((r: any) => [r.pitcher_id, r]));
     // Scope preference: season, then d30, then career. Later writes win, so the
@@ -671,6 +705,7 @@ Deno.serve(async (req) => {
 
       for (const m of marketRows) {
         if (already.has(`${g.game_pk}:${m.market}`)) { skipped += 1; continue; }
+        if (!notV4Covered({ game_pk: g.game_pk, market: m.market })) { skipped += 1; continue; }
         rows.push({ ...base, ...m });
       }
     }

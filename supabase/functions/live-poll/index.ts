@@ -18,6 +18,10 @@ import {
   liveHomeWinProb, mlbToday,
 } from "../_shared/mlb.ts";
 import { isVoidStatus } from "../_shared/settlequeue.ts";
+import { legacyModels, loadV4Specs, v4AbPitches, v4Classes, v4Speed } from "../_shared/v4.ts";
+import {
+  loadSnapshot, paFeatures, pitchFeatures, type PitchState, stateAt, walkGame,
+} from "../_shared/v4live.ts";
 import {
   loadActiveModels, pitchesOverProb, predictAbPitches,
   predictAbResult, predictPitchResult, predictPitchSpeed, ScoreContext,
@@ -99,7 +103,12 @@ Deno.serve(async (req) => {
       return json(detail);
     }
 
-    const models = await loadActiveModels();
+    const allModels = await loadActiveModels();
+    // v4 in-game markets are scored from exported models (_shared/v4.ts);
+    // every other scorer gets the params a v4 row superseded, never v4 params.
+    const v4 = await loadV4Specs(allModels);
+    const models = legacyModels(allModels);
+    const v4Version = (m: string) => String(allModels[m]?.version ?? "v4");
     let newPitchStates = 0, predictionsWritten = 0, picksWritten = 0;
     // Positions recovered that a single-batch-per-poll writer would have
     // dropped. Non-zero is normal and expected — it is the size of the hole
@@ -108,7 +117,7 @@ Deno.serve(async (req) => {
 
     for (const g of liveGames) {
       try {
-        const { pitches, atBats, currentPlay, bases } = await getPlayByPlay(g.game_pk);
+        const { pitches, atBats, currentPlay, bases, plays } = await getPlayByPlay(g.game_pk);
         const state = deriveLiveState(g.game_pk, pitches, currentPlay);
         if (!state) continue;
 
@@ -223,6 +232,22 @@ Deno.serve(async (req) => {
           ]).filter(Boolean) as number[],
         );
 
+        // v4: the live state walk and the pregame snapshot, once per game.
+        const v4On = Object.keys(v4).length > 0;
+        const walk = v4On ? walkGame(plays) : null;
+        const snap = v4On
+          ? await loadSnapshot(db, g.official_date ?? mlbToday(), {
+            pitchers: work.map((w) => w.pitcher_id ?? currentPlay?.pitcher_id ?? null)
+              .filter((x): x is number => x != null),
+            batters: work.map((w) => w.batter_id ?? currentPlay?.batter_id ?? null)
+              .filter((x): x is number => x != null),
+            games: [g.game_pk],
+          })
+          : null;
+        const liveCount = currentPlay
+          ? { balls: currentPlay.balls, strikes: currentPlay.strikes, outs: currentPlay.outs }
+          : null;
+
         // Rolling stats and player_info are constant across a plate
         // appearance, so they are fetched once per matchup rather than once
         // per position: a 7-pitch catch-up costs 4 queries, not 28.
@@ -249,14 +274,25 @@ Deno.serve(async (req) => {
 
         // The three markets that are genuinely per-pitch. ab_pitches_ou and
         // game_moneyline are not, and are handled once, below.
-        const perPitchMarkets = (c: ScoreContext) => {
+        const perPitchMarkets = (c: ScoreContext, st: PitchState | null) => {
           const speed = predictPitchSpeed(models, c);
-          const pres = predictPitchResult(models, c);
-          const abr = predictAbResult(models, c);
+          let pres: any = predictPitchResult(models, c);
+          let abr: any = predictAbResult(models, c);
+          let speedRow = ouJoin(speed, (line) => speedOverProb(speed.predicted_value!, speed.sigma, line), odds["pitch_speed_ou"], true);
+          if (st && walk && snap) {
+            const pf = v4["pitch_result"] || v4["pitch_speed_ou"]
+              ? pitchFeatures(walk, st, snap, g.game_pk) : null;
+            if (pf && v4["pitch_result"]) pres = v4Classes(v4["pitch_result"], v4Version("pitch_result"), pf);
+            if (pf && v4["pitch_speed_ou"]) {
+              const sp = v4Speed(v4["pitch_speed_ou"], v4Version("pitch_speed_ou"), pf);
+              speedRow = ouJoin(sp.pred as any, sp.overProb, odds["pitch_speed_ou"], true);
+            }
+            if (v4["ab_result"]) abr = v4Classes(v4["ab_result"], v4Version("ab_result"), paFeatures(st, snap, g.game_pk));
+          }
           return {
             abr,
             rows: [
-              ouJoin(speed, (line) => speedOverProb(speed.predicted_value!, speed.sigma, line), odds["pitch_speed_ou"], true),
+              speedRow,
               {
                 market: "pitch_result", predicted_value: pres.predicted_value,
                 confidence: pres.confidence, probs: pres.probs,
@@ -291,7 +327,9 @@ Deno.serve(async (req) => {
             pitcher_info: stats.pitcher_info, batter_info: stats.batter_info,
           });
 
-          const scored = w.positions.map((pos) => ({ k: pos.k, ...perPitchMarkets(ctxAt(pos)) }));
+          const stAt = (pos: { k: number }) => walk
+            ? stateAt(walk, w.at_bat_index, pos.k, w.open ? liveCount : null) : null;
+          const scored = w.positions.map((pos) => ({ k: pos.k, ...perPitchMarkets(ctxAt(pos), stAt(pos)) }));
           // Positions recovered beyond the one a single-batch writer would have
           // produced for this at-bat.
           pitchesBackfilled += Math.max(scored.length - 1, 0);
@@ -302,12 +340,19 @@ Deno.serve(async (req) => {
           // is where the row is stamped.
           if (!abpDone.has(w.at_bat_index)) {
             const abpCtx = ctxAt(w.positions[0]);
-            const abp = predictAbPitches(models, abpCtx);
-            scored[0].rows.push(ouJoin(
-              abp,
-              (line) => pitchesOverProb(abpCtx.pitch_count_pa, abp.dist, abp.predicted_value!, line),
-              odds["ab_pitches_ou"], true,
-            ));
+            const st0 = stAt(w.positions[0]);
+            if (v4["ab_pitches_ou"] && st0 && snap) {
+              const ap = v4AbPitches(v4["ab_pitches_ou"], v4Version("ab_pitches_ou"),
+                paFeatures(st0, snap, g.game_pk), abpCtx.pitch_count_pa);
+              scored[0].rows.push(ouJoin(ap.pred as any, ap.overProb, odds["ab_pitches_ou"], true));
+            } else {
+              const abp = predictAbPitches(models, abpCtx);
+              scored[0].rows.push(ouJoin(
+                abp,
+                (line) => pitchesOverProb(abpCtx.pitch_count_pa, abp.dist, abp.predicted_value!, line),
+                odds["ab_pitches_ou"], true,
+              ));
+            }
           }
 
           for (const sc of scored) {

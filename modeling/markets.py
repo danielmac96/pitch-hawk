@@ -131,44 +131,87 @@ def season_params(s: int, holdout_params: dict) -> dict:
 
 
 def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
-        proposal: str | None = None) -> dict:
+        proposal: str | None = None, keep_frames: bool = False,
+        include_post: bool = False, pending_box: pd.DataFrame | None = None,
+        rating_configs: dict | None = None) -> dict:
+    """keep_frames: also return the out-of-sample frames (batter-games with
+    their ratings and structural columns, starts, team-games, per-PA v3
+    probabilities) for the v4 per-market models (modeling/v4/frames.py).
+
+    include_post: postseason games join the history (ratings, as-of
+    features) and the frames, flagged `is_post`. pending_box: box rows for
+    games not yet played (outcomes NULL), so the frames carry a row to score
+    for today's slate. Neither ever enters a fit or a v3 report: every fit
+    below and every reported metric uses regular-season, completed rows.
+
+    rating_configs: previously tuned rating configs (final pa_outcome
+    `ratings`); skips the tuning pass, which is most of the run time.
+    """
     t0 = time.time()
-    pa = P.load_pa(store)
-    pa, configs = P.attach_ratings(pa, tune=True)
+    pa = P.load_pa(store, include_post=True) if include_post else P.load_pa(store)
+    if "is_post" not in pa:
+        pa["is_post"] = False
+    if rating_configs:
+        pa, configs = P.attach_ratings(pa, tune=False, configs=rating_configs)
+    else:
+        pa, configs = P.attach_ratings(pa, tune=True)
     T = dict(P.TABLES)
     X = P.design(pa)
     y = pa["y"].to_numpy(int)
     season = pa["season"].to_numpy(int)
-    pa_folds = P.walk_forward(pa, X, C=C)
-    pre = (season >= P.FIRST_TRAIN_SEASON) & (season < P.HOLDOUT)
+    reg = ~pa["is_post"].astype(bool).to_numpy()
+    pa_folds = P.walk_forward(pa[reg].reset_index(drop=True), X[reg], C=C)
+    pre = (season >= P.FIRST_TRAIN_SEASON) & (season < P.HOLDOUT) & reg
     holdout_params = P.fit(X[pre], y[pre], C=C)
-    pa_holdout = P.metrics(P.predict(holdout_params, X[season == P.HOLDOUT]),
-                           y[season == P.HOLDOUT]) if (season == P.HOLDOUT).any() else None
-    final_pa = P.fit(X[season >= P.FIRST_TRAIN_SEASON],
-                     y[season >= P.FIRST_TRAIN_SEASON], C=C)
+    hm = (season == P.HOLDOUT) & reg
+    pa_holdout = P.metrics(P.predict(holdout_params, X[hm]), y[hm]) if hm.any() else None
+    fm = (season >= P.FIRST_TRAIN_SEASON) & reg
+    final_pa = P.fit(X[fm], y[fm], C=C)
     final_pa["ratings"] = {k: (v.to_json() if hasattr(v, "to_json") else v)
                            for k, v in configs.items()}
     _log(f"PA model done in {time.time()-t0:.0f}s; holdout {pa_holdout}")
+    pa_v3 = None
+    if keep_frames:
+        # Each PA scored by the PA model that never saw its season.
+        p3 = np.zeros((len(pa), NC), np.float32)
+        for s in np.unique(season):
+            m = season == s
+            p3[m] = P.predict(season_params(int(s), holdout_params), X[m])
+        pa_v3 = pa[["game_pk", "at_bat_index", "season", "is_post"]].copy()
+        for c in range(NC):
+            pa_v3[f"pa3_{c}"] = p3[:, c]
     bat_side, pit_hand = G.hands_from_pa(pa)
     G.PEN_LEFT_SHARE = G.measure_pen_left_share(pa)
     _log(f"bullpen left-handed PA share: {G.PEN_LEFT_SHARE}")
     del X
 
-    box = G.load_box(store)
-    box = box[box["season"].isin(SEASONS)].reset_index(drop=True)
+    box = G.load_box(store, include_post=True) if include_post else G.load_box(store)
+    if "is_post" not in box:
+        box["is_post"] = False
+    box["pending"] = False
+    if pending_box is not None and len(pending_box):
+        box = pd.concat([box, pending_box.assign(pending=True)], ignore_index=True)
+    box["is_post"] = box["is_post"].fillna(False).astype(bool)
+    seasons = SEASONS if not keep_frames else tuple(
+        range(SEASONS[0], max(SEASONS[-1], int(box["season"].max())) + 1))
+    box = box[box["season"].isin(seasons)].reset_index(drop=True)
     starts = G.workload_frame(box, T["pitcher"], T["league"])
     bat = batter_frame(box, starts, T, bat_side, pit_hand)
-    _log(f"frames: {len(starts):,} starts, {len(bat):,} batter-games")
+    # What every fit below may see: regular season, played.
+    fit_st = ~starts["is_post"].astype(bool) & ~starts["pending"].astype(bool)
+    fit_bat = ~bat["is_post"].astype(bool) & ~bat["pending"].astype(bool)
+    _log(f"frames: {len(starts):,} starts, {len(bat):,} batter-games "
+         f"({int((~fit_bat).sum()):,} postseason or pending)")
 
     # Per-season structural quantities, each from models that never saw it.
     bat_parts, st_parts = [], []
     workload_by_season = {}
-    for s in SEASONS:
+    for s in seasons:
         cut = max(s, TEST_SEASONS[0])
-        tr_st = starts[(starts["season"] < cut)]
+        tr_st = starts[(starts["season"] < cut) & fit_st]
         wl = {"outs": G.fit_workload(tr_st, "p_outs"),
               "bf": G.fit_workload(tr_st, "p_bf"),
-              "pa_pmf": G.fit_pa_pmf(bat[bat["season"] < cut])}
+              "pa_pmf": G.fit_pa_pmf(bat[(bat["season"] < cut) & fit_bat])}
         workload_by_season[s] = wl
 
         st = starts[starts["season"] == s].copy()
@@ -197,8 +240,8 @@ def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
         for name, cap in G.COUNT_CAP.items():
             b[f"c_{name}"] = list(G.batch_count_pmf(
                 dists, pa_pmf, serve.COUNT_OF[name], cap))
-        bat_parts.append(b.drop(columns=[c for c in b.columns
-                                         if c[:3] in ("rb_", "rs_", "pk_")]))
+        bat_parts.append(b if keep_frames else b.drop(
+            columns=[c for c in b.columns if c[:3] in ("rb_", "rs_", "pk_")]))
 
         # Starters: the opposing lineup at tto 1..3 from the batter rows.
         lineup = b[["game_pk", "opp_sp"]].copy()
@@ -208,18 +251,20 @@ def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
 
     B = pd.concat(bat_parts, ignore_index=True)
     S_ = pd.concat(st_parts, ignore_index=True)
-    team = team_frame(B, box)
+    B_fit = B[~B["is_post"].astype(bool) & ~B["pending"].astype(bool)].reset_index(drop=True)
+    S_fit = S_[~S_["is_post"].astype(bool) & ~S_["pending"].astype(bool)].reset_index(drop=True)
+    team = team_frame(B_fit, box)
 
     report = {"pa_outcome": {"folds": pa_folds, "oos": P.aggregate(pa_folds),
                              "holdout": pa_holdout}}
     final = {"pa_outcome": final_pa}
-    report.update(batter_markets(B, final))
-    report.update(starter_markets(S_, final))
+    report.update(batter_markets(B_fit, final))
+    report.update(starter_markets(S_fit, final))
     report.update(team_markets(team, final))
 
-    wl_all = {"outs": G.fit_workload(starts, "p_outs"),
-              "bf": G.fit_workload(starts, "p_bf"),
-              "pa_pmf": G.fit_pa_pmf(bat),
+    wl_all = {"outs": G.fit_workload(starts[fit_st], "p_outs"),
+              "bf": G.fit_workload(starts[fit_st], "p_bf"),
+              "pa_pmf": G.fit_pa_pmf(bat[fit_bat]),
               "pen_left_share": G.PEN_LEFT_SHARE,
               "workload_priors": G.WORKLOAD, "team_leash": G.TEAM_LEASH}
     final["workload"] = {"type": "workload", **wl_all}
@@ -228,7 +273,12 @@ def run(store, *, record: bool = False, C: float = 1.0,  # noqa: ANN001
                       for m, r in report.items()}, indent=1, default=str))
     if record:
         _record(report, final, proposal)
-    return {"report": report, "final": final}
+    out = {"report": report, "final": final}
+    if keep_frames:
+        out["frames"] = {"batter": B, "starts": S_, "team": team, "box": box,
+                         "pa": pa, "pa_v3": pa_v3, "tables": T,
+                         "workload_by_season": workload_by_season}
+    return out
 
 
 # ── starters ────────────────────────────────────────────────────────────────
@@ -262,6 +312,13 @@ def starter_structural(st: pd.DataFrame, lineup: pd.DataFrame,
             "pmf_outs": cnt["outs"],
             "e_outs": float(np.dot(np.arange(len(outs_pmf)), outs_pmf)),
             "rpo": rpo,
+            # Pregame context the v4 starter models read (modeling/v4).
+            "team_id": r.team_id, "is_home": r.is_home,
+            "is_post": bool(getattr(r, "is_post", False)),
+            "pending": bool(getattr(r, "pending", False)),
+            **{c: getattr(r, c, np.nan) for c in (
+                "own_mean", "team_leash", "pitches_mean", "rest", "first_start",
+                "quality", "mu_outs", "mu_bf")},
         })
     return pd.DataFrame(rows)
 

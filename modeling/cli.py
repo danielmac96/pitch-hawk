@@ -434,5 +434,10 @@ _COMMANDS = {
 
 
 def main(argv: list[str] | None = None) -> int:
+    import sys
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv[:1] == ["v4"]:  # one model per market: modeling/v4/cli.py
+        from modeling.v4 import cli as v4cli
+        return v4cli.main(argv[1:])
     args = build_parser().parse_args(argv)
     return _COMMANDS[args.command](args)

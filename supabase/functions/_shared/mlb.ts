@@ -377,7 +377,10 @@ export interface CurrentPlaySummary {
 
 export async function getPlayByPlay(
   gamePk: number,
-): Promise<{ pitches: PitchRow[]; atBats: AtBatRow[]; currentPlay: CurrentPlaySummary | null; bases: Bases }> {
+): Promise<{
+  pitches: PitchRow[]; atBats: AtBatRow[]; currentPlay: CurrentPlaySummary | null; bases: Bases;
+  plays: any[];
+}> {
   const data = await mlbGet(`/game/${gamePk}/playByPlay`);
   const bases = basesFromPlays(data.allPlays ?? []);
   const pitches: PitchRow[] = [];
@@ -416,7 +419,8 @@ export async function getPlayByPlay(
       pitch_count: (lastPlay?.playEvents ?? []).filter((e: any) => e.type === "pitch").length,
     }
     : null;
-  return { pitches, atBats, currentPlay, bases };
+  // plays: the raw feed, for the v4 state walk (_shared/v4live.ts).
+  return { pitches, atBats, currentPlay, bases, plays };
 }
 
 export function deriveLiveState(
