@@ -1,21 +1,6 @@
 {
-  "note": "P-009 (v4), job A, third attempt. Attempt 2 built the start (51,294) and batter_game (496,574) frames, then died in the game frame: some team-games carry two rows flagged as the starter (openers, resumed games). Starts are now one per team-game (most batters faced), batter-games one per player-game, the wart is in tests/modeling/test_v4_frames.py, and every frame plus the tuned rating configs is written to R2 the moment it exists. Then the starter and game ladders. Records runs and backfills; activates nothing.",
+  "note": "P-009 (v4), job B. Job A built every player-grain frame in R2 and recorded the starter and game ladders (pitcher_k/bb/hits/outs/er and game_total stageable, game_moneyline held: its GLM ties the incumbent on validation). This job reads the stored batter_game, rog and live_total frames and runs the batter and live ladders. Each market persists as it finishes. Records runs and backfills; activates nothing.",
   "steps": [
-    [
-      "modeling",
-      "v4",
-      "frames",
-      "--grain",
-      "player"
-    ],
-    [
-      "modeling",
-      "v4",
-      "train",
-      "starter",
-      "game",
-      "--record",
-      "--publish"
-    ]
+    ["modeling", "v4", "train", "batter", "live", "--record", "--publish"]
   ]
 }
