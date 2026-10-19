@@ -236,15 +236,16 @@ for _name, _tgt, _desc, _stack in (
         incumbent=Incumbent("prob", (_stack[0],), "v3 per-PA rate over base_v1 remaining PAs"),
         served_as="base_v1"))
 _add(MarketDef(
-    name="game_total_live", grain="live_total", kind="count", target="total_runs",
-    outcome="final total runs, from the state at the start of each half-inning",
+    name="game_total_live", grain="live_total", kind="count", target="rest_runs",
+    outcome="runs still to be scored (final total minus the score), from the state "
+            "at the start of each half-inning; served shifted by the current score",
     keys=("game_pk", "inning", "top_inning"),
     features=("inning", "top_inning", "runs_now", "home_runs_now", "away_runs_now",
               "outs_left_home", "outs_left_away", "v3_mu_home", "v3_mu_away",
               "h_sp_in", "a_sp_in", "temp_c",
               "wind_out", "park_runs"),
-    stack=("live_v3_mu_rest",), cap=30, line=8.5,
-    incumbent=Incumbent("pmf", ("live_v3pmf_",), "v3 means scaled by outs left (NB)"),
+    stack=("live_v3_mu_rest",), cap=30, line=2.5,
+    incumbent=Incumbent("pmf", ("live_v3rpmf_",), "v3 means scaled by outs left (NB)"),
     served_as="base_v1"))
 
 

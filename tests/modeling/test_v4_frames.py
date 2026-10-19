@@ -64,3 +64,24 @@ def test_one_start_per_team_game_and_one_row_per_batter_game(frames):
     assert not s.duplicated(["game_pk", "team_id"]).any()
     assert not b.duplicated(["game_pk", "player_id"]).any()
     assert not (s["player_id"] >= 90_000).any()  # the 3-batter "opener" lost
+
+
+def test_live_total_targets_the_runs_still_to_come(frames):
+    lt = frames["live_total"]
+    done = lt[lt["total_runs"].notna()]
+    assert ((done["rest_runs"] + done["runs_now"]) == done["total_runs"]).all()
+    assert (done["rest_runs"] >= 0).all()
+    pm = done[[f"live_v3rpmf_{k}" for k in range(31)]].to_numpy()
+    assert abs(pm.sum(axis=1) - 1).max() < 1e-6
+    # The incumbent's expected rest-of-game runs is its own stacked mean.
+    mean = (pm * range(31)).sum(axis=1)
+    assert abs(mean - done["live_v3_mu_rest"]).max() < 0.05
+
+
+def test_live_rest_upgrades_a_stored_frame_in_place(frames):
+    lt = frames["live_total"]
+    old = lt.drop(columns=["rest_runs"] + [f"live_v3rpmf_{k}" for k in range(31)])
+    old["live_v3pmf_0"] = 1.0  # the pre-upgrade incumbent columns are dropped
+    up = FR.live_rest(old)
+    assert "live_v3pmf_0" not in up
+    pd.testing.assert_frame_equal(up[lt.columns], lt, check_like=True)

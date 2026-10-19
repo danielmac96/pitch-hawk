@@ -382,21 +382,34 @@ def live_total_frame(Fr: dict, src: dict | None, game: pd.DataFrame) -> pd.DataF
     st = st.merge(sp, on=["game_pk", "inning", "top_inning"], how="left")
     st["h_sp_in"] = st["h_sp"].fillna(1.0)
     st["a_sp_in"] = st["a_sp"].fillna(1.0)
+    st = live_rest(st)
+    return st.drop(columns=["h_sp", "a_sp", "y", "batter_id", "pitcher_id", "pit_started",
+                            "at_bat_index"], errors="ignore")
+
+
+def live_rest(st: pd.DataFrame) -> pd.DataFrame:
+    """The live-total target and incumbent, from columns the frame carries.
+
+    The target is the runs still to come, not the final total: its spread
+    shrinks as outs run out, which one dispersion over final totals cannot
+    follow (the first lab run's GBM lost to the incumbent for exactly that).
+    Serving adds the runs already scored back on. Also upgrades a stored
+    frame built before this (`v4 frames --grain live_rest`).
+    """
+    st = st.drop(columns=[c for c in st if c.startswith("live_v3pmf_")])
     muh = st["v3_mu_home"] * st["outs_left_home"] / 27
     mua = st["v3_mu_away"] * st["outs_left_away"] / 27
     st["live_v3_mu_rest"] = muh + mua
+    st["rest_runs"] = st["total_runs"] - st["runs_now"]
     pm = np.zeros((len(st), 31))
-    for i, (a, b, al, now) in enumerate(zip(muh, mua, st["v3_alpha"], st["runs_now"])):
+    for i, (a, b, al) in enumerate(zip(muh, mua, st["v3_alpha"])):
         rest = D.convolve_total(D.negbin_pmf(max(a, 1e-3), al, 30),
-                                D.negbin_pmf(max(b, 1e-3), al, 30))
-        n0 = int(min(now, 30))
-        take = rest[:31 - n0]
-        pm[i, n0:n0 + len(take)] = take
+                                D.negbin_pmf(max(b, 1e-3), al, 30))[:31]
+        pm[i, :len(rest)] = rest
         pm[i, 30] += max(0.0, 1 - pm[i].sum())
-    for k in range(31):
-        st[f"live_v3pmf_{k}"] = pm[:, k]
-    return st.drop(columns=["h_sp", "a_sp", "y", "batter_id", "pitcher_id", "pit_started",
-                            "at_bat_index"], errors="ignore")
+    return pd.concat([st, pd.DataFrame(pm, index=st.index,
+                                       columns=[f"live_v3rpmf_{k}" for k in range(31)])],
+                     axis=1)
 
 
 # ── orchestration ───────────────────────────────────────────────────────────
