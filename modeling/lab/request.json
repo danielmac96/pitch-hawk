@@ -1,7 +1,7 @@
 {
-  "note": "P-009 (v4), job C. Jobs A and B recorded every player-grain and live market (12 stageable; game_moneyline and game_total_live held). This job builds the pitch and count-state frames season by season from the warehouse, then runs the pitch and PA ladders. Each market persists as it finishes. Records runs and backfills; activates nothing.",
+  "note": "P-009 (v4), job D, queued behind job C. game_total_live was held in job B: it modelled the final total and lost to the incumbent everywhere. It now models the runs still to come. This upgrades the stored live_total frame in place (adds rest_runs and the incumbent's rest-of-game pmf, no rebuild) and reruns that one ladder. Records runs and backfills; activates nothing.",
   "steps": [
-    ["modeling", "v4", "frames", "--grain", "micro"],
-    ["modeling", "v4", "train", "pitch", "pa", "--record", "--publish"]
+    ["modeling", "v4", "frames", "--grain", "live_rest"],
+    ["modeling", "v4", "train", "game_total_live", "--record", "--publish"]
   ]
 }
