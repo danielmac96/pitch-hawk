@@ -1,6 +1,7 @@
 {
-  "note": "P-009 (v4), job B. Job A built every player-grain frame in R2 and recorded the starter and game ladders (pitcher_k/bb/hits/outs/er and game_total stageable, game_moneyline held: its GLM ties the incumbent on validation). This job reads the stored batter_game, rog and live_total frames and runs the batter and live ladders. Each market persists as it finishes. Records runs and backfills; activates nothing.",
+  "note": "P-009 (v4), job C. Jobs A and B recorded every player-grain and live market (12 stageable; game_moneyline and game_total_live held). This job builds the pitch and count-state frames season by season from the warehouse, then runs the pitch and PA ladders. Each market persists as it finishes. Records runs and backfills; activates nothing.",
   "steps": [
-    ["modeling", "v4", "train", "batter", "live", "--record", "--publish"]
+    ["modeling", "v4", "frames", "--grain", "micro"],
+    ["modeling", "v4", "train", "pitch", "pa", "--record", "--publish"]
   ]
 }
