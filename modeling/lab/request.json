@@ -1,7 +1,20 @@
 {
-  "note": "P-009 (v4), job D, queued behind job C. game_total_live was held in job B: it modelled the final total and lost to the incumbent everywhere. It now models the runs still to come. This upgrades the stored live_total frame in place (adds rest_runs and the incumbent's rest-of-game pmf, no rebuild) and reruns that one ladder. Records runs and backfills; activates nothing.",
+  "note": "P-009 (v4), job D, re-queued (the first queueing was bumped while pending by a scheduled run in the same concurrency group). game_total_live was held in job B: it modelled the final total and lost to the incumbent everywhere. It now models the runs still to come. This upgrades the stored live_total frame in place (adds rest_runs and the incumbent's rest-of-game pmf, no rebuild) and reruns that one ladder. Records runs and backfills; activates nothing.",
   "steps": [
-    ["modeling", "v4", "frames", "--grain", "live_rest"],
-    ["modeling", "v4", "train", "game_total_live", "--record", "--publish"]
+    [
+      "modeling",
+      "v4",
+      "frames",
+      "--grain",
+      "live_rest"
+    ],
+    [
+      "modeling",
+      "v4",
+      "train",
+      "game_total_live",
+      "--record",
+      "--publish"
+    ]
   ]
 }
