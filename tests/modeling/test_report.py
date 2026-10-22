@@ -50,7 +50,7 @@ def test_the_2026_10_08_run_is_judged_as_it_was_by_hand():
     bb = R.verdict(PITCHER_BB["oos"], PITCHER_BB["hold"])
     assert not bb["ok"]
     assert bb["reasons"] == ["validation mae_expected 1.0633 does not beat "
-                             "pitcher's training-season mean 1.0562"]
+                             "league mean of the training seasons 1.0562"]
 
     pa = R.verdict(PA_OUTCOME["oos"], PA_OUTCOME["hold"])
     assert pa["ok"] and pa["notes"] == ["test baseline not recorded"]

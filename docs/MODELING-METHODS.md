@@ -146,7 +146,7 @@ visible) and a **naive baseline**:
 | market group | baseline |
 |---|---|
 | batter props | training rate for that lineup slot |
-| starter props | MAE of the pitcher's training-season mean vs the model's expected count |
+| starter props | MAE of one constant — the training seasons' league mean per start — vs the model's expected count |
 | moneyline | constant home rate; **production's log5** formula replayed |
 | total | league-mean NB for P(over 8.5) and the exact total |
 

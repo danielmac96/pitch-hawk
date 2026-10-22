@@ -9,5 +9,6 @@
 
 boto3            # R2 over the S3 API (warehouse/store.py)
 pyarrow          # Parquet read/write and the frozen SCHEMAS (warehouse/config.py)
-duckdb           # query layer over s3:// Parquet (Phase 4)
+duckdb<2         # query layer over s3:// Parquet (Phase 4). 2.0 dropped
+                 # fetch_arrow_table, which warehouse/aggregates.py and contact.py use
 python-dotenv    # .env loading in warehouse/config.py

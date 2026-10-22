@@ -210,6 +210,13 @@ export function pmfOver(pmf: number[], line: number): number {
   return s;
 }
 
+/** A pmf over runs still to come as one over the final total: `now` runs
+ * already scored move every mass point up (nothing is truncated). */
+export function shiftPmf(pmf: number[], now: number): number[] {
+  const n = Math.max(0, Math.round(now));
+  return [...new Array(n).fill(0), ...pmf];
+}
+
 export function pmfMean(pmf: number[]): number {
   return pmf.reduce((a, p, k) => a + p * k, 0);
 }

@@ -50,6 +50,17 @@ def measure_pen_left_share(pa: pd.DataFrame) -> float:
     rel = pa[~pa["pit_started"].astype(bool)]
     return round(float((rel["pitch_hand"] == "L").mean()), 4) if len(rel) else PEN_LEFT_SHARE
 
+def measure_walk_share(pa: pd.DataFrame) -> float:
+    """Share of the BB class (walk, intentional walk, hit-by-pitch) that is a
+    walk. The pitcher_bb market grades walks only; see derive.starter_counts."""
+    cls = pa["result_detail"].isin(("walk", "intent_walk", "hit_by_pitch"))
+    n = int(cls.sum())
+    if not n:
+        return 1.0
+    return round(1.0 - float((pa.loc[cls, "result_detail"] == "hit_by_pitch")
+                             .sum()) / n, 5)
+
+
 # wOBA-style weights per class, for a lineup's expected offensive value. Only
 # the RATIOS matter: the team-runs GLM fits the scale. Order K BB 1B 2B 3B HR OUT.
 RUN_WEIGHTS = np.array([0.0, 0.70, 0.89, 1.27, 1.62, 2.10, 0.0])

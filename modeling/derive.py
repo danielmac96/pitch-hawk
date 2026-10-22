@@ -146,12 +146,19 @@ def negbin_failures_table(o_max: int, p_out: float, n_max: int) -> np.ndarray:
 
 
 def starter_counts(p_avg: np.ndarray, outs_pmf: np.ndarray,
-                   n_max: int = 30) -> dict[str, np.ndarray]:
-    """Count pmfs for a starter's K, BB(+HBP), hits allowed and batters faced.
+                   n_max: int = 30, walk_share: float = 1.0) -> dict[str, np.ndarray]:
+    """Count pmfs for a starter's K, walks, hits allowed and batters faced.
 
     Given O = o outs: strikeouts ~ Binomial(o, pK/(pK+pOUT)); baserunners F
     ~ NegBin(o, p_out); hits | F ~ Binomial(F, pH/(pH+pBB)). `p_avg` is the
     pitcher's per-PA distribution averaged over the lineup he will face.
+
+    The PA model's BB class is walks AND hit-by-pitch, but the market grades
+    the boxscore's `baseOnBalls`, which excludes HBP. `walk_share` is the
+    share of that class that is a walk; walks ~ Binomial(F - H, walk_share).
+    At 1.0 (the default, and every version staged before 2026-10-14) the
+    walks pmf counts hit batsmen too -- ~0.25 a start too many, which is why
+    pitcher_bb lost to a constant.
     Written as matrix products so a season of starters scores in seconds;
     props.ts computes the same sums with loops.
     """
@@ -171,6 +178,8 @@ def starter_counts(p_avg: np.ndarray, outs_pmf: np.ndarray,
     for f_ in range(n_max + 1):
         if f_marg[f_] > 0:
             bb_pmf[: f_ + 1] += f_marg[f_] * ht[f_, f_::-1]
+    if walk_share < 1.0:
+        bb_pmf = bb_pmf @ binom_table(n_max, walk_share)
     bf_pmf = np.zeros(MAX_BF + 1)
     wn = w[:, None] * nb
     for o_ in range(o_max + 1):

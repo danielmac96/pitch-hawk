@@ -16,7 +16,7 @@ import * as aggs from "../_shared/aggregates.ts";
 import { DEFAULT_LIMIT, MAX_LIMIT, pitchFeed } from "../_shared/pitchfeed.ts";
 import { gradingHealth } from "../_shared/settlequeue.ts";
 import { liveTotal, remainingOuts, remainingPa, restOfGame } from "../_shared/basemodels.ts";
-import { loadV4Specs, pmfMean, pmfOver, scoreSpec, type V4Spec } from "../_shared/v4.ts";
+import { loadV4Specs, pmfMean, pmfOver, scoreSpec, shiftPmf, type V4Spec } from "../_shared/v4.ts";
 import { liveTotalFeatures, loadSnapshot, rogFeatures } from "../_shared/v4live.ts";
 import { convolve, negbinPmf, overProb } from "../_shared/props.ts";
 
@@ -541,12 +541,15 @@ async function slatePayloads(date: string): Promise<any[]> {
           const last = v4Live.lastPitcher.get(`${g.game_pk}:${home ? "home" : "away"}`);
           return sp == null || last == null || last === sp;
         };
-        const pmf = scoreSpec(v4Total, liveTotalFeatures(gSnap, {
+        // The model prices the runs still to come; shift by the score.
+        const now = Number(ls.home_score ?? 0) + Number(ls.away_score ?? 0);
+        const rest = scoreSpec(v4Total, liveTotalFeatures(gSnap, {
           inning: sit.inning, top: sit.top, outs: sit.outs,
           home: Number(ls.home_score ?? 0), away: Number(ls.away_score ?? 0),
           homeSpIn: spIn(preTotal.home_pitcher_id ?? null, true),
           awaySpIn: spIn(preTotal.away_pitcher_id ?? null, false),
         })) as number[];
+        const pmf = shiftPmf(rest, now);
         const line = Number(preTotal.line);
         liveModels.total = {
           projected: Math.round(pmfMean(pmf) * 1e4) / 1e4, line,

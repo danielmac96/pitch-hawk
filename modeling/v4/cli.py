@@ -3,6 +3,7 @@
     frames  --grain player     v3 pipeline + feature groups -> R2 frames
                                (batter_game, start, game, rog, live_total, pa_v3)
     frames  --grain micro      pitch and pa_state frames, season by season
+    frames  --grain live_rest  add the rest-of-game target to a stored live_total
     train   <market|group>...  the candidate ladder, walk-forward; with
                                --record writes every candidate to model_runs,
                                the chosen model's backfill and artifact to R2,
@@ -49,6 +50,10 @@ def cmd_frames(args) -> int:
         cfg = S.load_index(store).get("rating_configs") if args.reuse_ratings else None
         FR.build_player_frames(store, rating_configs=cfg,
                                on_frame=lambda n, df: write_one(store, n, df))
+        return 0
+    if args.grain == "live_rest":
+        from modeling.v4 import frames as FR
+        S.put_frame(store, "live_total", FR.live_rest(S.get_frame(store, "live_total")))
         return 0
     from modeling.v4 import micro
     seasons = _seasons(args.seasons) or list(range(2015, 2027))
@@ -238,7 +243,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="python -m modeling v4")
     sub = p.add_subparsers(dest="cmd", required=True)
     f = sub.add_parser("frames")
-    f.add_argument("--grain", choices=("player", "micro"), default="player")
+    f.add_argument("--grain", choices=("player", "micro", "live_rest"), default="player",
+                   help="live_rest: upgrade the stored live_total frame in place")
     f.add_argument("--seasons", help="micro only, e.g. 2015-2026")
     f.add_argument("--only", help="micro only: pitch,pa_state")
     f.add_argument("--reuse-ratings", action="store_true",

@@ -65,8 +65,9 @@ Poisson GLM with NB2 variance instead of a roll-up.
 
 **Read MAE, not log loss.** The line is the model's own median, so P(over)
 is ~0.5 by construction and its log loss stays near ln 2 (0.693) regardless
-of skill. MAE of the expected count; baseline = the pitcher's
-training-season mean.
+of skill. MAE of the expected count; baseline = one constant, the league
+mean per start over the training seasons (not each pitcher's own average —
+a weak baseline; P-003 adds full-distribution scores).
 
 | market | validation 2018–25 | baseline | test 2026 (n=4,839) | baseline | P(over) log loss 2026 |
 |---|---|---|---|---|---|

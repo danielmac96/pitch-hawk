@@ -1,21 +1,4 @@
 {
-  "note": "P-009 (v4), job A, third attempt. Attempt 2 built the start (51,294) and batter_game (496,574) frames, then died in the game frame: some team-games carry two rows flagged as the starter (openers, resumed games). Starts are now one per team-game (most batters faced), batter-games one per player-game, the wart is in tests/modeling/test_v4_frames.py, and every frame plus the tuned rating configs is written to R2 the moment it exists. Then the starter and game ladders. Records runs and backfills; activates nothing.",
-  "steps": [
-    [
-      "modeling",
-      "v4",
-      "frames",
-      "--grain",
-      "player"
-    ],
-    [
-      "modeling",
-      "v4",
-      "train",
-      "starter",
-      "game",
-      "--record",
-      "--publish"
-    ]
-  ]
+  "note": "Idle. The v4 lab jobs (A-E, P-009) are done and recorded. To run something on the lab runner, put its steps here on a claude/* branch.",
+  "steps": []
 }
