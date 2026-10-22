@@ -1,6 +1,4 @@
 {
-  "note": "P-009 (v4), job E. Job C built the pitch and count-state frames and recorded pitch_result, pitch_speed_ou and ab_result (all stageable), then hit the 340-minute limit before ab_pitches_ou. This trains that one market from the stored pa_state frame. Records runs and backfills; activates nothing.",
-  "steps": [
-    ["modeling", "v4", "train", "ab_pitches_ou", "--record", "--publish"]
-  ]
+  "note": "Idle. The v4 lab jobs (A-E, P-009) are done and recorded. To run something on the lab runner, put its steps here on a claude/* branch.",
+  "steps": []
 }

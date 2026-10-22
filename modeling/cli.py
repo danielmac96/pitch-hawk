@@ -234,7 +234,7 @@ def cmd_publish_ratings(args) -> int:
 # Every v3 market. Which of them may be staged is decided per run by the
 # promotion rule (modeling/report.py::verdict), not by this list: pitcher_bb
 # used to be left out by hand because its 2026-10-08 run lost to the pitcher's
-# own average (MAE 1.063 vs 1.056), and the rule now says so itself.
+# league-mean baseline (MAE 1.063 vs 1.056), and the rule now says so itself.
 V3_MARKETS = ("pa_outcome", "workload", "team_runs", "game_moneyline",
               "batter_hit", "batter_hr", "batter_tb15", "batter_hrr",
               "pitcher_k", "pitcher_bb", "pitcher_hits", "pitcher_outs",
