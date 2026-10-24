@@ -6,8 +6,16 @@
 # reader scanning for red must find only real failures, so the chrome takes the
 # categorical slot-1 blue instead.
 
+#
+# Dark by default; colours match palette.DARK, which the charts pick up from
+# st.context.theme.
+
 [theme]
-primaryColor = "#2a78d6"
+base = "dark"
+primaryColor = "#3987e5"
+backgroundColor = "#0d0d0d"
+secondaryBackgroundColor = "#1a1a19"
+textColor = "#ffffff"
 
 [server]
 # QA data, but still the warehouse's contents: don't hand it to a telemetry
